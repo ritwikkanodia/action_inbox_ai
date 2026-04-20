@@ -77,7 +77,21 @@
 
     .col-due      { width: 160px; text-align: left; }
     .col-urgency  { width: 72px;  text-align: left; }
+    .col-status   { width: 80px;  text-align: left; }
     .col-created  { width: 160px; text-align: left; }
+
+    .status {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 2px 7px;
+      border-radius: 10px;
+    }
+    .status.open    { background: #e8f0fe; color: #3367d6; }
+    .status.ongoing { background: #fef3e2; color: #c47d20; }
+    .status.closed  { background: #e8f5e9; color: #3a8f5f; }
 
     .due { color: var(--text); font-weight: 500; }
 
@@ -88,6 +102,23 @@
     .urgency.high   { color: var(--high); }
     .urgency.medium { color: var(--medium); }
     .urgency.low    { color: var(--low); }
+
+    .todo.closed .title a { text-decoration: line-through; color: var(--muted); }
+
+    .editable { cursor: pointer; }
+    .editable:hover { text-decoration: underline; text-decoration-style: dashed; text-underline-offset: 3px; }
+
+    .edit-select, .edit-date {
+      font-family: inherit;
+      font-size: 12px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 2px 4px;
+      background: white;
+      color: var(--text);
+      outline: none;
+    }
+    .edit-date { width: 155px; }
   </style>
 </head>
 <body>
@@ -106,21 +137,99 @@
     <div class="meta">
       <span class="col-due">Due</span>
       <span class="col-urgency">Urgency</span>
+      <span class="col-status">Status</span>
       <span class="col-created">Created</span>
     </div>
   </div>
   {% for t in todos %}
-  <div class="todo">
+  <div class="todo {{ t.status }}">
     <div class="dot {{ t.urgency or 'none' }}"></div>
     <div class="title"><a href="{{ t.relevant_link }}" target="_blank">{{ t.title or '(untitled)' }}</a></div>
     <div class="meta">
-      <span class="col-due due">{{ t.due_date | fmt_dt }}</span>
-      <span class="col-urgency urgency {{ t.urgency or '' }}">{{ t.urgency or '—' }}</span>
+      <span class="col-due due editable" data-id="{{ t.todo_id }}" data-field="due_date" data-value="{{ t.due_date or '' }}">{{ t.due_date | fmt_dt }}</span>
+      <span class="col-urgency urgency {{ t.urgency or '' }} editable" data-id="{{ t.todo_id }}" data-field="urgency" data-value="{{ t.urgency or '' }}">{{ t.urgency or '—' }}</span>
+      <span class="col-status editable" data-id="{{ t.todo_id }}" data-field="status" data-value="{{ t.status }}"><span class="status {{ t.status }}">{{ t.status }}</span></span>
       <span class="col-created">{{ t.created_at | fmt_dt }}</span>
     </div>
   </div>
   {% endfor %}
 {% endif %}
 
+<script>
+  const URGENCY_OPTIONS = ['low', 'medium', 'high'];
+  const STATUS_OPTIONS  = ['open', 'ongoing', 'closed'];
+
+  function fmtDue(iso) {
+    if (!iso) return '—';
+    const d = new Date(iso);
+    return d.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+  }
+
+  function patch(id, field, value) {
+    return fetch(`/todos/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [field]: value || null }),
+    });
+  }
+
+  function makeSelect(options, current, onCommit) {
+    const sel = document.createElement('select');
+    sel.className = 'edit-select';
+    options.forEach(o => {
+      const opt = document.createElement('option');
+      opt.value = o; opt.textContent = o;
+      if (o === current) opt.selected = true;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener('change', () => onCommit(sel.value));
+    sel.addEventListener('blur',   () => onCommit(sel.value));
+    return sel;
+  }
+
+  function makeDateInput(current, onCommit) {
+    const inp = document.createElement('input');
+    inp.type = 'datetime-local';
+    inp.className = 'edit-date';
+    if (current) inp.value = current.slice(0, 16);
+    inp.addEventListener('blur', () => onCommit(inp.value ? new Date(inp.value).toISOString() : ''));
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') inp.blur(); });
+    return inp;
+  }
+
+  document.querySelectorAll('.editable').forEach(cell => {
+    cell.addEventListener('click', () => {
+      if (cell.querySelector('select,input')) return;
+      const { id, field, value } = cell.dataset;
+
+      function commit(newVal) {
+        patch(id, field, newVal).then(r => r.ok ? null : alert('Save failed'));
+        cell.dataset.value = newVal;
+        if (field === 'due_date') {
+          cell.textContent = fmtDue(newVal);
+        } else if (field === 'urgency') {
+          cell.className = `col-urgency urgency ${newVal} editable`;
+          cell.dataset.field = field; cell.dataset.id = id; cell.dataset.value = newVal;
+          cell.textContent = newVal || '—';
+        } else if (field === 'status') {
+          cell.innerHTML = `<span class="status ${newVal}">${newVal}</span>`;
+        }
+      }
+
+      let widget;
+      if (field === 'urgency') {
+        widget = makeSelect(URGENCY_OPTIONS, value, commit);
+      } else if (field === 'status') {
+        widget = makeSelect(STATUS_OPTIONS, value, commit);
+      } else {
+        widget = makeDateInput(value, commit);
+      }
+
+      cell.innerHTML = '';
+      cell.appendChild(widget);
+      widget.focus();
+    });
+  });
+</script>
 </body>
 </html>

@@ -1,7 +1,7 @@
 import sqlite3
 from datetime import datetime, timezone
 
-from flask import Flask, g, render_template
+from flask import Flask, g, render_template, request, jsonify
 
 app = Flask(__name__)
 
@@ -41,8 +41,23 @@ def index():
                estimated_time_minutes, due_date, relevant_link, reasoning, status, created_at
         FROM todos
         ORDER BY
+            CASE status WHEN 'closed' THEN 1 ELSE 0 END,
             CASE urgency WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
             created_at DESC
         """
     ).fetchall()
     return render_template("index.html", todos=todos)
+
+
+@app.route("/todos/<todo_id>", methods=["PATCH"])
+def update_todo(todo_id):
+    ALLOWED = {"due_date", "urgency", "status"}
+    data = request.get_json(force=True)
+    updates = {k: v for k, v in data.items() if k in ALLOWED}
+    if not updates:
+        return jsonify({"error": "no valid fields"}), 400
+    sets = ", ".join(f"{k} = ?" for k in updates)
+    db = get_db()
+    db.execute(f"UPDATE todos SET {sets} WHERE todo_id = ?", (*updates.values(), todo_id))
+    db.commit()
+    return jsonify({"ok": True})

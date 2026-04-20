@@ -33,7 +33,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             relevant_link          TEXT,              -- action URL or Gmail thread fallback
             reasoning              TEXT NOT NULL,
             raw_llm_response       TEXT,              -- exact JSON string from the model
-            status                 TEXT NOT NULL DEFAULT 'pending',  -- pending | done | dismissed
+            status                 TEXT NOT NULL DEFAULT 'open',  -- open | ongoing | closed
             created_at             TEXT NOT NULL
         );
     """)
@@ -107,7 +107,7 @@ def save_todo(
             title, suggested_action, draft, urgency,
             estimated_time_minutes, due_date, relevant_link, reasoning,
             raw_llm_response, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
         """,
         (
             f"todo_{message_id}",
