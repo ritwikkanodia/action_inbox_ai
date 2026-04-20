@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Inbox Todos</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f7f6f3;
+      --border: #e2e0da;
+      --text: #1a1a1a;
+      --muted: #9a9893;
+      --high: #c94040;
+      --medium: #c47d20;
+      --low: #3a8f5f;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 14px;
+      max-width: 680px;
+      margin: 0 auto;
+      padding: 48px 24px 80px;
+    }
+
+    header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 32px;
+    }
+
+    header h1 { font-size: 18px; font-weight: 500; }
+    header .count { color: var(--muted); font-size: 13px; }
+
+    .empty {
+      text-align: center;
+      color: var(--muted);
+      padding: 64px 0;
+    }
+
+    .todo {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+    }
+    .dot.high   { background: var(--high); }
+    .dot.medium { background: var(--medium); }
+    .dot.low    { background: var(--low); }
+    .dot.none   { background: var(--border); }
+
+    .title { flex: 1; font-size: 14px; font-weight: 500; }
+    .title a { color: inherit; text-decoration: none; }
+    .title a:hover { text-decoration: underline; text-underline-offset: 3px; }
+
+    .meta {
+      display: flex;
+      align-items: center;
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .col-due      { width: 160px; text-align: left; }
+    .col-urgency  { width: 72px;  text-align: left; }
+    .col-created  { width: 160px; text-align: left; }
+
+    .due { color: var(--text); font-weight: 500; }
+
+    .header-row { padding-bottom: 8px; border-bottom: 2px solid var(--text); }
+    .col-label { flex: 1; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+    .header-row .meta span { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
+
+    .urgency.high   { color: var(--high); }
+    .urgency.medium { color: var(--medium); }
+    .urgency.low    { color: var(--low); }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>Todos</h1>
+  <span class="count">{{ todos|length }}</span>
+</header>
+
+{% if not todos %}
+  <p class="empty">No todos yet.</p>
+{% else %}
+  <div class="todo header-row">
+    <div class="dot" style="visibility:hidden"></div>
+    <div class="col-label">Title</div>
+    <div class="meta">
+      <span class="col-due">Due</span>
+      <span class="col-urgency">Urgency</span>
+      <span class="col-created">Created</span>
+    </div>
+  </div>
+  {% for t in todos %}
+  <div class="todo">
+    <div class="dot {{ t.urgency or 'none' }}"></div>
+    <div class="title"><a href="{{ t.relevant_link }}" target="_blank">{{ t.title or '(untitled)' }}</a></div>
+    <div class="meta">
+      <span class="col-due due">{{ t.due_date | fmt_dt }}</span>
+      <span class="col-urgency urgency {{ t.urgency or '' }}">{{ t.urgency or '—' }}</span>
+      <span class="col-created">{{ t.created_at | fmt_dt }}</span>
+    </div>
+  </div>
+  {% endfor %}
+{% endif %}
+
+</body>
+</html>
