@@ -1,5 +1,6 @@
 import json
 import sqlite3
+import uuid
 
 from events import GmailEvent
 
@@ -21,9 +22,9 @@ def init_db(conn: sqlite3.Connection) -> None:
 
         CREATE TABLE IF NOT EXISTS todos (
             todo_id                TEXT PRIMARY KEY,  -- todo_<message_id>
-            event_id               TEXT NOT NULL,
-            message_id             TEXT NOT NULL,
-            thread_id              TEXT NOT NULL,
+            event_id               TEXT,
+            message_id             TEXT,
+            thread_id              TEXT,
             title                  TEXT,
             suggested_action       TEXT,
             draft                  TEXT,
@@ -31,9 +32,10 @@ def init_db(conn: sqlite3.Connection) -> None:
             estimated_time_minutes INTEGER,
             due_date               TEXT,              -- ISO UTC, nullable
             relevant_link          TEXT,              -- action URL or Gmail thread fallback
-            reasoning              TEXT NOT NULL,
+            reasoning              TEXT,
             raw_llm_response       TEXT,              -- exact JSON string from the model
             status                 TEXT NOT NULL DEFAULT 'open',  -- open | ongoing | closed
+            source                 TEXT NOT NULL DEFAULT 'gmail', -- gmail | fathom | user
             created_at             TEXT NOT NULL
         );
     """)
@@ -82,8 +84,8 @@ def save_fathom_todo(conn: sqlite3.Connection, meeting: dict, idx: int, item: di
         INSERT OR IGNORE INTO todos (
             todo_id, event_id, message_id, thread_id,
             title, suggested_action, urgency,
-            relevant_link, reasoning, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'medium', ?, ?, 'open', ?)
+            relevant_link, reasoning, status, source, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'medium', ?, ?, 'open', 'fathom', ?)
         """,
         (
             f"todo_{uid}",
@@ -152,8 +154,8 @@ def save_todo(
             todo_id, event_id, message_id, thread_id,
             title, suggested_action, draft, urgency,
             estimated_time_minutes, due_date, relevant_link, reasoning,
-            raw_llm_response, status, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
+            raw_llm_response, status, source, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 'gmail', ?)
         """,
         (
             f"todo_{message_id}",
@@ -173,6 +175,36 @@ def save_todo(
         ),
     )
     conn.commit()
+
+
+def save_user_todo(
+    conn: sqlite3.Connection,
+    title: str,
+    urgency: str = "medium",
+    due_date: str | None = None,
+    suggested_action: str = "",
+) -> str:
+    from datetime import datetime, timezone
+    todo_id = f"todo_user_{uuid.uuid4().hex[:12]}"
+    conn.execute(
+        """
+        INSERT INTO todos (
+            todo_id, event_id, message_id, thread_id,
+            title, suggested_action, urgency,
+            due_date, reasoning, status, source, created_at
+        ) VALUES (?, '', '', '', ?, ?, ?, ?, '', 'open', 'user', ?)
+        """,
+        (
+            todo_id,
+            title,
+            suggested_action,
+            urgency,
+            due_date,
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    conn.commit()
+    return todo_id
 
 
 def save_event(conn: sqlite3.Connection, event: GmailEvent) -> None:

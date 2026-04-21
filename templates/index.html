@@ -23,7 +23,7 @@
       color: var(--text);
       font-family: 'DM Sans', sans-serif;
       font-size: 14px;
-      max-width: 680px;
+      max-width: 960px;
       margin: 0 auto;
       padding: 48px 24px 80px;
     }
@@ -78,6 +78,7 @@
     .col-due      { width: 160px; text-align: left; }
     .col-urgency  { width: 72px;  text-align: left; }
     .col-status   { width: 80px;  text-align: left; }
+    .col-source   { width: 70px;  text-align: left; }
     .col-created  { width: 160px; text-align: left; }
 
     .status {
@@ -119,14 +120,112 @@
       outline: none;
     }
     .edit-date { width: 155px; }
+
+    .source-badge {
+      display: inline-block;
+      font-size: 10px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 2px 6px;
+      border-radius: 10px;
+    }
+    .source-badge.gmail  { background: #e8f0fe; color: #3367d6; }
+    .source-badge.fathom { background: #f3e8fd; color: #7c3aed; }
+    .source-badge.user   { background: #f0f0f0; color: #555; }
+
+    .new-todo-btn {
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--muted);
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 12px;
+      cursor: pointer;
+    }
+    .new-todo-btn:hover { border-color: var(--text); color: var(--text); }
+
+    .new-todo-form {
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+      padding: 16px 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .new-todo-form.open { display: flex; }
+    .new-todo-form .form-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .new-todo-form input[type="text"],
+    .new-todo-form select,
+    .new-todo-form input[type="datetime-local"] {
+      font-family: inherit;
+      font-size: 13px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 5px 8px;
+      background: white;
+      color: var(--text);
+      outline: none;
+    }
+    .new-todo-form input[type="text"] { flex: 1; min-width: 200px; }
+    .new-todo-form .form-actions { display: flex; gap: 8px; }
+    .btn-save {
+      font-family: inherit;
+      font-size: 13px;
+      font-weight: 500;
+      background: var(--text);
+      color: white;
+      border: none;
+      border-radius: 5px;
+      padding: 5px 14px;
+      cursor: pointer;
+    }
+    .btn-cancel {
+      font-family: inherit;
+      font-size: 13px;
+      color: var(--muted);
+      background: none;
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      padding: 5px 12px;
+      cursor: pointer;
+    }
   </style>
 </head>
 <body>
 
 <header>
   <h1>Todos</h1>
-  <span class="count">{{ todos|length }}</span>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <span class="count">{{ todos|length }}</span>
+    <button class="new-todo-btn" id="openFormBtn">+ New</button>
+  </div>
 </header>
+
+<div class="new-todo-form" id="newTodoForm">
+  <div class="form-row">
+    <input type="text" id="ntTitle" placeholder="What needs to be done?" autocomplete="off">
+    <select id="ntUrgency">
+      <option value="low">Low</option>
+      <option value="medium" selected>Medium</option>
+      <option value="high">High</option>
+    </select>
+    <input type="datetime-local" id="ntDueDate">
+  </div>
+  <div class="form-row">
+    <input type="text" id="ntAction" placeholder="Suggested action (optional)" autocomplete="off">
+  </div>
+  <div class="form-actions">
+    <button class="btn-save" id="saveNewTodo">Add todo</button>
+    <button class="btn-cancel" id="cancelNewTodo">Cancel</button>
+  </div>
+</div>
 
 {% if not todos %}
   <p class="empty">No todos yet.</p>
@@ -138,17 +237,25 @@
       <span class="col-due">Due</span>
       <span class="col-urgency">Urgency</span>
       <span class="col-status">Status</span>
+      <span class="col-source">Source</span>
       <span class="col-created">Created</span>
     </div>
   </div>
   {% for t in todos %}
   <div class="todo {{ t.status }}">
     <div class="dot {{ t.urgency or 'none' }}"></div>
-    <div class="title"><a href="{{ t.relevant_link }}" target="_blank">{{ t.title or '(untitled)' }}</a></div>
+    <div class="title">
+      {% if t.relevant_link %}
+        <a href="{{ t.relevant_link }}" target="_blank">{{ t.title or '(untitled)' }}</a>
+      {% else %}
+        {{ t.title or '(untitled)' }}
+      {% endif %}
+    </div>
     <div class="meta">
       <span class="col-due due editable" data-id="{{ t.todo_id }}" data-field="due_date" data-value="{{ t.due_date or '' }}">{{ t.due_date | fmt_dt }}</span>
       <span class="col-urgency urgency {{ t.urgency or '' }} editable" data-id="{{ t.todo_id }}" data-field="urgency" data-value="{{ t.urgency or '' }}">{{ t.urgency or '—' }}</span>
       <span class="col-status editable" data-id="{{ t.todo_id }}" data-field="status" data-value="{{ t.status }}"><span class="status {{ t.status }}">{{ t.status }}</span></span>
+      <span class="col-source"><span class="source-badge {{ t.source or 'gmail' }}">{{ t.source or 'gmail' }}</span></span>
       <span class="col-created">{{ t.created_at | fmt_dt }}</span>
     </div>
   </div>
@@ -196,6 +303,47 @@
     inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') inp.blur(); });
     return inp;
   }
+
+  const openFormBtn  = document.getElementById('openFormBtn');
+  const newTodoForm  = document.getElementById('newTodoForm');
+  const cancelBtn    = document.getElementById('cancelNewTodo');
+  const saveBtn      = document.getElementById('saveNewTodo');
+
+  function resetForm() {
+    document.getElementById('ntTitle').value = '';
+    document.getElementById('ntUrgency').value = 'medium';
+    document.getElementById('ntDueDate').value = '';
+    document.getElementById('ntAction').value = '';
+    newTodoForm.classList.remove('open');
+  }
+
+  openFormBtn.addEventListener('click', () => {
+    newTodoForm.classList.toggle('open');
+    if (newTodoForm.classList.contains('open')) document.getElementById('ntTitle').focus();
+  });
+
+  cancelBtn.addEventListener('click', resetForm);
+
+  saveBtn.addEventListener('click', () => {
+    const title = document.getElementById('ntTitle').value.trim();
+    if (!title) { document.getElementById('ntTitle').focus(); return; }
+    const urgency = document.getElementById('ntUrgency').value;
+    const dueDateRaw = document.getElementById('ntDueDate').value;
+    const due_date = dueDateRaw ? new Date(dueDateRaw).toISOString() : null;
+    const suggested_action = document.getElementById('ntAction').value.trim();
+    fetch('/todos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, urgency, due_date, suggested_action }),
+    }).then(r => {
+      if (r.ok) { location.reload(); } else { alert('Failed to save todo'); }
+    });
+  });
+
+  document.getElementById('ntTitle').addEventListener('keydown', e => {
+    if (e.key === 'Enter') saveBtn.click();
+    if (e.key === 'Escape') resetForm();
+  });
 
   document.querySelectorAll('.editable').forEach(cell => {
     cell.addEventListener('click', () => {

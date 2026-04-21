@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 
 from flask import Flask, g, render_template, request, jsonify
 
+from db import init_db, save_user_todo
+
 app = Flask(__name__)
 
 
@@ -22,6 +24,7 @@ def get_db():
     if "db" not in g:
         g.db = sqlite3.connect(DB_PATH)
         g.db.row_factory = sqlite3.Row
+        init_db(g.db)
     return g.db
 
 
@@ -38,7 +41,7 @@ def index():
     todos = db.execute(
         """
         SELECT todo_id, title, suggested_action, draft, urgency,
-               estimated_time_minutes, due_date, relevant_link, reasoning, status, created_at
+               estimated_time_minutes, due_date, relevant_link, reasoning, status, source, created_at
         FROM todos
         ORDER BY
             CASE status WHEN 'closed' THEN 1 ELSE 0 END,
@@ -47,6 +50,22 @@ def index():
         """
     ).fetchall()
     return render_template("index.html", todos=todos)
+
+
+@app.route("/todos", methods=["POST"])
+def create_todo():
+    data = request.get_json(force=True)
+    title = (data.get("title") or "").strip()
+    if not title:
+        return jsonify({"error": "title required"}), 400
+    urgency = data.get("urgency", "medium")
+    if urgency not in ("low", "medium", "high"):
+        urgency = "medium"
+    due_date = data.get("due_date") or None
+    suggested_action = (data.get("suggested_action") or "").strip()
+    db = get_db()
+    todo_id = save_user_todo(db, title, urgency, due_date, suggested_action)
+    return jsonify({"ok": True, "todo_id": todo_id}), 201
 
 
 @app.route("/todos/<todo_id>", methods=["PATCH"])
@@ -61,3 +80,7 @@ def update_todo(todo_id):
     db.execute(f"UPDATE todos SET {sets} WHERE todo_id = ?", (*updates.values(), todo_id))
     db.commit()
     return jsonify({"ok": True})
+
+
+if __name__ == "__main__":
+    app.run(debug=True)
