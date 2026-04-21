@@ -54,6 +54,52 @@ def set_last_history_id(conn: sqlite3.Connection, history_id: str) -> None:
     conn.commit()
 
 
+def get_fathom_last_polled_at(conn: sqlite3.Connection) -> str | None:
+    row = conn.execute("SELECT value FROM state WHERE key = 'fathom_last_polled_at'").fetchone()
+    return row[0] if row else None
+
+
+def set_fathom_last_polled_at(conn: sqlite3.Connection, ts: str) -> None:
+    conn.execute(
+        "INSERT INTO state (key, value) VALUES ('fathom_last_polled_at', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (ts,),
+    )
+    conn.commit()
+
+
+def save_fathom_todo(conn: sqlite3.Connection, meeting: dict, idx: int, item: dict) -> None:
+    from datetime import datetime, timezone
+    recording_id = str(meeting.get("recording_id", ""))
+    uid = f"fathom_{recording_id}_{idx}"
+    meeting_title = meeting.get("meeting_title") or meeting.get("title", "")
+    assignee = item.get("assignee") or {}
+    reasoning = f"Action item from Fathom meeting: {meeting_title}"
+    if assignee.get("name"):
+        reasoning += f" — assigned to {assignee['name']}"
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO todos (
+            todo_id, event_id, message_id, thread_id,
+            title, suggested_action, urgency,
+            relevant_link, reasoning, status, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, 'medium', ?, ?, 'open', ?)
+        """,
+        (
+            f"todo_{uid}",
+            f"fathom_{recording_id}",
+            uid,
+            recording_id,
+            item.get("description", "(no description)"),
+            item.get("description", ""),
+            item.get("recording_playback_url") or meeting.get("url", ""),
+            reasoning,
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    conn.commit()
+
+
 def _event_to_dict(event: GmailEvent) -> dict:
     return {
         "event_id": event.event_id,
