@@ -39,6 +39,13 @@ def init_db(conn: sqlite3.Connection) -> None:
             created_at             TEXT NOT NULL
         );
     """)
+    # Migration: add ai_thread column if it doesn't exist yet
+    try:
+        conn.execute("ALTER TABLE todos ADD COLUMN ai_thread TEXT")
+        conn.commit()
+    except sqlite3.OperationalError:
+        pass  # column already exists
+
     conn.commit()
 
 

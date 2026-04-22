@@ -30,13 +30,25 @@
 
     header {
       display: flex;
-      align-items: baseline;
+      align-items: center;
       justify-content: space-between;
       margin-bottom: 32px;
     }
 
-    header h1 { font-size: 18px; font-weight: 500; }
+    .tabs { display: flex; align-items: center; gap: 4px; }
+    .tab-btn {
+      font-family: inherit; font-size: 14px; font-weight: 500;
+      background: none; border: none; cursor: pointer;
+      color: var(--muted); padding: 4px 10px; border-radius: 6px;
+    }
+    .tab-btn.active { background: var(--text); color: white; }
+    .tab-btn:not(.active):hover { color: var(--text); background: var(--border); }
+
     header .count { color: var(--muted); font-size: 13px; }
+
+    #todo-list.show-open  .todo.closed  { display: none; }
+    #todo-list.show-closed .todo:not(.closed):not(.header-row) { display: none; }
+    #todo-list.show-closed .header-row .ask-ai-btn { visibility: hidden; }
 
     .empty {
       text-align: center;
@@ -104,6 +116,7 @@
     .urgency.medium { color: var(--medium); }
     .urgency.low    { color: var(--low); }
 
+    .todo.closed .title,
     .todo.closed .title a { text-decoration: line-through; color: var(--muted); }
 
     .editable { cursor: pointer; }
@@ -120,6 +133,79 @@
       outline: none;
     }
     .edit-date { width: 155px; }
+
+    .ask-ai-btn {
+      font-family: inherit; font-size: 11px; font-weight: 500;
+      color: var(--muted); background: none;
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: 2px 8px; cursor: pointer; flex-shrink: 0;
+    }
+    .ask-ai-btn:hover { border-color: var(--text); color: var(--text); }
+    .ask-ai-btn:disabled { opacity: 0.5; cursor: default; }
+
+    #ai-modal {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.35); z-index: 100;
+      align-items: center; justify-content: center;
+    }
+    #ai-modal.open { display: flex; }
+    #ai-modal-box {
+      background: white; border-radius: 8px;
+      width: min(620px, 90vw); height: min(72vh, 600px);
+      display: flex; flex-direction: column;
+      position: relative; overflow: hidden;
+    }
+    #ai-modal-header {
+      padding: 16px 20px 12px;
+      border-bottom: 1px solid var(--border);
+      flex-shrink: 0;
+    }
+    #ai-modal-title { font-size: 13px; font-weight: 500; color: var(--muted); padding-right: 24px; }
+    #ai-modal-close {
+      position: absolute; top: 12px; right: 14px;
+      font-size: 18px; color: var(--muted); background: none; border: none; cursor: pointer;
+    }
+    #ai-thread {
+      flex: 1; overflow-y: auto; padding: 16px 20px;
+      display: flex; flex-direction: column; gap: 12px;
+    }
+    .ai-bubble {
+      max-width: 88%; padding: 10px 14px;
+      border-radius: 10px; font-size: 14px; line-height: 1.55;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .ai-bubble.assistant {
+      background: #f3f3f1; color: var(--text);
+      align-self: flex-start; border-bottom-left-radius: 3px;
+    }
+    .ai-bubble.user {
+      background: var(--text); color: white;
+      align-self: flex-end; border-bottom-right-radius: 3px;
+    }
+    .ai-bubble.loading {
+      background: #f3f3f1; color: var(--muted);
+      align-self: flex-start; border-bottom-left-radius: 3px;
+      font-style: italic;
+    }
+    #ai-input-area {
+      padding: 12px 16px;
+      border-top: 1px solid var(--border);
+      display: flex; gap: 8px; flex-shrink: 0;
+    }
+    #ai-followup {
+      flex: 1; font-family: inherit; font-size: 13px;
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 7px 10px; outline: none; color: var(--text);
+      resize: none;
+    }
+    #ai-followup:focus { border-color: #aaa; }
+    #ai-send-btn {
+      font-family: inherit; font-size: 13px; font-weight: 500;
+      background: var(--text); color: white;
+      border: none; border-radius: 6px;
+      padding: 7px 14px; cursor: pointer; flex-shrink: 0;
+    }
+    #ai-send-btn:disabled { opacity: 0.4; cursor: default; }
 
     .source-badge {
       display: inline-block;
@@ -201,9 +287,12 @@
 <body>
 
 <header>
-  <h1>Todos</h1>
+  <div class="tabs">
+    <button class="tab-btn active" id="tabOpen">Open</button>
+    <button class="tab-btn" id="tabClosed">Closed</button>
+  </div>
   <div style="display:flex;align-items:center;gap:12px;">
-    <span class="count">{{ todos|length }}</span>
+    <span class="count" id="todoCount">{{ todos|length }}</span>
     <button class="new-todo-btn" id="openFormBtn">+ New</button>
   </div>
 </header>
@@ -227,6 +316,7 @@
   </div>
 </div>
 
+<div id="todo-list" class="show-open">
 {% if not todos %}
   <p class="empty">No todos yet.</p>
 {% else %}
@@ -240,6 +330,7 @@
       <span class="col-source">Source</span>
       <span class="col-created">Created</span>
     </div>
+    <button class="ask-ai-btn" style="visibility:hidden" aria-hidden="true">Ask AI</button>
   </div>
   {% for t in todos %}
   <div class="todo {{ t.status }}">
@@ -258,9 +349,25 @@
       <span class="col-source"><span class="source-badge {{ t.source or 'gmail' }}">{{ t.source or 'gmail' }}</span></span>
       <span class="col-created">{{ t.created_at | fmt_dt }}</span>
     </div>
+    <button class="ask-ai-btn" data-id="{{ t.todo_id }}" data-title="{{ t.title | e }}">Ask AI</button>
   </div>
   {% endfor %}
 {% endif %}
+</div>
+
+<div id="ai-modal">
+  <div id="ai-modal-box">
+    <div id="ai-modal-header">
+      <div id="ai-modal-title"></div>
+      <button id="ai-modal-close">×</button>
+    </div>
+    <div id="ai-thread"></div>
+    <div id="ai-input-area">
+      <input type="text" id="ai-followup" placeholder="Ask a follow-up…" autocomplete="off">
+      <button id="ai-send-btn">Send</button>
+    </div>
+  </div>
+</div>
 
 <script>
   const URGENCY_OPTIONS = ['low', 'medium', 'high'];
@@ -376,6 +483,137 @@
       cell.innerHTML = '';
       cell.appendChild(widget);
       widget.focus();
+    });
+  });
+
+  const todoList  = document.getElementById('todo-list');
+  const tabOpen   = document.getElementById('tabOpen');
+  const tabClosed = document.getElementById('tabClosed');
+  const countEl   = document.getElementById('todoCount');
+
+  const allRows    = document.querySelectorAll('#todo-list .todo:not(.header-row)');
+  const openCount  = [...allRows].filter(r => !r.classList.contains('closed')).length;
+  const closedCount = [...allRows].filter(r =>  r.classList.contains('closed')).length;
+
+  function switchTab(tab) {
+    if (tab === 'open') {
+      todoList.className = 'show-open';
+      tabOpen.classList.add('active');
+      tabClosed.classList.remove('active');
+      countEl.textContent = openCount;
+    } else {
+      todoList.className = 'show-closed';
+      tabClosed.classList.add('active');
+      tabOpen.classList.remove('active');
+      countEl.textContent = closedCount;
+    }
+  }
+
+  tabOpen.addEventListener('click',   () => switchTab('open'));
+  tabClosed.addEventListener('click', () => switchTab('closed'));
+
+  // Set initial count to open todos only
+  switchTab('open');
+
+  const modal       = document.getElementById('ai-modal');
+  const modalTitle  = document.getElementById('ai-modal-title');
+  const threadEl    = document.getElementById('ai-thread');
+  const followupEl  = document.getElementById('ai-followup');
+  const sendBtn     = document.getElementById('ai-send-btn');
+
+  const threadCache = {};  // { todo_id: [{role, content}, ...] }
+  let currentId = null;
+
+  document.getElementById('ai-modal-close').addEventListener('click', () => modal.classList.remove('open'));
+  modal.addEventListener('click', e => { if (e.target === modal) modal.classList.remove('open'); });
+
+  function renderThread(thread) {
+    threadEl.innerHTML = '';
+    thread.forEach(msg => {
+      const div = document.createElement('div');
+      div.className = `ai-bubble ${msg.role}`;
+      div.textContent = msg.content;
+      threadEl.appendChild(div);
+    });
+    threadEl.scrollTop = threadEl.scrollHeight;
+  }
+
+  function addLoadingBubble() {
+    const div = document.createElement('div');
+    div.className = 'ai-bubble loading';
+    div.id = 'ai-loading-bubble';
+    div.textContent = 'Thinking…';
+    threadEl.appendChild(div);
+    threadEl.scrollTop = threadEl.scrollHeight;
+  }
+
+  function removeLoadingBubble() {
+    const el = document.getElementById('ai-loading-bubble');
+    if (el) el.remove();
+  }
+
+  function callAI(todoId, message) {
+    sendBtn.disabled = true;
+    followupEl.disabled = true;
+    addLoadingBubble();
+    const body = message ? { message } : {};
+    return fetch(`/todos/${todoId}/ask-ai`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+      .then(r => r.json())
+      .then(data => {
+        removeLoadingBubble();
+        threadCache[todoId] = data.thread;
+        renderThread(data.thread);
+        sendBtn.disabled = false;
+        followupEl.disabled = false;
+        followupEl.focus();
+      })
+      .catch(() => {
+        removeLoadingBubble();
+        alert('AI request failed');
+        sendBtn.disabled = false;
+        followupEl.disabled = false;
+      });
+  }
+
+  function openModal(id, title) {
+    currentId = id;
+    modalTitle.textContent = title;
+    followupEl.value = '';
+    modal.classList.add('open');
+
+    if (threadCache[id] && threadCache[id].length > 0) {
+      renderThread(threadCache[id]);
+      followupEl.focus();
+    } else {
+      threadEl.innerHTML = '';
+      callAI(id, null);
+    }
+  }
+
+  sendBtn.addEventListener('click', () => {
+    const msg = followupEl.value.trim();
+    if (!msg || !currentId) return;
+    // Optimistically show user bubble
+    const userBubble = document.createElement('div');
+    userBubble.className = 'ai-bubble user';
+    userBubble.textContent = msg;
+    threadEl.appendChild(userBubble);
+    threadEl.scrollTop = threadEl.scrollHeight;
+    followupEl.value = '';
+    callAI(currentId, msg);
+  });
+
+  followupEl.addEventListener('keydown', e => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }
+  });
+
+  document.querySelectorAll('.ask-ai-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      openModal(btn.dataset.id, btn.dataset.title);
     });
   });
 </script>
