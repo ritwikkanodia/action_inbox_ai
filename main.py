@@ -33,7 +33,7 @@ def main():
             for e in events:
                 if e.type == "messagesAdded":
                     from_email = e.actors.from_.email if e.actors.from_ else "unknown"
-                    print(f"[messagesAdded] msg={e.content.message_id} | from={from_email} | subject={e.content.subject!r}")
+                    print(f"[messagesAdded] msg={e.content.message_id} | from={from_email} | subject={e.content.subject!r} | labels={e.metadata.labels}")
                 elif e.type == "messagesDeleted":
                     print(f"[messagesDeleted] msg={e.content.message_id} | permanently deleted")
                 elif e.type == "labelsAdded":
