@@ -37,29 +37,10 @@ def init_db(conn: sqlite3.Connection) -> None:
             status                 TEXT NOT NULL DEFAULT 'open',  -- open | ongoing | closed
             source                 TEXT NOT NULL DEFAULT 'gmail', -- gmail | fathom | browser_history | user
             decision               TEXT DEFAULT NULL,             -- NULL | 'accepted' | 'rejected'
+            ai_thread              TEXT,
             created_at             TEXT NOT NULL
         );
     """)
-    # Migrations: add columns that may not exist in older DBs
-    for migration in [
-        "ALTER TABLE todos ADD COLUMN ai_thread TEXT",
-        "ALTER TABLE todos ADD COLUMN decision TEXT DEFAULT NULL",
-    ]:
-        try:
-            conn.execute(migration)
-            conn.commit()
-        except sqlite3.OperationalError:
-            pass  # column already exists
-
-    # Backfill: closed AI todos are implicitly accepted
-    conn.execute(
-        "UPDATE todos SET decision = 'accepted'"
-        " WHERE status = 'closed'"
-        " AND source IN ('gmail', 'fathom', 'browser_history')"
-        " AND decision IS NULL"
-    )
-    conn.commit()
-
     conn.commit()
 
 
