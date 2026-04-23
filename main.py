@@ -6,6 +6,7 @@ from db import init_db, save_todo
 from gmail_poller import poll
 import fathom_poller
 import browser_history_poller
+import system_poller
 from spam_filter import is_spam
 from thread_context import fetch_thread_messages, build_thread_context
 from todo_generator import generate_todo
@@ -72,6 +73,12 @@ def main():
                 print(f"[browser_history] saved {bh_saved} todo(s)")
             else:
                 print("[browser_history] No new todos generated.")
+
+            sys_saved = system_poller.poll(conn)
+            if sys_saved:
+                print(f"[system] saved {sys_saved} todo(s)")
+            else:
+                print("[system] No new todos generated.")
 
         except Exception as exc:
             print(f"[error] {exc}")

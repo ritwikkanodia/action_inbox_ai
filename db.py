@@ -296,6 +296,58 @@ def save_user_todo(
     return todo_id
 
 
+def get_system_last_polled_at(conn: sqlite3.Connection) -> str | None:
+    row = conn.execute("SELECT value FROM state WHERE key = 'system_last_polled_at'").fetchone()
+    return row[0] if row else None
+
+
+def set_system_last_polled_at(conn: sqlite3.Connection, ts: str) -> None:
+    conn.execute(
+        "INSERT INTO state (key, value) VALUES ('system_last_polled_at', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (ts,),
+    )
+    conn.commit()
+
+
+def get_open_system_todos(conn: sqlite3.Connection, limit: int = 20) -> list[str]:
+    rows = conn.execute(
+        "SELECT title FROM todos "
+        "WHERE source = 'system' AND status = 'open' "
+        "ORDER BY created_at DESC LIMIT ?",
+        (limit,),
+    ).fetchall()
+    return [r[0] for r in rows if r[0]]
+
+
+def save_system_todo(conn: sqlite3.Connection, todo: dict) -> bool:
+    from datetime import datetime, timezone
+    title = (todo.get("title") or "").strip()
+    if not title:
+        return False
+    uid = f"system_{uuid.uuid4().hex[:12]}"
+    before = conn.total_changes
+    conn.execute(
+        """
+        INSERT INTO todos (
+            todo_id, event_id, message_id, thread_id,
+            title, suggested_action, urgency,
+            reasoning, status, source, created_at
+        ) VALUES (?, ?, '', '', ?, ?, 'low', ?, 'open', 'system', ?)
+        """,
+        (
+            f"todo_{uid}",
+            uid,
+            title,
+            todo.get("suggested_action", ""),
+            todo.get("reasoning", ""),
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    conn.commit()
+    return conn.total_changes > before
+
+
 def save_event(conn: sqlite3.Connection, event: GmailEvent) -> None:
     conn.execute(
         "INSERT OR IGNORE INTO events (event_id, user_id, type, timestamp, payload) "
