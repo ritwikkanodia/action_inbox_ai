@@ -70,6 +70,8 @@ def main():
             bh_saved = browser_history_poller.poll(conn)
             if bh_saved:
                 print(f"[browser_history] saved {bh_saved} todo(s)")
+            else:
+                print("[browser_history] No new todos generated.")
 
         except Exception as exc:
             print(f"[error] {exc}")
