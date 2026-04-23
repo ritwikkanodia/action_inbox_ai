@@ -19,7 +19,7 @@ from db import (
 DEFAULT_HISTORY_PATH = str(
     Path.home() / "Library/Application Support/Dia/User Data/Default/History"
 )
-MIN_INTERVAL_SECONDS = 60  # 1 hour
+MIN_INTERVAL_SECONDS = 1000  # 1 hour
 WINDOW_HOURS = 24
 MAX_ROWS = 500
 
