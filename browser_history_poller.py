@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 import browser_history_generator
 from db import (
+    _normalize_url,
     get_browser_history_last_polled_at,
     get_open_browser_history_titles,
     save_browser_history_todo,
@@ -50,28 +51,58 @@ def _is_noise(url: str, domain: str) -> bool:
     return False
 
 
-def _build_digest(rows: list[tuple[str, str, int, int]]) -> str:
-    by_domain: dict[str, dict] = defaultdict(lambda: {"count": 0, "titles": [], "url": ""})
-    for url, title, visit_count, visit_time in rows:
+def _build_digest(rows: list[tuple[str, str, int, int]]) -> tuple[str, set[str]]:
+    """Return (digest_text, allowed_normalized_urls)."""
+    per_url: dict[str, dict] = {}
+    for url, title, _visit_count, _visit_time in rows:
         domain = urlparse(url).netloc
         if _is_noise(url, domain):
             continue
-        bucket = by_domain[domain]
-        bucket["count"] += 1
-        if not bucket["url"]:
-            bucket["url"] = url
-        title = (title or "").strip()
-        if title and title not in bucket["titles"] and len(bucket["titles"]) < 5:
-            bucket["titles"].append(title)
+        entry = per_url.get(url)
+        if entry is None:
+            per_url[url] = {
+                "domain": domain,
+                "title": (title or "").strip(),
+                "visits": 1,
+            }
+        else:
+            entry["visits"] += 1
+            if not entry["title"] and title:
+                entry["title"] = title.strip()
 
-    if not by_domain:
-        return ""
+    if not per_url:
+        return "", set()
 
-    lines = []
-    for domain, bucket in sorted(by_domain.items(), key=lambda kv: -kv[1]["count"]):
-        titles = " | ".join(bucket["titles"]) if bucket["titles"] else "(no titles)"
-        lines.append(f"{domain} ({bucket['count']} visits) [{bucket['url']}]: {titles}")
-    return "\n".join(lines)
+    by_domain: dict[str, list[tuple[str, dict]]] = defaultdict(list)
+    for url, entry in per_url.items():
+        by_domain[entry["domain"]].append((url, entry))
+
+    domain_totals: list[tuple[str, int, list[tuple[str, dict]]]] = []
+    for domain, urls in by_domain.items():
+        # Drop URLs with only 1 visit and no title.
+        urls = [(u, e) for (u, e) in urls if e["visits"] > 1 or e["title"]]
+        if not urls:
+            continue
+        total = sum(e["visits"] for _, e in urls)
+        if total < 2:
+            continue
+        urls.sort(key=lambda ue: -ue[1]["visits"])
+        domain_totals.append((domain, total, urls[:3]))
+
+    domain_totals.sort(key=lambda x: -x[1])
+    domain_totals = domain_totals[:15]
+
+    allowed: set[str] = set()
+    lines: list[str] = []
+    for domain, total, urls in domain_totals:
+        lines.append(f"{domain} ({total} visits across {len(urls)} pages)")
+        for url, entry in urls:
+            title = entry["title"] or "(no title)"
+            lines.append(f"  - [{entry['visits']} visits] {url} — \"{title}\"")
+            norm = _normalize_url(url)
+            if norm:
+                allowed.add(norm)
+    return "\n".join(lines), allowed
 
 
 def poll(conn: sqlite3.Connection) -> int:
@@ -122,18 +153,21 @@ def poll(conn: sqlite3.Connection) -> int:
         set_browser_history_last_polled_at(conn, now.isoformat())
         return 0
 
-    digest = _build_digest(rows)
+    digest, allowed_urls = _build_digest(rows)
     if not digest:
         print("[browser_history] No non-noise visits in last 24h.")
         set_browser_history_last_polled_at(conn, now.isoformat())
         return 0
 
-    existing_titles = get_open_browser_history_titles(conn)
-    todos = browser_history_generator.generate_todos(digest, existing_todos=existing_titles)
-    date_str = now.strftime("%Y-%m-%d")
+    open_titles = get_open_browser_history_titles(conn)
+    todos = browser_history_generator.generate_todos(digest, open_todos=open_titles)
     saved = 0
     for todo in todos:
-        if save_browser_history_todo(conn, todo, date_str):
+        norm = _normalize_url(todo.get("relevant_link"))
+        if not norm or norm not in allowed_urls:
+            print(f"[browser_history] dropped (url not in digest): {todo.get('title')!r} -> {todo.get('relevant_link')!r}")
+            continue
+        if save_browser_history_todo(conn, todo):
             saved += 1
             print(f"[browser_history] saved: {todo.get('title')!r}")
 

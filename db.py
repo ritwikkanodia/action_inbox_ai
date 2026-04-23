@@ -1,8 +1,25 @@
 import json
 import sqlite3
 import uuid
+from urllib.parse import urlparse
 
 from events import GmailEvent
+
+
+def _normalize_url(url: str | None) -> str | None:
+    if not url:
+        return None
+    try:
+        p = urlparse(url.strip())
+    except Exception:
+        return None
+    if p.scheme not in ("http", "https") or not p.netloc:
+        return None
+    host = p.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    path = (p.path or "/").rstrip("/") or "/"
+    return f"{host}{path}"
 
 
 def init_db(conn: sqlite3.Connection) -> None:
@@ -86,27 +103,38 @@ def set_browser_history_last_polled_at(conn: sqlite3.Connection, ts: str) -> Non
     conn.commit()
 
 
-def get_open_browser_history_titles(conn: sqlite3.Connection) -> list[str]:
+def get_open_browser_history_titles(conn: sqlite3.Connection, limit: int = 40) -> list[str]:
     rows = conn.execute(
-        "SELECT title FROM todos WHERE source = 'browser_history' AND status = 'open'"
+        "SELECT title FROM todos "
+        "WHERE source = 'browser_history' AND status = 'open' "
+        "ORDER BY created_at DESC LIMIT ?",
+        (limit,),
     ).fetchall()
     return [r[0] for r in rows if r[0]]
 
 
-def save_browser_history_todo(conn: sqlite3.Connection, todo: dict, date_str: str) -> bool:
+def save_browser_history_todo(conn: sqlite3.Connection, todo: dict) -> bool:
     import difflib
     import hashlib
-    from datetime import datetime, timezone
+    from datetime import datetime, timedelta, timezone
     title = (todo.get("title") or "").strip()
     if not title:
         return False
-    # Fuzzy-match guard: skip if an open browser_history todo is already similar.
-    existing = get_open_browser_history_titles(conn)
-    for et in existing:
-        if difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.7:
+    norm = _normalize_url(todo.get("relevant_link"))
+    if not norm:
+        return False
+    # Fuzzy-match guard against any browser_history todo (any status) in last 30d.
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    existing = conn.execute(
+        "SELECT title FROM todos "
+        "WHERE source = 'browser_history' AND created_at >= ?",
+        (cutoff,),
+    ).fetchall()
+    for (et,) in existing:
+        if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.80:
             return False
-    h = hashlib.sha1(title.encode()).hexdigest()[:8]
-    uid = f"browser_history_{date_str}_{h}"
+    h = hashlib.sha1(norm.encode()).hexdigest()[:12]
+    uid = f"browser_history_url_{h}"
     before = conn.total_changes
     conn.execute(
         """
@@ -122,7 +150,7 @@ def save_browser_history_todo(conn: sqlite3.Connection, todo: dict, date_str: st
             title,
             todo.get("suggested_action", ""),
             todo.get("urgency", "medium"),
-            todo.get("relevant_link", ""),
+            norm,
             todo.get("reasoning", ""),
             datetime.now(timezone.utc).isoformat(),
         ),
