@@ -48,6 +48,9 @@ Signal guidance:
 - Memory: flag if pressure is "critical" or swap_used_gb > 2.
 - Do NOT flag healthy state (normal pressure, <80% disk, tidy folders).
 - Do NOT recreate todos already present in "Existing open todos".
+- Generate AT MOST ONE todo per folder or resource. Pick the single most
+  important action — do not emit "Review X", "Clean up X", and "Organise X"
+  for the same folder.
 
 Empty todos list is a valid response.
 """

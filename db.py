@@ -321,10 +321,21 @@ def get_open_system_todos(conn: sqlite3.Connection, limit: int = 20) -> list[str
 
 
 def save_system_todo(conn: sqlite3.Connection, todo: dict) -> bool:
-    from datetime import datetime, timezone
+    import difflib
+    from datetime import datetime, timedelta, timezone
     title = (todo.get("title") or "").strip()
     if not title:
         return False
+    # Fuzzy-match against any system todo in the last 30 days to prevent
+    # "Review ~/Documents" / "Clean up ~/Documents" / "Organise ~/Documents" duplicates.
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
+    existing = conn.execute(
+        "SELECT title FROM todos WHERE source = 'system' AND created_at >= ?",
+        (cutoff,),
+    ).fetchall()
+    for (et,) in existing:
+        if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.60:
+            return False
     uid = f"system_{uuid.uuid4().hex[:12]}"
     before = conn.total_changes
     conn.execute(

@@ -22,7 +22,7 @@ def poll(conn: sqlite3.Connection) -> int:
             pass
 
     snapshot = system_snapshot.build()
-    snapshot_json = json.dumps(snapshot, indent=2)
+    snapshot_json = json.dumps(snapshot, separators=(",", ":"))
 
     # Skip LLM call if snapshot is identical to last run.
     snapshot_hash = hashlib.sha256(snapshot_json.encode()).hexdigest()
@@ -33,6 +33,8 @@ def poll(conn: sqlite3.Connection) -> int:
         print("[system] Snapshot unchanged, skipping LLM call.")
         set_system_last_polled_at(conn, now.isoformat())
         return 0
+
+    print(f"[system] snapshot:\n{json.dumps(snapshot, indent=2)}")
 
     open_todos = get_open_system_todos(conn)
     todos = system_generator.generate_todos(snapshot_json, open_todos=open_todos)

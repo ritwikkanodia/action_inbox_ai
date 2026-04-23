@@ -11,7 +11,7 @@ WATCHED_FOLDERS = [
     Path.home() / "Documents",
 ]
 
-SAMPLE_NAME_COUNT = 10
+SAMPLE_NAME_COUNT = 5
 
 _EXT_CATEGORIES = {
     "image": {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".svg", ".bmp"},
@@ -97,28 +97,7 @@ def _disk_snapshot() -> dict:
     used_gb = round(usage.used / (1024 ** 3), 1)
     total_gb = round(usage.total / (1024 ** 3), 1)
     pct = round(usage.used / usage.total * 100, 1)
-
-    # Top-level home dirs by size (best-effort, non-recursive du equivalent)
-    largest_dirs = []
-    home = Path.home()
-    candidates = ["Movies", "Downloads", "Documents", "Library", "Desktop"]
-    for name in candidates:
-        p = home / name
-        if not p.exists():
-            continue
-        try:
-            total = sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
-            largest_dirs.append({"path": f"~/{name}", "size_gb": round(total / (1024 ** 3), 2)})
-        except (PermissionError, OSError):
-            pass
-    largest_dirs.sort(key=lambda d: -d["size_gb"])
-
-    return {
-        "used_gb": used_gb,
-        "total_gb": total_gb,
-        "used_pct": pct,
-        "largest_dirs": largest_dirs[:5],
-    }
+    return {"used_gb": used_gb, "total_gb": total_gb, "used_pct": pct}
 
 
 def _memory_snapshot() -> dict:
