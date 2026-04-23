@@ -47,9 +47,11 @@
 
     header .count { color: var(--muted); font-size: 13px; }
 
-    #todo-list.show-open  .todo.closed  { display: none; }
+    #todo-list.show-open   .todo.closed        { display: none; }
+    #todo-list.show-open   .todo.rejected-todo { display: none; }
     #todo-list.show-closed .todo:not(.closed):not(.header-row) { display: none; }
     #todo-list.show-closed .header-row .ask-ai-btn { visibility: hidden; }
+    #todo-list.show-rejected .todo:not(.rejected-todo):not(.header-row) { display: none; }
 
     .empty {
       text-align: center;
@@ -91,7 +93,7 @@
     .col-due      { width: 160px; text-align: left; }
     .col-urgency  { width: 72px;  text-align: left; }
     .col-status   { width: 80px;  text-align: left; }
-    .col-source   { width: 70px;  text-align: left; }
+    .col-source   { width: 90px;  text-align: left; }
     .col-created  { width: 160px; text-align: left; }
 
     .status {
@@ -106,6 +108,39 @@
     .status.open    { background: #e8f0fe; color: #3367d6; }
     .status.ongoing { background: #fef3e2; color: #c47d20; }
     .status.closed  { background: #e8f5e9; color: #3a8f5f; }
+
+    .todo-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    .accept-btn, .reject-btn {
+      font-family: inherit; font-size: 11px; font-weight: 500;
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: 2px 8px; cursor: pointer; background: none;
+    }
+    .accept-btn { color: #3a8f5f; }
+    .accept-btn:hover { background: #e8f5e9; border-color: #3a8f5f; }
+    .reject-btn { color: #c94040; }
+    .reject-btn:hover { background: #fce8e6; border-color: #c94040; }
+
+    /* Pending-decision todos: visually distinct as suggestions */
+    .todo.pending-decision {
+      background: #fffdf5;
+      border-bottom-style: dashed;
+      opacity: 0.88;
+    }
+    .todo.pending-decision .title,
+    .todo.pending-decision .title a { color: #777; font-style: italic; }
+    .todo.pending-decision .editable {
+      pointer-events: none;
+      cursor: default;
+      text-decoration: none !important;
+    }
+    .suggestion-label {
+      display: inline-block;
+      font-size: 10px; font-weight: 500; text-transform: uppercase;
+      letter-spacing: 0.06em; color: #b07d2a;
+      background: #fef3e2; border-radius: 10px;
+      padding: 2px 6px; margin-right: 8px;
+      vertical-align: middle; flex-shrink: 0;
+    }
 
     .due { color: var(--text); font-weight: 500; }
 
@@ -246,6 +281,7 @@
     .source-badge.gmail  { background: #e8f0fe; color: #3367d6; }
     .source-badge.fathom { background: #f3e8fd; color: #7c3aed; }
     .source-badge.user   { background: #f0f0f0; color: #555; }
+    .source-badge.browser_history { background: #e6f7ee; color: #137a4a; }
 
     .new-todo-btn {
       font-family: inherit;
@@ -317,6 +353,7 @@
   <div class="tabs">
     <button class="tab-btn active" id="tabOpen">Open</button>
     <button class="tab-btn" id="tabClosed">Closed</button>
+    <button class="tab-btn" id="tabRejected">Rejected</button>
   </div>
   <div style="display:flex;align-items:center;gap:12px;">
     <span class="count" id="todoCount">{{ todos|length }}</span>
@@ -360,23 +397,32 @@
     <button class="ask-ai-btn" style="visibility:hidden" aria-hidden="true">Ask AI</button>
   </div>
   {% for t in todos %}
-  <div class="todo {{ t.status }}">
+  {% set is_ai = t.source in ('gmail', 'fathom', 'browser_history') %}
+  {% set pending = is_ai and not t.decision and t.status != 'closed' %}
+  <div class="todo {{ t.status }}{% if t.decision == 'rejected' %} rejected-todo{% endif %}{% if pending %} pending-decision{% endif %}">
     <div class="dot {{ t.urgency or 'none' }}"></div>
     <div class="title">
-      {% if t.relevant_link %}
-        <a href="{{ t.relevant_link }}" target="_blank">{{ t.title or '(untitled)' }}</a>
-      {% else %}
-        {{ t.title or '(untitled)' }}
-      {% endif %}
+      {% if pending %}<span class="suggestion-label">Suggestion</span>{% endif %}{% if t.relevant_link %}<a href="{{ t.relevant_link }}" target="_blank">{{ t.title or '(untitled)' }}</a>{% else %}{{ t.title or '(untitled)' }}{% endif %}
     </div>
     <div class="meta">
       <span class="col-due due editable" data-id="{{ t.todo_id }}" data-field="due_date" data-value="{{ t.due_date or '' }}">{{ t.due_date | fmt_dt }}</span>
       <span class="col-urgency urgency {{ t.urgency or '' }} editable" data-id="{{ t.todo_id }}" data-field="urgency" data-value="{{ t.urgency or '' }}">{{ t.urgency or '—' }}</span>
       <span class="col-status editable" data-id="{{ t.todo_id }}" data-field="status" data-value="{{ t.status }}"><span class="status {{ t.status }}">{{ t.status }}</span></span>
-      <span class="col-source"><span class="source-badge {{ t.source or 'gmail' }}">{{ t.source or 'gmail' }}</span></span>
+      <span class="col-source"><span class="source-badge {{ t.source or 'gmail' }}">{{ 'browser' if t.source == 'browser_history' else (t.source or 'gmail') }}</span></span>
       <span class="col-created">{{ t.created_at | fmt_dt }}</span>
     </div>
+    {% if pending %}
+    <div class="todo-actions">
+      <button class="accept-btn" data-id="{{ t.todo_id }}">Accept</button>
+      <button class="reject-btn" data-id="{{ t.todo_id }}">Reject</button>
+    </div>
+    {% elif t.decision == 'rejected' %}
+    <div class="todo-actions">
+      <button class="accept-btn" data-id="{{ t.todo_id }}">Accept</button>
+    </div>
+    {% else %}
     <button class="ask-ai-btn" data-id="{{ t.todo_id }}" data-title="{{ t.title | e }}">Ask AI</button>
+    {% endif %}
   </div>
   {% endfor %}
 {% endif %}
@@ -513,34 +559,85 @@
     });
   });
 
-  const todoList  = document.getElementById('todo-list');
-  const tabOpen   = document.getElementById('tabOpen');
-  const tabClosed = document.getElementById('tabClosed');
-  const countEl   = document.getElementById('todoCount');
+  const todoList    = document.getElementById('todo-list');
+  const tabOpen     = document.getElementById('tabOpen');
+  const tabClosed   = document.getElementById('tabClosed');
+  const tabRejected = document.getElementById('tabRejected');
+  const countEl     = document.getElementById('todoCount');
 
-  const allRows    = document.querySelectorAll('#todo-list .todo:not(.header-row)');
-  const openCount  = [...allRows].filter(r => !r.classList.contains('closed')).length;
-  const closedCount = [...allRows].filter(r =>  r.classList.contains('closed')).length;
+  const allRows      = document.querySelectorAll('#todo-list .todo:not(.header-row)');
+  const openCount    = [...allRows].filter(r => !r.classList.contains('closed') && !r.classList.contains('rejected-todo')).length;
+  const closedCount  = [...allRows].filter(r =>  r.classList.contains('closed')).length;
+  const rejectedCount = [...allRows].filter(r => r.classList.contains('rejected-todo')).length;
 
   function switchTab(tab) {
+    tabOpen.classList.remove('active');
+    tabClosed.classList.remove('active');
+    tabRejected.classList.remove('active');
     if (tab === 'open') {
       todoList.className = 'show-open';
       tabOpen.classList.add('active');
-      tabClosed.classList.remove('active');
       countEl.textContent = openCount;
-    } else {
+    } else if (tab === 'closed') {
       todoList.className = 'show-closed';
       tabClosed.classList.add('active');
-      tabOpen.classList.remove('active');
       countEl.textContent = closedCount;
+    } else {
+      todoList.className = 'show-rejected';
+      tabRejected.classList.add('active');
+      countEl.textContent = rejectedCount;
     }
   }
 
-  tabOpen.addEventListener('click',   () => switchTab('open'));
-  tabClosed.addEventListener('click', () => switchTab('closed'));
+  tabOpen.addEventListener('click',     () => switchTab('open'));
+  tabClosed.addEventListener('click',   () => switchTab('closed'));
+  tabRejected.addEventListener('click', () => switchTab('rejected'));
 
-  // Set initial count to open todos only
   switchTab('open');
+
+  document.addEventListener('click', e => {
+    if (e.target.matches('.accept-btn')) {
+      const id = e.target.dataset.id;
+      fetch(`/todos/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: 'accepted' }),
+      }).then(r => {
+        if (r.ok) {
+          const actions = e.target.closest('.todo-actions');
+          const todoEl = actions.closest('.todo');
+          todoEl.classList.remove('pending-decision', 'rejected-todo');
+          // Replace actions with Ask AI button
+          const btn = document.createElement('button');
+          btn.className = 'ask-ai-btn';
+          btn.dataset.id = id;
+          btn.dataset.title = todoEl.querySelector('.title').textContent.trim();
+          btn.textContent = 'Ask AI';
+          btn.addEventListener('click', () => openModal(btn.dataset.id, btn.dataset.title));
+          const label = todoEl.querySelector('.suggestion-label');
+          if (label) label.remove();
+          actions.replaceWith(btn);
+        }
+      });
+    }
+    if (e.target.matches('.reject-btn')) {
+      const id = e.target.dataset.id;
+      fetch(`/todos/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ decision: 'rejected' }),
+      }).then(r => {
+        if (r.ok) {
+          const todoEl = e.target.closest('.todo');
+          todoEl.classList.remove('pending-decision');
+          todoEl.classList.add('rejected-todo');
+          // Replace both buttons with just Accept
+          const actions = e.target.closest('.todo-actions');
+          actions.innerHTML = `<button class="accept-btn" data-id="${id}">Accept</button>`;
+        }
+      });
+    }
+  });
 
   const modal       = document.getElementById('ai-modal');
   const modalTitle  = document.getElementById('ai-modal-title');

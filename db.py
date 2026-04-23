@@ -35,16 +35,30 @@ def init_db(conn: sqlite3.Connection) -> None:
             reasoning              TEXT,
             raw_llm_response       TEXT,              -- exact JSON string from the model
             status                 TEXT NOT NULL DEFAULT 'open',  -- open | ongoing | closed
-            source                 TEXT NOT NULL DEFAULT 'gmail', -- gmail | fathom | user
+            source                 TEXT NOT NULL DEFAULT 'gmail', -- gmail | fathom | browser_history | user
+            decision               TEXT DEFAULT NULL,             -- NULL | 'accepted' | 'rejected'
             created_at             TEXT NOT NULL
         );
     """)
-    # Migration: add ai_thread column if it doesn't exist yet
-    try:
-        conn.execute("ALTER TABLE todos ADD COLUMN ai_thread TEXT")
-        conn.commit()
-    except sqlite3.OperationalError:
-        pass  # column already exists
+    # Migrations: add columns that may not exist in older DBs
+    for migration in [
+        "ALTER TABLE todos ADD COLUMN ai_thread TEXT",
+        "ALTER TABLE todos ADD COLUMN decision TEXT DEFAULT NULL",
+    ]:
+        try:
+            conn.execute(migration)
+            conn.commit()
+        except sqlite3.OperationalError:
+            pass  # column already exists
+
+    # Backfill: closed AI todos are implicitly accepted
+    conn.execute(
+        "UPDATE todos SET decision = 'accepted'"
+        " WHERE status = 'closed'"
+        " AND source IN ('gmail', 'fathom', 'browser_history')"
+        " AND decision IS NULL"
+    )
+    conn.commit()
 
     conn.commit()
 
@@ -75,6 +89,65 @@ def set_fathom_last_polled_at(conn: sqlite3.Connection, ts: str) -> None:
         (ts,),
     )
     conn.commit()
+
+
+def get_browser_history_last_polled_at(conn: sqlite3.Connection) -> str | None:
+    row = conn.execute("SELECT value FROM state WHERE key = 'browser_history_last_polled_at'").fetchone()
+    return row[0] if row else None
+
+
+def set_browser_history_last_polled_at(conn: sqlite3.Connection, ts: str) -> None:
+    conn.execute(
+        "INSERT INTO state (key, value) VALUES ('browser_history_last_polled_at', ?) "
+        "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        (ts,),
+    )
+    conn.commit()
+
+
+def get_open_browser_history_titles(conn: sqlite3.Connection) -> list[str]:
+    rows = conn.execute(
+        "SELECT title FROM todos WHERE source = 'browser_history' AND status = 'open'"
+    ).fetchall()
+    return [r[0] for r in rows if r[0]]
+
+
+def save_browser_history_todo(conn: sqlite3.Connection, todo: dict, date_str: str) -> bool:
+    import difflib
+    import hashlib
+    from datetime import datetime, timezone
+    title = (todo.get("title") or "").strip()
+    if not title:
+        return False
+    # Fuzzy-match guard: skip if an open browser_history todo is already similar.
+    existing = get_open_browser_history_titles(conn)
+    for et in existing:
+        if difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.7:
+            return False
+    h = hashlib.sha1(title.encode()).hexdigest()[:8]
+    uid = f"browser_history_{date_str}_{h}"
+    before = conn.total_changes
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO todos (
+            todo_id, event_id, message_id, thread_id,
+            title, suggested_action, urgency,
+            relevant_link, reasoning, status, source, created_at
+        ) VALUES (?, ?, '', '', ?, ?, ?, ?, ?, 'open', 'browser_history', ?)
+        """,
+        (
+            f"todo_{uid}",
+            uid,
+            title,
+            todo.get("suggested_action", ""),
+            todo.get("urgency", "medium"),
+            todo.get("relevant_link", ""),
+            todo.get("reasoning", ""),
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+    conn.commit()
+    return conn.total_changes > before
 
 
 def save_fathom_todo(conn: sqlite3.Connection, meeting: dict, idx: int, item: dict) -> None:

@@ -42,7 +42,7 @@ def index():
     todos = db.execute(
         """
         SELECT todo_id, title, suggested_action, draft, urgency,
-               estimated_time_minutes, due_date, relevant_link, reasoning, status, source, created_at
+               estimated_time_minutes, due_date, relevant_link, reasoning, status, source, decision, created_at
         FROM todos
         WHERE title IS NOT NULL AND title != ''
         ORDER BY
@@ -159,7 +159,7 @@ def ask_ai(todo_id):
 
 @app.route("/todos/<todo_id>", methods=["PATCH"])
 def update_todo(todo_id):
-    ALLOWED = {"due_date", "urgency", "status"}
+    ALLOWED = {"due_date", "urgency", "status", "decision"}
     data = request.get_json(force=True)
     updates = {k: v for k, v in data.items() if k in ALLOWED}
     if not updates:

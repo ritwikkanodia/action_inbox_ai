@@ -5,6 +5,7 @@ from auth import get_gmail_service
 from db import init_db, save_todo
 from gmail_poller import poll
 import fathom_poller
+import browser_history_poller
 from spam_filter import is_spam
 from thread_context import fetch_thread_messages, build_thread_context
 from todo_generator import generate_todo
@@ -65,6 +66,10 @@ def main():
             saved = fathom_poller.poll(conn)
             if not saved:
                 print("[fathom] No new action items.")
+
+            bh_saved = browser_history_poller.poll(conn)
+            if bh_saved:
+                print(f"[browser_history] saved {bh_saved} todo(s)")
 
         except Exception as exc:
             print(f"[error] {exc}")
