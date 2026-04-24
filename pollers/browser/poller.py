@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-import browser_history_generator
+from pollers.browser import generator as browser_history_generator
 from db import (
     _normalize_url,
     get_browser_history_last_polled_at,

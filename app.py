@@ -95,7 +95,7 @@ def ask_ai(todo_id):
     if thread and not user_message:
         return jsonify({"thread": thread})
 
-    from todo_generator import _get_client
+    from pollers.gmail.todo_generator import _get_client
 
     # Build base todo context
     parts = [f"Title: {row['title']}"]

@@ -4,7 +4,7 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 
-from events import GmailEvent
+from pollers.gmail.events import GmailEvent
 
 load_dotenv()
 

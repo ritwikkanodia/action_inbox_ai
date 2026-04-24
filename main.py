@@ -1,15 +1,15 @@
 import sqlite3
 import time
 
-from auth import get_gmail_service
+from pollers.gmail.auth import get_gmail_service
+from pollers.gmail.poller import poll
+from pollers.gmail.spam_filter import is_spam
+from pollers.gmail.thread_context import fetch_thread_messages, build_thread_context
+from pollers.gmail.todo_generator import generate_todo
+from pollers.fathom import poller as fathom_poller
+from pollers.browser import poller as browser_history_poller
+from pollers.system import poller as system_poller
 from db import init_db, save_todo
-from gmail_poller import poll
-import fathom_poller
-import browser_history_poller
-import system_poller
-from spam_filter import is_spam
-from thread_context import fetch_thread_messages, build_thread_context
-from todo_generator import generate_todo
 
 DB_PATH = "gmail_events.db"
 POLL_INTERVAL_SECONDS = 30
