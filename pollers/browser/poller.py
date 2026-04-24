@@ -33,6 +33,36 @@ NOISE_DOMAINS = {
 }
 NOISE_PREFIXES = ("chrome://", "chrome-extension://", "about:")
 
+# Path fragments that signal a transaction has already completed. If any URL on
+# a domain contains one of these, we treat earlier-visited URLs on the same
+# domain as superseded (the user finished what they started).
+COMPLETION_MARKERS = (
+    "/order-confirmation",
+    "/order-confirmed",
+    "/orderconfirmation",
+    "/thank-you",
+    "/thankyou",
+    "/thanks",
+    "/success",
+    "/successful",
+    "/receipt",
+    "/payment-success",
+    "/payment-successful",
+    "/payment-complete",
+    "/payment-completed",
+    "/confirmation",
+    "/confirmed",
+    "/complete",
+    "/completed",
+    "/booking-confirmed",
+    "/booking-confirmation",
+)
+
+
+def _has_completion_marker(url: str) -> bool:
+    lowered = url.lower()
+    return any(marker in lowered for marker in COMPLETION_MARKERS)
+
 
 def _to_webkit_micros(dt: datetime) -> int:
     return int((dt - _WEBKIT_EPOCH).total_seconds() * 1_000_000)
@@ -53,18 +83,52 @@ def _is_noise(url: str, domain: str) -> bool:
 
 def _aggregate_visits_by_url(rows: list[tuple[str, str, int, int]]) -> dict[str, dict]:
     per_url: dict[str, dict] = {}
-    for url, title, _visit_count, _visit_time in rows:
+    for url, title, _visit_count, visit_time in rows:
         domain = urlparse(url).netloc
         if _is_noise(url, domain):
             continue
         entry = per_url.get(url)
         if entry is None:
-            per_url[url] = {"domain": domain, "title": (title or "").strip(), "visits": 1}
+            per_url[url] = {
+                "domain": domain,
+                "title": (title or "").strip(),
+                "visits": 1,
+                "last_visit": visit_time,
+            }
         else:
             entry["visits"] += 1
             if not entry["title"] and title:
                 entry["title"] = title.strip()
+            if visit_time > entry["last_visit"]:
+                entry["last_visit"] = visit_time
     return per_url
+
+
+def _drop_superseded_by_completion(per_url: dict[str, dict]) -> dict[str, dict]:
+    """Drop URLs on a domain that were last visited before a completion marker
+    on the same domain. Also drop the completion-marker URLs themselves."""
+    latest_marker_by_domain: dict[str, int] = {}
+    for url, entry in per_url.items():
+        if _has_completion_marker(url):
+            prev = latest_marker_by_domain.get(entry["domain"], -1)
+            if entry["last_visit"] > prev:
+                latest_marker_by_domain[entry["domain"]] = entry["last_visit"]
+
+    if not latest_marker_by_domain:
+        return per_url
+
+    kept: dict[str, dict] = {}
+    for url, entry in per_url.items():
+        marker_time = latest_marker_by_domain.get(entry["domain"])
+        if marker_time is not None:
+            if _has_completion_marker(url):
+                print(f"[browser_history] drop completion marker: {url}")
+                continue
+            if entry["last_visit"] <= marker_time:
+                print(f"[browser_history] drop superseded by completion on {entry['domain']}: {url}")
+                continue
+        kept[url] = entry
+    return kept
 
 
 def _group_urls_by_domain(per_url: dict[str, dict]) -> list[tuple[str, int, list[tuple[str, dict]]]]:
@@ -105,6 +169,7 @@ def _render_digest_and_allowed_urls(
 
 def _build_digest(rows: list[tuple[str, str, int, int]]) -> tuple[str, set[str]]:
     per_url = _aggregate_visits_by_url(rows)
+    per_url = _drop_superseded_by_completion(per_url)
     if not per_url:
         return "", set()
     domain_totals = _group_urls_by_domain(per_url)
@@ -189,6 +254,9 @@ def poll(conn: sqlite3.Connection) -> int:
 
     per_url = _aggregate_visits_by_url(rows)
     print(f"[browser_history] {len(per_url)} unique URLs after noise filtering")
+
+    per_url = _drop_superseded_by_completion(per_url)
+    print(f"[browser_history] {len(per_url)} unique URLs after completion-marker filtering")
 
     domain_totals = _group_urls_by_domain(per_url)
     if not domain_totals:
