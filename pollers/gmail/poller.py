@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 from googleapiclient.errors import HttpError as GApiHttpError
 
-from events import Actor, Actors, Content, GmailEvent, Metadata
+from pollers.gmail.events import Actor, Actors, Content, GmailEvent, Metadata
 from db import get_last_history_id, set_last_history_id, save_event
 
 HISTORY_TYPES = ["messageAdded", "messageDeleted", "labelAdded", "labelRemoved"]

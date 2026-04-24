@@ -3,7 +3,7 @@ import sqlite3
 import uuid
 from urllib.parse import urlparse
 
-from events import GmailEvent
+from pollers.gmail.events import GmailEvent
 
 
 def _normalize_url(url: str | None) -> str | None:

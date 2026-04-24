@@ -3,8 +3,8 @@ import json
 import sqlite3
 from datetime import datetime, timezone
 
-import system_generator
-import system_snapshot
+from pollers.system import generator as system_generator
+from pollers.system import snapshot as system_snapshot
 from db import get_system_last_polled_at, get_open_system_todos, save_system_todo, set_system_last_polled_at
 
 MIN_INTERVAL_SECONDS = 60 # run at most once per hour

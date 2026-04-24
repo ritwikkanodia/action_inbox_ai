@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
-import browser_history_generator
+from pollers.browser import generator as browser_history_generator
 from db import (
     _normalize_url,
     get_browser_history_last_polled_at,
@@ -51,8 +51,7 @@ def _is_noise(url: str, domain: str) -> bool:
     return False
 
 
-def _build_digest(rows: list[tuple[str, str, int, int]]) -> tuple[str, set[str]]:
-    """Return (digest_text, allowed_normalized_urls)."""
+def _aggregate_visits_by_url(rows: list[tuple[str, str, int, int]]) -> dict[str, dict]:
     per_url: dict[str, dict] = {}
     for url, title, _visit_count, _visit_time in rows:
         domain = urlparse(url).netloc
@@ -60,27 +59,22 @@ def _build_digest(rows: list[tuple[str, str, int, int]]) -> tuple[str, set[str]]
             continue
         entry = per_url.get(url)
         if entry is None:
-            per_url[url] = {
-                "domain": domain,
-                "title": (title or "").strip(),
-                "visits": 1,
-            }
+            per_url[url] = {"domain": domain, "title": (title or "").strip(), "visits": 1}
         else:
             entry["visits"] += 1
             if not entry["title"] and title:
                 entry["title"] = title.strip()
+    return per_url
 
-    if not per_url:
-        return "", set()
 
+def _group_urls_by_domain(per_url: dict[str, dict]) -> list[tuple[str, int, list[tuple[str, dict]]]]:
     by_domain: dict[str, list[tuple[str, dict]]] = defaultdict(list)
     for url, entry in per_url.items():
         by_domain[entry["domain"]].append((url, entry))
 
-    domain_totals: list[tuple[str, int, list[tuple[str, dict]]]] = []
+    domain_totals = []
     for domain, urls in by_domain.items():
-        # Drop URLs with only 1 visit and no title.
-        urls = [(u, e) for (u, e) in urls if e["visits"] > 1 or e["title"]]
+        urls = [(u, e) for u, e in urls if e["visits"] > 1 or e["title"]]
         if not urls:
             continue
         total = sum(e["visits"] for _, e in urls)
@@ -90,8 +84,12 @@ def _build_digest(rows: list[tuple[str, str, int, int]]) -> tuple[str, set[str]]
         domain_totals.append((domain, total, urls[:3]))
 
     domain_totals.sort(key=lambda x: -x[1])
-    domain_totals = domain_totals[:15]
+    return domain_totals[:15]
 
+
+def _render_digest_and_allowed_urls(
+    domain_totals: list[tuple[str, int, list[tuple[str, dict]]]]
+) -> tuple[str, set[str]]:
     allowed: set[str] = set()
     lines: list[str] = []
     for domain, total, urls in domain_totals:
@@ -105,32 +103,33 @@ def _build_digest(rows: list[tuple[str, str, int, int]]) -> tuple[str, set[str]]
     return "\n".join(lines), allowed
 
 
-def poll(conn: sqlite3.Connection) -> int:
-    history_path = os.environ.get("BROWSER_HISTORY_PATH", DEFAULT_HISTORY_PATH)
-    if not os.path.exists(history_path):
-        print(f"[browser_history] History file not found at {history_path}, skipping")
-        return 0
+def _build_digest(rows: list[tuple[str, str, int, int]]) -> tuple[str, set[str]]:
+    per_url = _aggregate_visits_by_url(rows)
+    if not per_url:
+        return "", set()
+    domain_totals = _group_urls_by_domain(per_url)
+    return _render_digest_and_allowed_urls(domain_totals)
 
-    now = datetime.now(timezone.utc)
+
+def _is_poll_due(conn: sqlite3.Connection, now: datetime) -> bool:
     last = get_browser_history_last_polled_at(conn)
-    if last:
-        try:
-            last_dt = datetime.fromisoformat(last)
-            if (now - last_dt).total_seconds() < MIN_INTERVAL_SECONDS:
-                return 0
-        except ValueError:
-            pass
+    if not last:
+        return True
+    try:
+        return (now - datetime.fromisoformat(last)).total_seconds() >= MIN_INTERVAL_SECONDS
+    except ValueError:
+        return True
 
-    # Copy the locked SQLite file to a temp location before reading.
+
+def _read_recent_history(history_path: str, now: datetime) -> list[tuple]:
     with tempfile.NamedTemporaryFile(suffix=".sqlite", delete=False) as tmp:
         tmp_path = tmp.name
     try:
         shutil.copy2(history_path, tmp_path)
-        ro_uri = f"file:{tmp_path}?mode=ro"
-        h_conn = sqlite3.connect(ro_uri, uri=True)
+        h_conn = sqlite3.connect(f"file:{tmp_path}?mode=ro", uri=True)
         try:
             cutoff = _to_webkit_micros(now - timedelta(hours=WINDOW_HOURS))
-            rows = h_conn.execute(
+            return h_conn.execute(
                 """
                 SELECT u.url, u.title, u.visit_count, v.visit_time
                 FROM urls u JOIN visits v ON v.url = u.id
@@ -148,17 +147,8 @@ def poll(conn: sqlite3.Connection) -> int:
         except OSError:
             pass
 
-    if not rows:
-        print("[browser_history] No visits in last 24h.")
-        set_browser_history_last_polled_at(conn, now.isoformat())
-        return 0
 
-    digest, allowed_urls = _build_digest(rows)
-    if not digest:
-        print("[browser_history] No non-noise visits in last 24h.")
-        set_browser_history_last_polled_at(conn, now.isoformat())
-        return 0
-
+def _save_todos_from_digest(conn: sqlite3.Connection, digest: str, allowed_urls: set[str]) -> int:
     open_titles = get_open_browser_history_titles(conn)
     todos = browser_history_generator.generate_todos(digest, open_todos=open_titles)
     saved = 0
@@ -170,6 +160,31 @@ def poll(conn: sqlite3.Connection) -> int:
         if save_browser_history_todo(conn, todo):
             saved += 1
             print(f"[browser_history] saved: {todo.get('title')!r}")
+    return saved
 
+
+def poll(conn: sqlite3.Connection) -> int:
+    history_path = os.environ.get("BROWSER_HISTORY_PATH", DEFAULT_HISTORY_PATH)
+    if not os.path.exists(history_path):
+        print(f"[browser_history] History file not found at {history_path}, skipping")
+        return 0
+
+    now = datetime.now(timezone.utc)
+    if not _is_poll_due(conn, now):
+        return 0
+
+    rows = _read_recent_history(history_path, now)
+    if not rows:
+        print("[browser_history] No visits in last 24h.")
+        set_browser_history_last_polled_at(conn, now.isoformat())
+        return 0
+
+    digest, allowed_urls = _build_digest(rows)
+    if not digest:
+        print("[browser_history] No non-noise visits in last 24h.")
+        set_browser_history_last_polled_at(conn, now.isoformat())
+        return 0
+
+    saved = _save_todos_from_digest(conn, digest, allowed_urls)
     set_browser_history_last_polled_at(conn, now.isoformat())
     return saved

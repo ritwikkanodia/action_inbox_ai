@@ -1,4 +1,4 @@
-from events import GmailEvent
+from pollers.gmail.events import GmailEvent
 
 SPAM_LABELS = {"SPAM", "CATEGORY_PROMOTIONS", "CATEGORY_FORUMS"}
 
