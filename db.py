@@ -150,7 +150,7 @@ def save_browser_history_todo(conn: sqlite3.Connection, todo: dict) -> bool:
             title,
             todo.get("suggested_action", ""),
             todo.get("urgency", "medium"),
-            norm,
+            todo.get("relevant_link", ""),
             todo.get("reasoning", ""),
             datetime.now(timezone.utc).isoformat(),
         ),

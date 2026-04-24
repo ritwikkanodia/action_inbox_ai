@@ -282,6 +282,7 @@
     .source-badge.fathom { background: #f3e8fd; color: #7c3aed; }
     .source-badge.user   { background: #f0f0f0; color: #555; }
     .source-badge.browser_history { background: #e6f7ee; color: #137a4a; }
+    .source-badge.system { background: #fff3e0; color: #e65100; }
 
     .new-todo-btn {
       font-family: inherit;
@@ -397,7 +398,7 @@
     <button class="ask-ai-btn" style="visibility:hidden" aria-hidden="true">Ask AI</button>
   </div>
   {% for t in todos %}
-  {% set is_ai = t.source in ('gmail', 'fathom', 'browser_history') %}
+  {% set is_ai = t.source in ('gmail', 'fathom', 'browser_history', 'system') %}
   {% set pending = is_ai and not t.decision and t.status != 'closed' %}
   <div class="todo {{ t.status }}{% if t.decision == 'rejected' %} rejected-todo{% endif %}{% if pending %} pending-decision{% endif %}">
     <div class="dot {{ t.urgency or 'none' }}"></div>
@@ -408,7 +409,7 @@
       <span class="col-due due editable" data-id="{{ t.todo_id }}" data-field="due_date" data-value="{{ t.due_date or '' }}">{{ t.due_date | fmt_dt }}</span>
       <span class="col-urgency urgency {{ t.urgency or '' }} editable" data-id="{{ t.todo_id }}" data-field="urgency" data-value="{{ t.urgency or '' }}">{{ t.urgency or '—' }}</span>
       <span class="col-status editable" data-id="{{ t.todo_id }}" data-field="status" data-value="{{ t.status }}"><span class="status {{ t.status }}">{{ t.status }}</span></span>
-      <span class="col-source"><span class="source-badge {{ t.source or 'gmail' }}">{{ 'browser' if t.source == 'browser_history' else (t.source or 'gmail') }}</span></span>
+      <span class="col-source"><span class="source-badge {{ t.source or 'gmail' }}">{{ 'browser' if t.source == 'browser_history' else ('system' if t.source == 'system' else (t.source or 'gmail')) }}</span></span>
       <span class="col-created">{{ t.created_at | fmt_dt }}</span>
     </div>
     {% if pending %}

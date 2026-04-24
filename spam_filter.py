@@ -1,6 +1,6 @@
 from events import GmailEvent
 
-SPAM_LABELS = {"SPAM", "CATEGORY_PROMOTIONS", "CATEGORY_UPDATES", "CATEGORY_FORUMS"}
+SPAM_LABELS = {"SPAM", "CATEGORY_PROMOTIONS", "CATEGORY_FORUMS"}
 
 
 def is_spam(event: GmailEvent) -> bool:
