@@ -34,7 +34,7 @@ def poll(conn: sqlite3.Connection) -> int:
         set_system_last_polled_at(conn, now.isoformat())
         return 0
 
-    print(f"[system] snapshot:\n{json.dumps(snapshot, indent=2)}")
+    # print(f"[system] snapshot:\n{json.dumps(snapshot, indent=2)}")
 
     open_todos = get_open_system_todos(conn)
     todos = system_generator.generate_todos(snapshot_json, open_todos=open_todos)

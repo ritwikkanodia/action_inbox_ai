@@ -157,6 +157,16 @@ def generate_todos(
         todos = parsed.get("todos", [])
         if not isinstance(todos, list):
             return []
+        for t in todos:
+            if not isinstance(t, dict):
+                continue
+            flag = t.get("should_generate_todo")
+            title = t.get("title", "(no title)")
+            reasoning = t.get("reasoning", "")
+            if flag:
+                print(f"[browser_history/llm] EMIT  {title!r} | {reasoning}")
+            else:
+                print(f"[browser_history/llm] DROP  {title!r} | {reasoning}")
         return [t for t in todos if isinstance(t, dict) and t.get("should_generate_todo")]
     except Exception as exc:
         print(f"[browser_history] LLM call failed: {exc}")

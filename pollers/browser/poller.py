@@ -151,15 +151,20 @@ def _read_recent_history(history_path: str, now: datetime) -> list[tuple]:
 def _save_todos_from_digest(conn: sqlite3.Connection, digest: str, allowed_urls: set[str]) -> int:
     open_titles = get_open_browser_history_titles(conn)
     todos = browser_history_generator.generate_todos(digest, open_todos=open_titles)
+    print(f"[browser_history] LLM returned {len(todos)} candidate(s) that passed should_generate_todo")
     saved = 0
     for todo in todos:
+        title = todo.get("title")
+        reasoning = todo.get("reasoning", "")
         norm = _normalize_url(todo.get("relevant_link"))
         if not norm or norm not in allowed_urls:
-            print(f"[browser_history] dropped (url not in digest): {todo.get('title')!r} -> {todo.get('relevant_link')!r}")
+            print(f"[browser_history] dropped (url not in digest): {title!r} -> {todo.get('relevant_link')!r}")
             continue
         if save_browser_history_todo(conn, todo):
             saved += 1
-            print(f"[browser_history] saved: {todo.get('title')!r}")
+            print(f"[browser_history] saved: {title!r} | reasoning: {reasoning}")
+        else:
+            print(f"[browser_history] skipped (duplicate): {title!r}")
     return saved
 
 
@@ -173,18 +178,32 @@ def poll(conn: sqlite3.Connection) -> int:
     if not _is_poll_due(conn, now):
         return 0
 
+    print(f"[browser_history] poll started at {now.strftime('%Y-%m-%d %H:%M:%S')} UTC")
     rows = _read_recent_history(history_path, now)
     if not rows:
         print("[browser_history] No visits in last 24h.")
         set_browser_history_last_polled_at(conn, now.isoformat())
         return 0
 
-    digest, allowed_urls = _build_digest(rows)
-    if not digest:
-        print("[browser_history] No non-noise visits in last 24h.")
+    print(f"[browser_history] {len(rows)} raw visit rows in last {WINDOW_HOURS}h")
+
+    per_url = _aggregate_visits_by_url(rows)
+    print(f"[browser_history] {len(per_url)} unique URLs after noise filtering")
+
+    domain_totals = _group_urls_by_domain(per_url)
+    if not domain_totals:
+        print("[browser_history] No non-noise visits survived domain grouping.")
         set_browser_history_last_polled_at(conn, now.isoformat())
         return 0
 
+    domain_summary = ", ".join(
+        f"{d} ({n}v)" for d, n, _ in domain_totals
+    )
+    print(f"[browser_history] digest domains ({len(domain_totals)}): {domain_summary}")
+
+    digest, allowed_urls = _render_digest_and_allowed_urls(domain_totals)
+
     saved = _save_todos_from_digest(conn, digest, allowed_urls)
     set_browser_history_last_polled_at(conn, now.isoformat())
+    print(f"[browser_history] poll done — {saved} new todo(s) saved")
     return saved
