@@ -202,6 +202,7 @@ def poll(conn: sqlite3.Connection) -> int:
     print(f"[browser_history] digest domains ({len(domain_totals)}): {domain_summary}")
 
     digest, allowed_urls = _render_digest_and_allowed_urls(domain_totals)
+    # print(f"[browser_history] digest sent to LLM:\n{digest}")
 
     saved = _save_todos_from_digest(conn, digest, allowed_urls)
     set_browser_history_last_polled_at(conn, now.isoformat())
