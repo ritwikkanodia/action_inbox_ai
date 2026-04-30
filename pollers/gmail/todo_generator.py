@@ -1,5 +1,8 @@
 import json
+import logging
 import os
+
+log = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
 from openai import OpenAI
@@ -20,12 +23,13 @@ def _get_client() -> OpenAI:
 
 SYSTEM_PROMPT = """\
 You are an assistant that reviews email threads and decides if the user needs to take action.
-
+Based on the thread, you first infer if any action is required from the user. If an action is required, you need to infer what is the goal of the action required.
 Respond with JSON only, matching this exact schema:
 {
   "should_generate_todo": <boolean>,
   "reasoning": "<one sentence explaining why yes or no>",
   "todo": {
+    "goal": the inferred goal of the action
     "title": "<action verb + specific subject, e.g. 'Reply to Sarah re: Q3 budget', 'Review contract from Acme', 'Confirm Thursday meeting with Alex'>",
     "suggested_action": "<what the user should do>",
     "draft": "<reply text if action is to reply, otherwise null>",
@@ -68,5 +72,6 @@ def generate_todo(thread_context: str, event: GmailEvent) -> dict:
 
     raw = response.choices[0].message.content
     result = json.loads(raw)
+    log.debug(f"Generated todo result: {result}")
     result["_raw"] = raw
     return result
