@@ -75,7 +75,7 @@ def create_todo():
 def ask_ai(todo_id):
     db = get_db()
     row = db.execute(
-        "SELECT title, suggested_action, reasoning, urgency, due_date, source, ai_thread FROM todos WHERE todo_id = ?",
+        "SELECT title, suggested_action, reasoning, urgency, due_date, source, ai_thread, source_meta FROM todos WHERE todo_id = ?",
         (todo_id,),
     ).fetchone()
     if row is None:
@@ -105,6 +105,17 @@ def ask_ai(todo_id):
     db.commit()
 
     return jsonify({"thread": thread})
+
+
+@app.route("/todos/<todo_id>/reset-thread", methods=["POST"])
+def reset_thread(todo_id):
+    db = get_db()
+    db.execute(
+        "UPDATE todos SET ai_thread = NULL, updated_at = ? WHERE todo_id = ?",
+        (datetime.now(timezone.utc).isoformat(), todo_id),
+    )
+    db.commit()
+    return jsonify({"ok": True})
 
 
 @app.route("/todos/<todo_id>", methods=["PATCH"])
