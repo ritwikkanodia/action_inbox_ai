@@ -1,6 +1,7 @@
 import json
 import sqlite3
 from datetime import datetime, timezone
+from agent import resolve_todo
 
 from flask import Flask, g, render_template, request, jsonify
 
@@ -41,7 +42,7 @@ def index():
     db = get_db()
     todos = db.execute(
         """
-        SELECT todo_id, title, suggested_action, draft, urgency,
+        SELECT todo_id, title, suggested_action, urgency,
                estimated_time_minutes, due_date, relevant_link, reasoning, status, source, decision, created_at
         FROM todos
         WHERE title IS NOT NULL AND title != ''
@@ -74,7 +75,7 @@ def create_todo():
 def ask_ai(todo_id):
     db = get_db()
     row = db.execute(
-        "SELECT title, suggested_action, reasoning, draft, urgency, due_date, source, ai_thread FROM todos WHERE todo_id = ?",
+        "SELECT title, suggested_action, reasoning, urgency, due_date, source, ai_thread, source_meta FROM todos WHERE todo_id = ?",
         (todo_id,),
     ).fetchone()
     if row is None:
@@ -95,66 +96,26 @@ def ask_ai(todo_id):
     if thread and not user_message:
         return jsonify({"thread": thread})
 
-    from pollers.gmail.todo_generator import _get_client
+    thread = resolve_todo(dict(row), thread, user_message)
 
-    # Build base todo context
-    parts = [f"Title: {row['title']}"]
-    if row["suggested_action"]:
-        parts.append(f"Suggested action: {row['suggested_action']}")
-    if row["reasoning"]:
-        parts.append(f"Why this todo exists: {row['reasoning']}")
-    if row["draft"]:
-        parts.append(f"Draft reply: {row['draft']}")
-    if row["urgency"]:
-        parts.append(f"Urgency: {row['urgency']}")
-    if row["due_date"]:
-        parts.append(f"Due: {row['due_date']}")
-    todo_context = "\n".join(parts)
-
-    # Build full input — include conversation history for follow-ups
-    if thread or user_message:
-        input_parts = [todo_context]
-        if thread:
-            input_parts.append("\nConversation so far:")
-            for msg in thread:
-                label = "Assistant" if msg["role"] == "assistant" else "User"
-                input_parts.append(f"{label}: {msg['content']}")
-        if user_message:
-            input_parts.append(f"User: {user_message}")
-        input_text = "\n".join(input_parts)
-    else:
-        input_text = todo_context
-
-    client = _get_client()
-    resp = client.responses.create(
-        model="gpt-5.2",
-        instructions=(
-            "You are a task resolution assistant. Your job is to produce the output that resolves the todo — "
-            "not explain how to do it, not recommend steps. Just do it. "
-            "If the task is to reply to someone: output the exact reply, ready to send. "
-            "If the task is to write something: output the written content. "
-            "If the task requires external action the user must take (e.g. a booking, a call): "
-            "output the exact script or message they would use to complete it. "
-            "Use web search proactively for anything that benefits from current information: "
-            "prices, availability, contact details, recent events, deadlines, or factual lookups. "
-            "No preamble. No 'here is a draft'. No meta-commentary. Just the output."
-        ),
-        input=input_text,
-        tools=[{"type": "web_search"}],
+    db.execute(
+        "UPDATE todos SET ai_thread = ?, updated_at = ? WHERE todo_id = ?",
+        (json.dumps(thread), datetime.now(timezone.utc).isoformat(), todo_id),
     )
-    search_count = sum(1 for item in resp.output if item.type == "web_search_call")
-    if search_count:
-        app.logger.info("Web searches fired: %d", search_count)
-
-    ai_text = resp.output_text
-    if user_message:
-        thread.append({"role": "user", "content": user_message})
-    thread.append({"role": "assistant", "content": ai_text})
-
-    db.execute("UPDATE todos SET ai_thread = ? WHERE todo_id = ?", (json.dumps(thread), todo_id))
     db.commit()
 
     return jsonify({"thread": thread})
+
+
+@app.route("/todos/<todo_id>/reset-thread", methods=["POST"])
+def reset_thread(todo_id):
+    db = get_db()
+    db.execute(
+        "UPDATE todos SET ai_thread = NULL, updated_at = ? WHERE todo_id = ?",
+        (datetime.now(timezone.utc).isoformat(), todo_id),
+    )
+    db.commit()
+    return jsonify({"ok": True})
 
 
 @app.route("/todos/<todo_id>", methods=["PATCH"])
@@ -164,9 +125,12 @@ def update_todo(todo_id):
     updates = {k: v for k, v in data.items() if k in ALLOWED}
     if not updates:
         return jsonify({"error": "no valid fields"}), 400
-    sets = ", ".join(f"{k} = ?" for k in updates)
+    sets = ", ".join(f"{k} = ?" for k in updates) + ", updated_at = ?"
     db = get_db()
-    db.execute(f"UPDATE todos SET {sets} WHERE todo_id = ?", (*updates.values(), todo_id))
+    db.execute(
+        f"UPDATE todos SET {sets} WHERE todo_id = ?",
+        (*updates.values(), datetime.now(timezone.utc).isoformat(), todo_id),
+    )
     db.commit()
     return jsonify({"ok": True})
 

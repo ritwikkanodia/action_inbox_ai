@@ -18,9 +18,11 @@ def _get_client() -> OpenAI:
 
 SYSTEM_PROMPT = """\
 You are an assistant that reviews a user's recent browsing history and extracts
-genuinely actionable, unfinished tasks implied by the browsing.
+genuine, unfinished action items. You should generate a todo whenever a page
+signals an incomplete transaction — and skip it when it's just reading,
+research, or passive consumption.
 
-Respond with JSON only, matching this exact schema:
+Respond with raw JSON only — no markdown fences, no prose — matching this exact schema:
 {
   "todos": [
     {
@@ -29,48 +31,56 @@ Respond with JSON only, matching this exact schema:
       "suggested_action": "<what the user should do next>",
       "urgency": "<low|medium|high>",
       "relevant_link": "<a URL copied verbatim from the digest>",
-      "reasoning": "<one sentence — which browsing pattern led to this>"
+      "reasoning": "<one sentence — quote the specific URL path fragment or title phrase that signals an incomplete transaction>"
     }
   ]
 }
 
-Set should_generate_todo to false for any candidate that doesn't clearly pass
-the rules below; those entries will be filtered out.
+EMIT a todo (should_generate_todo = true) when the URL or page title contains
+a commitment marker — evidence the user started something that needs finishing:
 
-Evidence preference (soft, not a hard threshold):
-- Prefer intents visible across multiple page titles on the same topic, or a
-  URL the user returned to more than once.
-- A single casual visit is a weak signal — lean toward should_generate_todo
-  = false unless the page title itself clearly implies an unfinished action
-  (e.g. "Draft — ...", "Resume application", an open checkout cart, an
-  open PR, a partially filled form, "Your order", "Complete signup").
+URL markers (non-exhaustive):
+  /pull/, /issues/, /review, /cart, /checkout, /apply, /application,
+  /drafts, /draft, /compose, /rsvp, /invite, /invoice, /pay, /payment,
+  /billing, /order, /orders, /complete, /confirm, /verify, /date-change,
+  /booking, /mytrips
 
-Title rules (strict):
-- MUST start with an action verb: Finish, Review, Compare, Decide, Apply,
-  Book, Reply, Submit, Read, Respond, Schedule, Pay, Sign, Renew.
-- MUST name a concrete noun taken from the actual page title (product,
-  company, doc, PR, person, form, etc.).
-- Forbidden generic forms: "Continue reading on X", "Explore Y",
-  "Look into Z", "Check out N", "Browse ...", "Research ...".
+Title markers (non-exhaustive):
+  "Pay Taxes", "Select Payment Mode", "Your order", "Order #", "Draft — ",
+  "Review requested", "Pull Request #", "Complete signup", "Checkout",
+  "RSVP", "Confirm your", "Unpaid", "Action required", "Pending",
+  "Select a Date & Time" (when followed by a subsequent booking step),
+  "MakeMyTrip" booking/date-change flow
 
-Exclusions (skip entirely — set should_generate_todo = false):
-- Entertainment: YouTube, Netflix, Spotify, Reddit, Twitter/X, Instagram,
-  TikTok, Twitch.
-- News scrolling / aggregators (HN front page, generic news homepages).
-- Casual LinkedIn/Indeed feed browsing (unless a specific job application
-  in progress).
-- Generic search result pages (google.com/search, duckduckgo, bing).
-- Documentation index / homepages without a specific sub-topic.
-- Maps / shopping without a strong commitment signal (cart, checkout,
-  saved order).
-- Anything already present in "Existing open todos" (dedup).
+DROP (should_generate_todo = false) when the page is passive consumption
+with no commitment marker:
+- Reading: blog posts, Substack, Medium, news, HN, docs homepages
+- Entertainment: YouTube, Netflix, Spotify, Reddit, Twitter/X, Instagram
+- Research: multiple pages on a topic with no transaction in any of them
+- Generic search results (google.com/search, duckduckgo, bing)
+- LinkedIn/Indeed feed without a specific in-progress application
+- Shopping browsing without a cart, checkout, or order URL
 
-Link rule:
-- relevant_link MUST be copied verbatim from a URL that appears in the
-  digest. Do not invent, shorten, or guess URLs. If you can't anchor the
-  todo to a specific URL from the digest, set should_generate_todo = false.
+Revisit rule: repeated visits to a content page (article, docs, video) are
+evidence of reading, NOT of an action item — drop those. Repeated visits to
+a transactional page (payment flow, PR, booking) strengthen the signal.
 
-Empty todos list is a valid response.
+Title rules:
+- Must start with an action verb: Pay, Review, Merge, Submit, Book, Apply,
+  Confirm, RSVP, Complete, Sign, Renew, Respond, Finish, Schedule.
+- Must name a concrete noun from the actual page title.
+- Forbidden: "Continue reading …", "Resume reading …", "Explore …",
+  "Look into …", "Research …", "Browse …".
+
+Link rule: relevant_link must be copied verbatim from the digest. Do not
+invent or guess URLs. No commitment marker + no matching URL = drop.
+
+Dedup: skip anything already in "Existing open todos".
+
+Generate a candidate entry for every plausible item in the digest — even
+ones you will mark should_generate_todo = false — so the reasoning is
+visible. An empty todos list is valid only when nothing in the digest
+resembles a transaction.
 """
 
 
@@ -99,6 +109,16 @@ def generate_todos(
         todos = parsed.get("todos", [])
         if not isinstance(todos, list):
             return []
+        for t in todos:
+            if not isinstance(t, dict):
+                continue
+            flag = t.get("should_generate_todo")
+            title = t.get("title", "(no title)")
+            reasoning = t.get("reasoning", "")
+            if flag:
+                print(f"[browser_history/llm] EMIT  {title!r} | {reasoning}")
+            else:
+                print(f"[browser_history/llm] DROP  {title!r} | {reasoning}")
         return [t for t in todos if isinstance(t, dict) and t.get("should_generate_todo")]
     except Exception as exc:
         print(f"[browser_history] LLM call failed: {exc}")

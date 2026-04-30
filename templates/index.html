@@ -197,8 +197,14 @@
       flex-shrink: 0;
     }
     #ai-modal-title { font-size: 13px; font-weight: 500; color: var(--muted); padding-right: 24px; }
+    #ai-modal-actions { position: absolute; top: 10px; right: 14px; display: flex; align-items: center; gap: 8px; }
+    #ai-new-thread-btn {
+      font-size: 11px; color: var(--muted); background: none;
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: 2px 8px; cursor: pointer;
+    }
+    #ai-new-thread-btn:hover { color: var(--text); border-color: var(--text); }
     #ai-modal-close {
-      position: absolute; top: 12px; right: 14px;
       font-size: 18px; color: var(--muted); background: none; border: none; cursor: pointer;
     }
     #ai-thread {
@@ -433,7 +439,10 @@
   <div id="ai-modal-box">
     <div id="ai-modal-header">
       <div id="ai-modal-title"></div>
-      <button id="ai-modal-close">×</button>
+      <div id="ai-modal-actions">
+        <button id="ai-new-thread-btn" title="Start a new thread">New thread</button>
+        <button id="ai-modal-close">×</button>
+      </div>
     </div>
     <div id="ai-thread"></div>
     <div id="ai-input-area">
@@ -651,6 +660,15 @@
 
   document.getElementById('ai-modal-close').addEventListener('click', () => modal.classList.remove('open'));
   modal.addEventListener('click', e => { if (e.target === modal) modal.classList.remove('open'); });
+
+  document.getElementById('ai-new-thread-btn').addEventListener('click', () => {
+    if (!currentId) return;
+    fetch(`/todos/${currentId}/reset-thread`, { method: 'POST' }).then(() => {
+      delete threadCache[currentId];
+      threadEl.innerHTML = '';
+      callAI(currentId, null);
+    });
+  });
 
   marked.setOptions({ breaks: true });
 
