@@ -32,7 +32,6 @@ Respond with JSON only, matching this exact schema:
     "goal": the inferred goal of the action
     "title": "<action verb + specific subject, e.g. 'Reply to Sarah re: Q3 budget', 'Review contract from Acme', 'Confirm Thursday meeting with Alex'>",
     "suggested_action": "<what the user should do>",
-    "draft": "<reply text if action is to reply, otherwise null>",
     "urgency": "<low|medium|high>",
     "estimated_time_minutes": <integer>,
     "due_date": "<ISO 8601 UTC timestamp if a deadline can be inferred, otherwise null>",

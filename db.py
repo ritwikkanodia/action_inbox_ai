@@ -44,7 +44,6 @@ def init_db(conn: sqlite3.Connection) -> None:
             thread_id              TEXT,
             title                  TEXT,
             suggested_action       TEXT,
-            draft                  TEXT,
             urgency                TEXT,              -- low | medium | high
             estimated_time_minutes INTEGER,
             due_date               TEXT,              -- ISO UTC, nullable
@@ -58,6 +57,9 @@ def init_db(conn: sqlite3.Connection) -> None:
             created_at             TEXT NOT NULL
         );
     """)
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(todos)").fetchall()}
+    if "draft" in cols:
+        conn.execute("ALTER TABLE todos DROP COLUMN draft")
     conn.commit()
 
 
@@ -241,10 +243,10 @@ def save_todo(
         """
         INSERT OR IGNORE INTO todos (
             todo_id, event_id, message_id, thread_id,
-            title, suggested_action, draft, urgency,
+            title, suggested_action, urgency,
             estimated_time_minutes, due_date, relevant_link, reasoning,
             raw_llm_response, status, source, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 'gmail', ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 'gmail', ?)
         """,
         (
             f"todo_{message_id}",
@@ -253,7 +255,6 @@ def save_todo(
             thread_id,
             todo.get("title"),
             todo.get("suggested_action"),
-            todo.get("draft"),
             todo.get("urgency"),
             todo.get("estimated_time_minutes"),
             todo.get("due_date"),
