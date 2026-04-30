@@ -98,7 +98,10 @@ def ask_ai(todo_id):
 
     thread = resolve_todo(dict(row), thread, user_message)
 
-    db.execute("UPDATE todos SET ai_thread = ? WHERE todo_id = ?", (json.dumps(thread), todo_id))
+    db.execute(
+        "UPDATE todos SET ai_thread = ?, updated_at = ? WHERE todo_id = ?",
+        (json.dumps(thread), datetime.now(timezone.utc).isoformat(), todo_id),
+    )
     db.commit()
 
     return jsonify({"thread": thread})
@@ -111,9 +114,12 @@ def update_todo(todo_id):
     updates = {k: v for k, v in data.items() if k in ALLOWED}
     if not updates:
         return jsonify({"error": "no valid fields"}), 400
-    sets = ", ".join(f"{k} = ?" for k in updates)
+    sets = ", ".join(f"{k} = ?" for k in updates) + ", updated_at = ?"
     db = get_db()
-    db.execute(f"UPDATE todos SET {sets} WHERE todo_id = ?", (*updates.values(), todo_id))
+    db.execute(
+        f"UPDATE todos SET {sets} WHERE todo_id = ?",
+        (*updates.values(), datetime.now(timezone.utc).isoformat(), todo_id),
+    )
     db.commit()
     return jsonify({"ok": True})
 

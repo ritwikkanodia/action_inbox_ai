@@ -1,6 +1,9 @@
+import difflib
+import hashlib
 import json
 import sqlite3
 import uuid
+from datetime import datetime, timedelta, timezone
 from urllib.parse import urlparse
 
 from pollers.gmail.events import GmailEvent
@@ -22,7 +25,15 @@ def _normalize_url(url: str | None) -> str | None:
     return f"{host}{path}"
 
 
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def init_db(conn: sqlite3.Connection) -> None:
+    # Fresh DBs get the final schema with CHECK constraints. Existing DBs are
+    # migrated below via ALTER TABLE; SQLite can't add CHECK constraints to an
+    # existing table without a rebuild, so legacy rows keep their permissive
+    # schema and we enforce enums in Python in the save_* helpers.
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS state (
             key   TEXT PRIMARY KEY,
@@ -34,33 +45,134 @@ def init_db(conn: sqlite3.Connection) -> None:
             user_id    TEXT NOT NULL,
             type       TEXT NOT NULL,
             timestamp  TEXT NOT NULL,
-            payload    TEXT NOT NULL   -- full event as JSON
+            payload    TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS todos (
-            todo_id                TEXT PRIMARY KEY,  -- todo_<message_id>
-            event_id               TEXT,
-            message_id             TEXT,
-            thread_id              TEXT,
+            todo_id                TEXT PRIMARY KEY,
+            source                 TEXT NOT NULL
+                                       CHECK (source IN ('gmail','fathom','browser_history','system','user')),
+            dedup_key              TEXT,
             title                  TEXT,
             suggested_action       TEXT,
-            urgency                TEXT,              -- low | medium | high
+            urgency                TEXT CHECK (urgency IS NULL OR urgency IN ('low','medium','high')),
             estimated_time_minutes INTEGER,
-            due_date               TEXT,              -- ISO UTC, nullable
-            relevant_link          TEXT,              -- action URL or Gmail thread fallback
+            due_date               TEXT,
+            relevant_link          TEXT,
             reasoning              TEXT,
-            raw_llm_response       TEXT,              -- exact JSON string from the model
-            status                 TEXT NOT NULL DEFAULT 'open',  -- open | ongoing | closed
-            source                 TEXT NOT NULL DEFAULT 'gmail', -- gmail | fathom | browser_history | user
-            decision               TEXT DEFAULT NULL,             -- NULL | 'accepted' | 'rejected'
+            status                 TEXT NOT NULL DEFAULT 'open'
+                                       CHECK (status IN ('open','ongoing','closed')),
+            decision               TEXT CHECK (decision IS NULL OR decision IN ('accepted','rejected')),
             ai_thread              TEXT,
-            created_at             TEXT NOT NULL
+            source_meta            TEXT,
+            created_at             TEXT NOT NULL,
+            updated_at             TEXT NOT NULL
         );
     """)
+
     cols = {row[1] for row in conn.execute("PRAGMA table_info(todos)").fetchall()}
+
     if "draft" in cols:
         conn.execute("ALTER TABLE todos DROP COLUMN draft")
+        cols.discard("draft")
+
+    legacy_cols = {"event_id", "message_id", "thread_id", "raw_llm_response"}
+    needs_migration = bool(legacy_cols & cols) or "dedup_key" not in cols
+
+    if needs_migration:
+        if "dedup_key" not in cols:
+            conn.execute("ALTER TABLE todos ADD COLUMN dedup_key TEXT")
+        if "source_meta" not in cols:
+            conn.execute("ALTER TABLE todos ADD COLUMN source_meta TEXT")
+        if "updated_at" not in cols:
+            conn.execute("ALTER TABLE todos ADD COLUMN updated_at TEXT")
+
+        # Backfill source_meta from legacy columns and dedup_key from source rules.
+        rows = conn.execute(
+            "SELECT todo_id, source, "
+            + ", ".join(
+                c if c in cols else f"NULL AS {c}"
+                for c in ("event_id", "message_id", "thread_id", "raw_llm_response")
+            )
+            + ", created_at FROM todos"
+        ).fetchall()
+        for todo_id, source, event_id, message_id, thread_id, raw_llm_response, created_at in rows:
+            meta = {
+                k: v for k, v in {
+                    "event_id": event_id,
+                    "message_id": message_id,
+                    "thread_id": thread_id,
+                    "raw_llm_response": raw_llm_response,
+                }.items() if v
+            }
+            if source == "gmail":
+                dedup = message_id or None
+            elif source == "fathom":
+                dedup = message_id or None
+            elif source == "browser_history":
+                dedup = event_id or None
+            else:
+                dedup = None
+            conn.execute(
+                "UPDATE todos SET dedup_key = COALESCE(dedup_key, ?), "
+                "source_meta = COALESCE(source_meta, ?), "
+                "updated_at = COALESCE(updated_at, ?) WHERE todo_id = ?",
+                (dedup, json.dumps(meta) if meta else None, created_at, todo_id),
+            )
+
+        for col in ("event_id", "message_id", "thread_id", "raw_llm_response"):
+            if col in cols:
+                conn.execute(f"ALTER TABLE todos DROP COLUMN {col}")
+
+    conn.executescript("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_dedup
+            ON todos(source, dedup_key) WHERE dedup_key IS NOT NULL;
+        CREATE INDEX IF NOT EXISTS idx_todos_source_status_created
+            ON todos(source, status, created_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_todos_status_created
+            ON todos(status, created_at DESC);
+    """)
     conn.commit()
+
+
+_VALID_URGENCY = {"low", "medium", "high"}
+
+
+def _save_todo(
+    conn: sqlite3.Connection,
+    *,
+    todo_id: str,
+    source: str,
+    dedup_key: str | None,
+    title: str | None,
+    suggested_action: str | None = None,
+    urgency: str | None = None,
+    estimated_time_minutes: int | None = None,
+    due_date: str | None = None,
+    relevant_link: str | None = None,
+    reasoning: str | None = "",
+    source_meta: dict | None = None,
+) -> bool:
+    if urgency not in _VALID_URGENCY:
+        urgency = None
+    now = _now()
+    before = conn.total_changes
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO todos (
+            todo_id, source, dedup_key, title, suggested_action, urgency,
+            estimated_time_minutes, due_date, relevant_link, reasoning,
+            status, source_meta, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)
+        """,
+        (
+            todo_id, source, dedup_key, title, suggested_action, urgency,
+            estimated_time_minutes, due_date, relevant_link, reasoning or "",
+            json.dumps(source_meta) if source_meta else None, now, now,
+        ),
+    )
+    conn.commit()
+    return conn.total_changes > before
 
 
 def get_last_history_id(conn: sqlite3.Connection) -> str | None:
@@ -116,9 +228,6 @@ def get_open_browser_history_titles(conn: sqlite3.Connection, limit: int = 40) -
 
 
 def save_browser_history_todo(conn: sqlite3.Connection, todo: dict) -> bool:
-    import difflib
-    import hashlib
-    from datetime import datetime, timedelta, timezone
     title = (todo.get("title") or "").strip()
     if not title:
         return False
@@ -135,62 +244,46 @@ def save_browser_history_todo(conn: sqlite3.Connection, todo: dict) -> bool:
     for (et,) in existing:
         if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.80:
             return False
-    h = hashlib.sha1(norm.encode()).hexdigest()[:12]
-    uid = f"browser_history_url_{h}"
-    before = conn.total_changes
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO todos (
-            todo_id, event_id, message_id, thread_id,
-            title, suggested_action, urgency,
-            relevant_link, reasoning, status, source, created_at
-        ) VALUES (?, ?, '', '', ?, ?, ?, ?, ?, 'open', 'browser_history', ?)
-        """,
-        (
-            f"todo_{uid}",
-            uid,
-            title,
-            todo.get("suggested_action", ""),
-            todo.get("urgency", "medium"),
-            todo.get("relevant_link", ""),
-            todo.get("reasoning", ""),
-            datetime.now(timezone.utc).isoformat(),
-        ),
+    dedup = hashlib.sha1(norm.encode()).hexdigest()[:12]
+    return _save_todo(
+        conn,
+        todo_id=f"todo_browser_history_url_{dedup}",
+        source="browser_history",
+        dedup_key=dedup,
+        title=title,
+        suggested_action=todo.get("suggested_action", ""),
+        urgency=todo.get("urgency", "medium"),
+        relevant_link=todo.get("relevant_link", ""),
+        reasoning=todo.get("reasoning", ""),
+        source_meta={"normalized_url": norm, "raw_url": todo.get("relevant_link", "")},
     )
-    conn.commit()
-    return conn.total_changes > before
 
 
 def save_fathom_todo(conn: sqlite3.Connection, meeting: dict, idx: int, item: dict) -> None:
-    from datetime import datetime, timezone
     recording_id = str(meeting.get("recording_id", ""))
-    uid = f"fathom_{recording_id}_{idx}"
+    dedup = f"{recording_id}_{idx}"
     meeting_title = meeting.get("meeting_title") or meeting.get("title", "")
     assignee = item.get("assignee") or {}
     reasoning = f"Action item from Fathom meeting: {meeting_title}"
     if assignee.get("name"):
         reasoning += f" — assigned to {assignee['name']}"
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO todos (
-            todo_id, event_id, message_id, thread_id,
-            title, suggested_action, urgency,
-            relevant_link, reasoning, status, source, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, 'medium', ?, ?, 'open', 'fathom', ?)
-        """,
-        (
-            f"todo_{uid}",
-            f"fathom_{recording_id}",
-            uid,
-            recording_id,
-            item.get("description", "(no description)"),
-            item.get("description", ""),
-            item.get("recording_playback_url") or meeting.get("url", ""),
-            reasoning,
-            datetime.now(timezone.utc).isoformat(),
-        ),
+    _save_todo(
+        conn,
+        todo_id=f"todo_fathom_{dedup}",
+        source="fathom",
+        dedup_key=dedup,
+        title=item.get("description", "(no description)"),
+        suggested_action=item.get("description", ""),
+        urgency="medium",
+        relevant_link=item.get("recording_playback_url") or meeting.get("url", ""),
+        reasoning=reasoning,
+        source_meta={
+            "recording_id": recording_id,
+            "meeting_title": meeting_title,
+            "assignee": assignee or None,
+            "item_index": idx,
+        },
     )
-    conn.commit()
 
 
 def _event_to_dict(event: GmailEvent) -> dict:
@@ -232,39 +325,31 @@ def save_todo(
     result: dict,
     user_email: str = "",
 ) -> None:
-    from datetime import datetime, timezone
     todo = result.get("todo") or {}
     authuser = f"?authuser={user_email}" if user_email else ""
     relevant_link = (
         todo.get("relevant_link")
         or f"https://mail.google.com/mail/u/0/{authuser}#all/{thread_id}"
     )
-    conn.execute(
-        """
-        INSERT OR IGNORE INTO todos (
-            todo_id, event_id, message_id, thread_id,
-            title, suggested_action, urgency,
-            estimated_time_minutes, due_date, relevant_link, reasoning,
-            raw_llm_response, status, source, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', 'gmail', ?)
-        """,
-        (
-            f"todo_{message_id}",
-            event_id,
-            message_id,
-            thread_id,
-            todo.get("title"),
-            todo.get("suggested_action"),
-            todo.get("urgency"),
-            todo.get("estimated_time_minutes"),
-            todo.get("due_date"),
-            relevant_link,
-            result.get("reasoning", ""),
-            result.get("_raw"),
-            datetime.now(timezone.utc).isoformat(),
-        ),
+    _save_todo(
+        conn,
+        todo_id=f"todo_{message_id}",
+        source="gmail",
+        dedup_key=message_id,
+        title=todo.get("title"),
+        suggested_action=todo.get("suggested_action"),
+        urgency=todo.get("urgency"),
+        estimated_time_minutes=todo.get("estimated_time_minutes"),
+        due_date=todo.get("due_date"),
+        relevant_link=relevant_link,
+        reasoning=result.get("reasoning", ""),
+        source_meta={
+            "event_id": event_id,
+            "message_id": message_id,
+            "thread_id": thread_id,
+            "raw_llm_response": result.get("_raw"),
+        },
     )
-    conn.commit()
 
 
 def save_user_todo(
@@ -274,26 +359,18 @@ def save_user_todo(
     due_date: str | None = None,
     suggested_action: str = "",
 ) -> str:
-    from datetime import datetime, timezone
     todo_id = f"todo_user_{uuid.uuid4().hex[:12]}"
-    conn.execute(
-        """
-        INSERT INTO todos (
-            todo_id, event_id, message_id, thread_id,
-            title, suggested_action, urgency,
-            due_date, reasoning, status, source, created_at
-        ) VALUES (?, '', '', '', ?, ?, ?, ?, '', 'open', 'user', ?)
-        """,
-        (
-            todo_id,
-            title,
-            suggested_action,
-            urgency,
-            due_date,
-            datetime.now(timezone.utc).isoformat(),
-        ),
+    _save_todo(
+        conn,
+        todo_id=todo_id,
+        source="user",
+        dedup_key=None,
+        title=title,
+        suggested_action=suggested_action,
+        urgency=urgency,
+        due_date=due_date,
+        reasoning="",
     )
-    conn.commit()
     return todo_id
 
 
@@ -322,13 +399,9 @@ def get_open_system_todos(conn: sqlite3.Connection, limit: int = 20) -> list[str
 
 
 def save_system_todo(conn: sqlite3.Connection, todo: dict) -> bool:
-    import difflib
-    from datetime import datetime, timedelta, timezone
     title = (todo.get("title") or "").strip()
     if not title:
         return False
-    # Fuzzy-match against any system todo in the last 30 days to prevent
-    # "Review ~/Documents" / "Clean up ~/Documents" / "Organise ~/Documents" duplicates.
     cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
     existing = conn.execute(
         "SELECT title FROM todos WHERE source = 'system' AND created_at >= ?",
@@ -337,27 +410,17 @@ def save_system_todo(conn: sqlite3.Connection, todo: dict) -> bool:
     for (et,) in existing:
         if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.60:
             return False
-    uid = f"system_{uuid.uuid4().hex[:12]}"
-    before = conn.total_changes
-    conn.execute(
-        """
-        INSERT INTO todos (
-            todo_id, event_id, message_id, thread_id,
-            title, suggested_action, urgency,
-            reasoning, status, source, created_at
-        ) VALUES (?, ?, '', '', ?, ?, 'low', ?, 'open', 'system', ?)
-        """,
-        (
-            f"todo_{uid}",
-            uid,
-            title,
-            todo.get("suggested_action", ""),
-            todo.get("reasoning", ""),
-            datetime.now(timezone.utc).isoformat(),
-        ),
+    uid = uuid.uuid4().hex[:12]
+    return _save_todo(
+        conn,
+        todo_id=f"todo_system_{uid}",
+        source="system",
+        dedup_key=None,
+        title=title,
+        suggested_action=todo.get("suggested_action", ""),
+        urgency="low",
+        reasoning=todo.get("reasoning", ""),
     )
-    conn.commit()
-    return conn.total_changes > before
 
 
 def save_event(conn: sqlite3.Connection, event: GmailEvent) -> None:
