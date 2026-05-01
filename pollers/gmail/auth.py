@@ -27,8 +27,8 @@ def get_auth_flow(
     )
 
 
-def get_gmail_service(conn: sqlite3.Connection):
-    row = get_source_connection(conn, "gmail")
+def get_gmail_service(conn: sqlite3.Connection, user_id: str):
+    row = get_source_connection(conn, user_id, "gmail")
     if not row:
         raise RuntimeError(
             "Gmail not connected. Visit the settings page to authorize."
@@ -39,7 +39,9 @@ def get_gmail_service(conn: sqlite3.Connection):
     if not creds.valid:
         if creds.expired and creds.refresh_token:
             creds.refresh(Request())
-            set_source_credentials(conn, "gmail", "oauth2", json.loads(creds.to_json()))
+            set_source_credentials(
+                conn, user_id, "gmail", "oauth2", json.loads(creds.to_json())
+            )
         else:
             raise RuntimeError(
                 "Gmail credentials expired. Re-authorize via the settings page."

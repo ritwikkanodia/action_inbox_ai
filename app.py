@@ -6,7 +6,20 @@ from agent import resolve_todo
 
 from flask import Flask, g, render_template, request, jsonify, redirect, session, url_for
 
-from db import init_db, save_user_todo, get_source_connection, set_source_credentials, clear_source_connection
+from db import (
+    init_db,
+    save_user_todo,
+    get_source_connection,
+    set_source_credentials,
+    clear_source_connection,
+)
+from auth import (
+    complete_login,
+    current_user,
+    current_user_id,
+    login_required,
+    start_login,
+)
 
 # Allow OAuth over http for local development
 os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
@@ -15,6 +28,7 @@ app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(32))
 
 GMAIL_REDIRECT_URI = "http://localhost:5001/oauth/gmail/callback"
+LOGIN_REDIRECT_URI = "http://localhost:5001/oauth/login/callback"
 
 
 @app.template_filter("fmt_dt")
@@ -26,6 +40,8 @@ def fmt_dt(value: str | None) -> str:
         return dt.strftime("%-d %b %Y, %-I:%M %p").replace("AM", "am").replace("PM", "pm")
     except ValueError:
         return value[:16]
+
+
 DB_PATH = "gmail_events.db"
 
 
@@ -44,25 +60,65 @@ def close_db(exc):
         db.close()
 
 
+# ---------------------------------------------------------------------------
+# Login routes
+# ---------------------------------------------------------------------------
+
+
+@app.route("/login")
+def login_page():
+    if current_user_id():
+        return redirect(url_for("index"))
+    return render_template("login.html")
+
+
+@app.route("/oauth/login/start")
+def login_start():
+    return start_login(LOGIN_REDIRECT_URI)
+
+
+@app.route("/oauth/login/callback")
+def login_callback():
+    user_id, error = complete_login(LOGIN_REDIRECT_URI, get_db(), request.url)
+    if error:
+        return f"Login failed: {error}", 400
+    return redirect(url_for("index"))
+
+
+@app.route("/logout", methods=["POST", "GET"])
+def logout():
+    session.clear()
+    return redirect(url_for("login_page"))
+
+
+# ---------------------------------------------------------------------------
+# Todos
+# ---------------------------------------------------------------------------
+
+
 @app.route("/")
+@login_required
 def index():
     db = get_db()
+    user_id = current_user_id()
     todos = db.execute(
         """
         SELECT todo_id, title, suggested_action, urgency,
                estimated_time_minutes, due_date, relevant_link, reasoning, status, source, decision, created_at
         FROM todos
-        WHERE title IS NOT NULL AND title != ''
+        WHERE user_id = ? AND title IS NOT NULL AND title != ''
         ORDER BY
             CASE status WHEN 'closed' THEN 1 ELSE 0 END,
             CASE urgency WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
             created_at DESC
-        """
+        """,
+        (user_id,),
     ).fetchall()
-    return render_template("index.html", todos=todos)
+    return render_template("index.html", todos=todos, user=current_user())
 
 
 @app.route("/todos", methods=["POST"])
+@login_required
 def create_todo():
     data = request.get_json(force=True)
     title = (data.get("title") or "").strip()
@@ -74,16 +130,19 @@ def create_todo():
     due_date = data.get("due_date") or None
     suggested_action = (data.get("suggested_action") or "").strip()
     db = get_db()
-    todo_id = save_user_todo(db, title, urgency, due_date, suggested_action)
+    todo_id = save_user_todo(db, current_user_id(), title, urgency, due_date, suggested_action)
     return jsonify({"ok": True, "todo_id": todo_id}), 201
 
 
 @app.route("/todos/<todo_id>/ask-ai", methods=["POST"])
+@login_required
 def ask_ai(todo_id):
     db = get_db()
+    user_id = current_user_id()
     row = db.execute(
-        "SELECT title, suggested_action, reasoning, urgency, due_date, source, ai_thread, source_meta FROM todos WHERE todo_id = ?",
-        (todo_id,),
+        "SELECT title, suggested_action, reasoning, urgency, due_date, source, ai_thread, source_meta "
+        "FROM todos WHERE todo_id = ? AND user_id = ?",
+        (todo_id, user_id),
     ).fetchone()
     if row is None:
         return jsonify({"error": "not found"}), 404
@@ -106,8 +165,8 @@ def ask_ai(todo_id):
     thread = resolve_todo(dict(row), thread, user_message)
 
     db.execute(
-        "UPDATE todos SET ai_thread = ?, updated_at = ? WHERE todo_id = ?",
-        (json.dumps(thread), datetime.now(timezone.utc).isoformat(), todo_id),
+        "UPDATE todos SET ai_thread = ?, updated_at = ? WHERE todo_id = ? AND user_id = ?",
+        (json.dumps(thread), datetime.now(timezone.utc).isoformat(), todo_id, user_id),
     )
     db.commit()
 
@@ -115,17 +174,19 @@ def ask_ai(todo_id):
 
 
 @app.route("/todos/<todo_id>/reset-thread", methods=["POST"])
+@login_required
 def reset_thread(todo_id):
     db = get_db()
     db.execute(
-        "UPDATE todos SET ai_thread = NULL, updated_at = ? WHERE todo_id = ?",
-        (datetime.now(timezone.utc).isoformat(), todo_id),
+        "UPDATE todos SET ai_thread = NULL, updated_at = ? WHERE todo_id = ? AND user_id = ?",
+        (datetime.now(timezone.utc).isoformat(), todo_id, current_user_id()),
     )
     db.commit()
     return jsonify({"ok": True})
 
 
 @app.route("/todos/<todo_id>", methods=["PATCH"])
+@login_required
 def update_todo(todo_id):
     ALLOWED = {"due_date", "urgency", "status", "decision"}
     data = request.get_json(force=True)
@@ -135,19 +196,26 @@ def update_todo(todo_id):
     sets = ", ".join(f"{k} = ?" for k in updates) + ", updated_at = ?"
     db = get_db()
     db.execute(
-        f"UPDATE todos SET {sets} WHERE todo_id = ?",
-        (*updates.values(), datetime.now(timezone.utc).isoformat(), todo_id),
+        f"UPDATE todos SET {sets} WHERE todo_id = ? AND user_id = ?",
+        (*updates.values(), datetime.now(timezone.utc).isoformat(), todo_id, current_user_id()),
     )
     db.commit()
     return jsonify({"ok": True})
 
 
+# ---------------------------------------------------------------------------
+# Settings
+# ---------------------------------------------------------------------------
+
+
 @app.route("/settings", methods=["GET"])
+@login_required
 def get_settings():
     db = get_db()
-    fathom = get_source_connection(db, "fathom")
+    user_id = current_user_id()
+    fathom = get_source_connection(db, user_id, "fathom")
     fathom_key = (fathom or {}).get("credentials", {}).get("api_key", "") if fathom else None
-    gmail = get_source_connection(db, "gmail")
+    gmail = get_source_connection(db, user_id, "gmail")
     return jsonify({
         "sources": {
             "fathom": {
@@ -163,6 +231,7 @@ def get_settings():
 
 
 @app.route("/settings/sources/gmail/auth")
+@login_required
 def gmail_auth():
     from pollers.gmail.auth import get_auth_flow
     flow = get_auth_flow(GMAIL_REDIRECT_URI)
@@ -176,6 +245,7 @@ def gmail_auth():
 
 
 @app.route("/oauth/gmail/callback")
+@login_required
 def gmail_callback():
     from pollers.gmail.auth import get_auth_flow
     oauth_state = session.get("gmail_oauth_state")
@@ -196,31 +266,35 @@ def gmail_callback():
     )
     creds = flow.credentials
     db = get_db()
-    set_source_credentials(db, "gmail", "oauth2", json.loads(creds.to_json()))
+    set_source_credentials(
+        db, current_user_id(), "gmail", "oauth2", json.loads(creds.to_json())
+    )
     session.pop("gmail_oauth_state", None)
     session.pop("gmail_oauth_code_verifier", None)
     return redirect(url_for("index"))
 
 
 @app.route("/settings/sources/<source>", methods=["POST"])
+@login_required
 def update_source_settings(source: str):
     ALLOWED_SOURCES = {"fathom", "gmail"}
     if source not in ALLOWED_SOURCES:
         return jsonify({"error": "unknown source"}), 400
     data = request.get_json(force=True, silent=True) or {}
     db = get_db()
+    user_id = current_user_id()
     if source == "fathom":
         if data.get("disconnect"):
-            clear_source_connection(db, "fathom")
+            clear_source_connection(db, user_id, "fathom")
             return jsonify({"ok": True, "connected": False})
         api_key = (data.get("api_key") or "").strip()
         if not api_key:
             return jsonify({"error": "api_key required"}), 400
-        set_source_credentials(db, "fathom", "api_key", {"api_key": api_key})
+        set_source_credentials(db, user_id, "fathom", "api_key", {"api_key": api_key})
         return jsonify({"ok": True, "connected": True, "api_key_preview": f"...{api_key[-6:]}"})
     if source == "gmail":
         if data.get("disconnect"):
-            clear_source_connection(db, "gmail")
+            clear_source_connection(db, user_id, "gmail")
             return jsonify({"ok": True, "connected": False})
         return jsonify({"error": "use /settings/sources/gmail/auth to connect"}), 400
     return jsonify({"error": "unhandled"}), 500

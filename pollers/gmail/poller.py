@@ -142,11 +142,11 @@ def _build_simple_event(
 
 
 def poll(service, conn: sqlite3.Connection, user_id: str) -> list[GmailEvent]:
-    last_id = get_last_history_id(conn)
+    last_id = get_last_history_id(conn, user_id)
 
     if last_id is None:
         current_id = get_current_history_id(service)
-        set_last_history_id(conn, current_id)
+        set_last_history_id(conn, user_id, current_id)
         print(f"[init] Baseline historyId set to {current_id}. Waiting for changes...")
         return []
 
@@ -215,6 +215,6 @@ def poll(service, conn: sqlite3.Connection, user_id: str) -> list[GmailEvent]:
             break
 
     if max_history_id != last_id:
-        set_last_history_id(conn, max_history_id)
+        set_last_history_id(conn, user_id, max_history_id)
 
     return events

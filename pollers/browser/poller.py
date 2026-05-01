@@ -168,8 +168,8 @@ def _render_digest_and_allowed_urls(
                 allowed.add(norm)
     return "\n".join(lines), allowed
 
-def _is_poll_due(conn: sqlite3.Connection, now: datetime) -> bool:
-    last = get_browser_history_last_polled_at(conn)
+def _is_poll_due(conn: sqlite3.Connection, user_id: str, now: datetime) -> bool:
+    last = get_browser_history_last_polled_at(conn, user_id)
     if not last:
         return True
     try:
@@ -205,8 +205,10 @@ def _read_recent_history(history_path: str, now: datetime) -> list[tuple]:
             pass
 
 
-def _save_todos_from_digest(conn: sqlite3.Connection, digest: str, allowed_urls: set[str]) -> int:
-    open_titles = get_open_browser_history_titles(conn)
+def _save_todos_from_digest(
+    conn: sqlite3.Connection, user_id: str, digest: str, allowed_urls: set[str]
+) -> int:
+    open_titles = get_open_browser_history_titles(conn, user_id)
     todos = browser_history_generator.generate_todos(digest, open_todos=open_titles)
     log.info("LLM returned %d candidate(s) that passed should_generate_todo", len(todos))
     saved = 0
@@ -217,7 +219,7 @@ def _save_todos_from_digest(conn: sqlite3.Connection, digest: str, allowed_urls:
         if not norm or norm not in allowed_urls:
             log.info("dropped (url not in digest): %r -> %r", title, todo.get("relevant_link"))
             continue
-        if save_browser_history_todo(conn, todo):
+        if save_browser_history_todo(conn, user_id, todo):
             saved += 1
             log.info("saved: %r | reasoning: %s", title, reasoning)
         else:
@@ -225,14 +227,14 @@ def _save_todos_from_digest(conn: sqlite3.Connection, digest: str, allowed_urls:
     return saved
 
 
-def poll(conn: sqlite3.Connection) -> int:
+def poll(conn: sqlite3.Connection, user_id: str) -> int:
     history_path = os.environ.get("BROWSER_HISTORY_PATH", DEFAULT_HISTORY_PATH)
     if not os.path.exists(history_path):
         log.info("History file not found at %s, skipping", history_path)
         return 0
 
     now = datetime.now(timezone.utc)
-    if not _is_poll_due(conn, now):
+    if not _is_poll_due(conn, user_id, now):
         log.info("poll skipped, not due yet (interval=%ds)", MIN_INTERVAL_SECONDS)
         return 0
 
@@ -240,7 +242,7 @@ def poll(conn: sqlite3.Connection) -> int:
     rows = _read_recent_history(history_path, now)
     if not rows:
         log.info("No visits in last 24h.")
-        set_browser_history_last_polled_at(conn, now.isoformat())
+        set_browser_history_last_polled_at(conn, user_id, now.isoformat())
         return 0
 
     log.info("%d raw visit rows in last %dh", len(rows), WINDOW_HOURS)
@@ -254,7 +256,7 @@ def poll(conn: sqlite3.Connection) -> int:
     domain_totals = _group_urls_by_domain(per_url)
     if not domain_totals:
         log.info("No non-noise visits survived domain grouping.")
-        set_browser_history_last_polled_at(conn, now.isoformat())
+        set_browser_history_last_polled_at(conn, user_id, now.isoformat())
         return 0
 
     domain_summary = ", ".join(
@@ -264,7 +266,7 @@ def poll(conn: sqlite3.Connection) -> int:
 
     digest, allowed_urls = _render_digest_and_allowed_urls(domain_totals)
 
-    saved = _save_todos_from_digest(conn, digest, allowed_urls)
-    set_browser_history_last_polled_at(conn, now.isoformat())
+    saved = _save_todos_from_digest(conn, user_id, digest, allowed_urls)
+    set_browser_history_last_polled_at(conn, user_id, now.isoformat())
     log.info("poll done — %d new todo(s) saved", saved)
     return saved

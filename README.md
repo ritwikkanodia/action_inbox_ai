@@ -42,7 +42,7 @@ python main.py
 flask --app app run --debug --port 5001
 ```
 
-Open `http://127.0.0.1:5001/`
+Open `http://localhost:5001/`
 
 
 ## Project layout

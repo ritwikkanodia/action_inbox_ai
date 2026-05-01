@@ -366,6 +366,35 @@
     }
     .new-todo-btn:hover { border-color: var(--text); color: var(--text); }
 
+    .user-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 3px 4px 3px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      font-size: 12px;
+      color: var(--text);
+      background: white;
+    }
+    .user-chip img {
+      width: 22px; height: 22px; border-radius: 50%;
+    }
+    .user-chip .user-initial {
+      width: 22px; height: 22px; border-radius: 50%;
+      background: var(--text); color: white;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 500;
+    }
+    .logout-form { display: inline; margin: 0; padding: 0; }
+    .logout-btn {
+      font-family: inherit; font-size: 12px;
+      color: var(--muted); background: none;
+      border: none; cursor: pointer;
+      padding: 0 4px;
+    }
+    .logout-btn:hover { color: var(--text); }
+
     .new-todo-form {
       display: none;
       flex-direction: column;
@@ -429,6 +458,19 @@
     <span class="count" id="todoCount">{{ todos|length }}</span>
     <button class="new-todo-btn" id="openSettingsBtn">Settings</button>
     <button class="new-todo-btn" id="openFormBtn">+ New</button>
+    {% if user %}
+    <span class="user-chip" title="{{ user.email }}">
+      {% if user.picture_url %}
+        <img src="{{ user.picture_url }}" alt="">
+      {% else %}
+        <span class="user-initial">{{ (user.name or user.email or '?')[0]|upper }}</span>
+      {% endif %}
+      <span>{{ user.name or user.email }}</span>
+      <form class="logout-form" action="{{ url_for('logout') }}" method="post">
+        <button type="submit" class="logout-btn" title="Sign out">Sign out</button>
+      </form>
+    </span>
+    {% endif %}
   </div>
 </header>
 

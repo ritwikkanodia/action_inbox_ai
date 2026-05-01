@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sign in — Inbox Todos</title>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f7f6f3;
+      --border: #e2e0da;
+      --text: #1a1a1a;
+      --muted: #9a9893;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .card {
+      background: white;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 40px 36px;
+      width: min(380px, 92vw);
+      text-align: center;
+    }
+
+    .card h1 {
+      font-size: 18px;
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+
+    .card p {
+      color: var(--muted);
+      font-size: 13px;
+      margin-bottom: 28px;
+      line-height: 1.5;
+    }
+
+    .google-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 500;
+      background: var(--text);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      padding: 11px 18px;
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .google-btn:hover { opacity: 0.92; }
+
+    .google-icon {
+      width: 16px;
+      height: 16px;
+      background: white;
+      border-radius: 2px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 700;
+      color: #4285F4;
+      font-size: 12px;
+      font-family: 'Arial', sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Inbox Todos</h1>
+    <p>Sign in with your Google account to view your todos and connect data sources.</p>
+    <a class="google-btn" href="{{ url_for('login_start') }}">
+      <span class="google-icon">G</span>
+      Sign in with Google
+    </a>
+  </div>
+</body>
+</html>
