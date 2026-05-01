@@ -1,13 +1,20 @@
 import json
+import os
 import sqlite3
 from datetime import datetime, timezone
 from agent import resolve_todo
 
-from flask import Flask, g, render_template, request, jsonify
+from flask import Flask, g, render_template, request, jsonify, redirect, session, url_for
 
 from db import init_db, save_user_todo, get_source_connection, set_source_credentials, clear_source_connection
 
+# Allow OAuth over http for local development
+os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
+
 app = Flask(__name__)
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(32))
+
+GMAIL_REDIRECT_URI = "http://localhost:5001/oauth/gmail/callback"
 
 
 @app.template_filter("fmt_dt")
@@ -140,19 +147,64 @@ def get_settings():
     db = get_db()
     fathom = get_source_connection(db, "fathom")
     fathom_key = (fathom or {}).get("credentials", {}).get("api_key", "") if fathom else None
+    gmail = get_source_connection(db, "gmail")
     return jsonify({
         "sources": {
             "fathom": {
                 "connected": bool(fathom),
                 "api_key_preview": f"...{fathom_key[-6:]}" if fathom_key else None,
-            }
+            },
+            "gmail": {
+                "connected": bool(gmail),
+                "auth_url": url_for("gmail_auth"),
+            },
         }
     })
 
 
+@app.route("/settings/sources/gmail/auth")
+def gmail_auth():
+    from pollers.gmail.auth import get_auth_flow
+    flow = get_auth_flow(GMAIL_REDIRECT_URI)
+    auth_url, state = flow.authorization_url(
+        access_type="offline",
+        prompt="consent",
+    )
+    session["gmail_oauth_state"] = state
+    session["gmail_oauth_code_verifier"] = flow.code_verifier
+    return redirect(auth_url)
+
+
+@app.route("/oauth/gmail/callback")
+def gmail_callback():
+    from pollers.gmail.auth import get_auth_flow
+    oauth_state = session.get("gmail_oauth_state")
+    code_verifier = session.get("gmail_oauth_code_verifier")
+    if not oauth_state or not code_verifier:
+        return (
+            "Gmail OAuth session expired. Start the Gmail connection flow again.",
+            400,
+        )
+
+    flow = get_auth_flow(
+        GMAIL_REDIRECT_URI,
+        state=oauth_state,
+        code_verifier=code_verifier,
+    )
+    flow.fetch_token(
+        authorization_response=request.url,
+    )
+    creds = flow.credentials
+    db = get_db()
+    set_source_credentials(db, "gmail", "oauth2", json.loads(creds.to_json()))
+    session.pop("gmail_oauth_state", None)
+    session.pop("gmail_oauth_code_verifier", None)
+    return redirect(url_for("index"))
+
+
 @app.route("/settings/sources/<source>", methods=["POST"])
 def update_source_settings(source: str):
-    ALLOWED_SOURCES = {"fathom"}
+    ALLOWED_SOURCES = {"fathom", "gmail"}
     if source not in ALLOWED_SOURCES:
         return jsonify({"error": "unknown source"}), 400
     data = request.get_json(force=True, silent=True) or {}
@@ -166,6 +218,11 @@ def update_source_settings(source: str):
             return jsonify({"error": "api_key required"}), 400
         set_source_credentials(db, "fathom", "api_key", {"api_key": api_key})
         return jsonify({"ok": True, "connected": True, "api_key_preview": f"...{api_key[-6:]}"})
+    if source == "gmail":
+        if data.get("disconnect"):
+            clear_source_connection(db, "gmail")
+            return jsonify({"ok": True, "connected": False})
+        return jsonify({"error": "use /settings/sources/gmail/auth to connect"}), 400
     return jsonify({"error": "unhandled"}), 500
 
 

@@ -506,6 +506,21 @@
       <button id="settings-modal-close">×</button>
     </div>
     <div id="settings-body">
+      <div class="source-card" id="gmail-card">
+        <div class="source-card-header">
+          <span class="source-card-name">Gmail</span>
+          <span class="source-connected-badge off" id="gmail-status">Not connected</span>
+        </div>
+        <div class="source-card-body">
+          <div id="gmail-connect-row">
+            <button class="btn-connect" id="gmail-connect-btn">Connect with Google</button>
+          </div>
+          <div id="gmail-connected-row" style="display:none; gap:8px; align-items:center;">
+            <span class="source-card-hint">Authorized via OAuth</span>
+            <button class="btn-disconnect" id="gmail-disconnect-btn">Disconnect</button>
+          </div>
+        </div>
+      </div>
       <div class="source-card" id="fathom-card">
         <div class="source-card-header">
           <span class="source-card-name">Fathom</span>
@@ -878,17 +893,32 @@
     document.getElementById('fathom-key-input').value = '';
   }
 
+  function setGmailConnected() {
+    document.getElementById('gmail-status').textContent = 'Connected';
+    document.getElementById('gmail-status').className = 'source-connected-badge on';
+    document.getElementById('gmail-connect-row').style.display = 'none';
+    document.getElementById('gmail-connected-row').style.display = 'flex';
+  }
+
+  function setGmailDisconnected() {
+    document.getElementById('gmail-status').textContent = 'Not connected';
+    document.getElementById('gmail-status').className = 'source-connected-badge off';
+    document.getElementById('gmail-connect-row').style.display = 'block';
+    document.getElementById('gmail-connected-row').style.display = 'none';
+  }
+
   function openSettingsModal() {
     settingsModal.classList.add('open');
     fetch('/settings')
       .then(r => r.json())
       .then(data => {
         const fathom = data.sources.fathom;
-        if (fathom.connected) {
-          setFathomConnected(fathom.api_key_preview);
-        } else {
-          setFathomDisconnected();
-        }
+        if (fathom.connected) setFathomConnected(fathom.api_key_preview);
+        else setFathomDisconnected();
+
+        const gmail = data.sources.gmail;
+        if (gmail.connected) setGmailConnected();
+        else setGmailDisconnected();
       });
   }
 
@@ -922,6 +952,20 @@
     })
       .then(r => r.json())
       .then(data => { if (data.ok) setFathomDisconnected(); });
+  });
+
+  document.getElementById('gmail-connect-btn').addEventListener('click', () => {
+    window.location.href = '/settings/sources/gmail/auth';
+  });
+
+  document.getElementById('gmail-disconnect-btn').addEventListener('click', () => {
+    fetch('/settings/sources/gmail', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disconnect: true }),
+    })
+      .then(r => r.json())
+      .then(data => { if (data.ok) setGmailDisconnected(); });
   });
 </script>
 </body>

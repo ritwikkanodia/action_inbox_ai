@@ -32,8 +32,13 @@ def main():
     conn = sqlite3.connect(DB_PATH)
     init_db(conn)
 
-    print("Authenticating with Gmail...")
-    service = get_gmail_service()
+    print("Connecting to Gmail...")
+    try:
+        service = get_gmail_service(conn)
+    except RuntimeError as e:
+        print(f"[gmail] {e}")
+        print("Start the web UI (python app.py) and visit /settings/sources/gmail/auth to authorize.")
+        return
     user_id = get_user_id(service)
     print(f"Authenticated as {user_id}. Polling every {POLL_INTERVAL_SECONDS}s...")
 
