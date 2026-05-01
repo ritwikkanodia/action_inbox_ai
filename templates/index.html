@@ -179,6 +179,69 @@
     .ask-ai-btn:hover { border-color: var(--text); color: var(--text); }
     .ask-ai-btn:disabled { opacity: 0.5; cursor: default; }
 
+    #settings-modal {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.35); z-index: 100;
+      align-items: center; justify-content: center;
+    }
+    #settings-modal.open { display: flex; }
+    #settings-modal-box {
+      background: white; border-radius: 8px;
+      width: min(520px, 92vw);
+      display: flex; flex-direction: column;
+      overflow: hidden;
+    }
+    #settings-modal-header {
+      padding: 16px 20px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    #settings-modal-header h2 { font-size: 15px; font-weight: 500; }
+    #settings-modal-close {
+      font-size: 18px; color: var(--muted); background: none; border: none; cursor: pointer;
+    }
+    #settings-body { padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+    .source-card {
+      border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
+    }
+    .source-card-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 12px 14px;
+      background: #fafaf8;
+      border-bottom: 1px solid var(--border);
+    }
+    .source-card-name { font-weight: 500; font-size: 13px; flex: 1; }
+    .source-connected-badge {
+      font-size: 10px; font-weight: 500; text-transform: uppercase;
+      letter-spacing: 0.04em; padding: 2px 7px; border-radius: 10px;
+    }
+    .source-connected-badge.on  { background: #e8f5e9; color: #3a8f5f; }
+    .source-connected-badge.off { background: #f0f0f0; color: #888; }
+    .source-card-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; }
+    .source-card-body label { font-size: 12px; color: var(--muted); }
+    .source-key-row { display: flex; gap: 6px; align-items: center; }
+    .source-key-input {
+      flex: 1; font-family: inherit; font-size: 13px;
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: 5px 8px; outline: none; color: var(--text);
+    }
+    .source-key-input:focus { border-color: #aaa; }
+    .btn-connect {
+      font-family: inherit; font-size: 13px; font-weight: 500;
+      background: var(--text); color: white;
+      border: none; border-radius: 5px;
+      padding: 5px 14px; cursor: pointer; white-space: nowrap;
+    }
+    .btn-connect:disabled { opacity: 0.4; cursor: default; }
+    .btn-disconnect {
+      font-family: inherit; font-size: 12px;
+      color: var(--muted); background: none;
+      border: 1px solid var(--border); border-radius: 5px;
+      padding: 4px 10px; cursor: pointer;
+    }
+    .btn-disconnect:hover { border-color: var(--high); color: var(--high); }
+    .source-card-hint { font-size: 11px; color: var(--muted); }
+
     #ai-modal {
       display: none; position: fixed; inset: 0;
       background: rgba(0,0,0,0.35); z-index: 100;
@@ -364,6 +427,7 @@
   </div>
   <div style="display:flex;align-items:center;gap:12px;">
     <span class="count" id="todoCount">{{ todos|length }}</span>
+    <button class="new-todo-btn" id="openSettingsBtn">Settings</button>
     <button class="new-todo-btn" id="openFormBtn">+ New</button>
   </div>
 </header>
@@ -433,6 +497,34 @@
   </div>
   {% endfor %}
 {% endif %}
+</div>
+
+<div id="settings-modal">
+  <div id="settings-modal-box">
+    <div id="settings-modal-header">
+      <h2>Settings</h2>
+      <button id="settings-modal-close">×</button>
+    </div>
+    <div id="settings-body">
+      <div class="source-card" id="fathom-card">
+        <div class="source-card-header">
+          <span class="source-card-name">Fathom</span>
+          <span class="source-connected-badge off" id="fathom-status">Not connected</span>
+        </div>
+        <div class="source-card-body">
+          <label for="fathom-key-input">API Key</label>
+          <div class="source-key-row" id="fathom-input-row">
+            <input type="password" class="source-key-input" id="fathom-key-input" placeholder="Paste your Fathom API key" autocomplete="off">
+            <button class="btn-connect" id="fathom-connect-btn">Connect</button>
+          </div>
+          <div id="fathom-connected-row" style="display:none; gap:8px; align-items:center;">
+            <span id="fathom-key-preview" class="source-card-hint"></span>
+            <button class="btn-disconnect" id="fathom-disconnect-btn">Disconnect</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <div id="ai-modal">
@@ -764,6 +856,72 @@
     btn.addEventListener('click', () => {
       openModal(btn.dataset.id, btn.dataset.title);
     });
+  });
+
+  // Settings modal
+  const settingsModal = document.getElementById('settings-modal');
+
+  function setFathomConnected(preview) {
+    document.getElementById('fathom-status').textContent = 'Connected';
+    document.getElementById('fathom-status').className = 'source-connected-badge on';
+    document.getElementById('fathom-input-row').style.display = 'none';
+    const connectedRow = document.getElementById('fathom-connected-row');
+    connectedRow.style.display = 'flex';
+    document.getElementById('fathom-key-preview').textContent = preview || '';
+  }
+
+  function setFathomDisconnected() {
+    document.getElementById('fathom-status').textContent = 'Not connected';
+    document.getElementById('fathom-status').className = 'source-connected-badge off';
+    document.getElementById('fathom-input-row').style.display = 'flex';
+    document.getElementById('fathom-connected-row').style.display = 'none';
+    document.getElementById('fathom-key-input').value = '';
+  }
+
+  function openSettingsModal() {
+    settingsModal.classList.add('open');
+    fetch('/settings')
+      .then(r => r.json())
+      .then(data => {
+        const fathom = data.sources.fathom;
+        if (fathom.connected) {
+          setFathomConnected(fathom.api_key_preview);
+        } else {
+          setFathomDisconnected();
+        }
+      });
+  }
+
+  document.getElementById('openSettingsBtn').addEventListener('click', openSettingsModal);
+  document.getElementById('settings-modal-close').addEventListener('click', () => settingsModal.classList.remove('open'));
+  settingsModal.addEventListener('click', e => { if (e.target === settingsModal) settingsModal.classList.remove('open'); });
+
+  document.getElementById('fathom-connect-btn').addEventListener('click', () => {
+    const key = document.getElementById('fathom-key-input').value.trim();
+    if (!key) { document.getElementById('fathom-key-input').focus(); return; }
+    const btn = document.getElementById('fathom-connect-btn');
+    btn.disabled = true;
+    fetch('/settings/sources/fathom', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: key }),
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok) setFathomConnected(data.api_key_preview);
+        else alert(data.error || 'Failed to connect');
+      })
+      .finally(() => { btn.disabled = false; });
+  });
+
+  document.getElementById('fathom-disconnect-btn').addEventListener('click', () => {
+    fetch('/settings/sources/fathom', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disconnect: true }),
+    })
+      .then(r => r.json())
+      .then(data => { if (data.ok) setFathomDisconnected(); });
   });
 </script>
 </body>

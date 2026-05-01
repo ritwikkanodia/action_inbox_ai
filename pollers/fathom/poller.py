@@ -4,16 +4,19 @@ from datetime import datetime, timezone
 
 import requests
 
-from db import get_fathom_last_polled_at, set_fathom_last_polled_at, save_fathom_todo
+from db import get_fathom_last_polled_at, set_fathom_last_polled_at, save_fathom_todo, get_source_connection
 
 FATHOM_API_URL = "https://api.fathom.ai/external/v1/meetings"
 
 
 def poll(conn: sqlite3.Connection) -> int:
-    api_key = os.environ.get("FATHOM_API_KEY", "")
+    conn_row = get_source_connection(conn, "fathom")
+    api_key = (conn_row or {}).get("credentials", {}).get("api_key", "") or os.environ.get("FATHOM_API_KEY", "")
     if not api_key:
-        print("[fathom] FATHOM_API_KEY not set, skipping")
+        print("[fathom] Fathom API key not configured, skipping")
         return 0
+    else:
+        print(f"[fathom] Using Fathom API key: {api_key[:5]}...")
 
     polled_at = datetime.now(timezone.utc).isoformat()
     last_polled_at = get_fathom_last_polled_at(conn)

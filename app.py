@@ -5,7 +5,7 @@ from agent import resolve_todo
 
 from flask import Flask, g, render_template, request, jsonify
 
-from db import init_db, save_user_todo
+from db import init_db, save_user_todo, get_source_connection, set_source_credentials, clear_source_connection
 
 app = Flask(__name__)
 
@@ -133,6 +133,40 @@ def update_todo(todo_id):
     )
     db.commit()
     return jsonify({"ok": True})
+
+
+@app.route("/settings", methods=["GET"])
+def get_settings():
+    db = get_db()
+    fathom = get_source_connection(db, "fathom")
+    fathom_key = (fathom or {}).get("credentials", {}).get("api_key", "") if fathom else None
+    return jsonify({
+        "sources": {
+            "fathom": {
+                "connected": bool(fathom),
+                "api_key_preview": f"...{fathom_key[-6:]}" if fathom_key else None,
+            }
+        }
+    })
+
+
+@app.route("/settings/sources/<source>", methods=["POST"])
+def update_source_settings(source: str):
+    ALLOWED_SOURCES = {"fathom"}
+    if source not in ALLOWED_SOURCES:
+        return jsonify({"error": "unknown source"}), 400
+    data = request.get_json(force=True, silent=True) or {}
+    db = get_db()
+    if source == "fathom":
+        if data.get("disconnect"):
+            clear_source_connection(db, "fathom")
+            return jsonify({"ok": True, "connected": False})
+        api_key = (data.get("api_key") or "").strip()
+        if not api_key:
+            return jsonify({"error": "api_key required"}), 400
+        set_source_credentials(db, "fathom", "api_key", {"api_key": api_key})
+        return jsonify({"ok": True, "connected": True, "api_key_preview": f"...{api_key[-6:]}"})
+    return jsonify({"error": "unhandled"}), 500
 
 
 if __name__ == "__main__":

@@ -40,6 +40,15 @@ def init_db(conn: sqlite3.Connection) -> None:
             value TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS source_connections (
+            source        TEXT PRIMARY KEY,
+            auth_type     TEXT NOT NULL
+                              CHECK (auth_type IN ('api_key','oauth2')),
+            credentials   TEXT NOT NULL,
+            connected_at  TEXT NOT NULL,
+            updated_at    TEXT NOT NULL
+        );
+
         CREATE TABLE IF NOT EXISTS events (
             event_id   TEXT PRIMARY KEY,
             user_id    TEXT NOT NULL,
@@ -173,6 +182,46 @@ def _save_todo(
     )
     conn.commit()
     return conn.total_changes > before
+
+
+def get_source_connection(conn: sqlite3.Connection, source: str) -> dict | None:
+    row = conn.execute(
+        "SELECT source, auth_type, credentials, connected_at, updated_at "
+        "FROM source_connections WHERE source = ?",
+        (source,),
+    ).fetchone()
+    if not row:
+        return None
+    return {
+        "source": row[0],
+        "auth_type": row[1],
+        "credentials": json.loads(row[2]),
+        "connected_at": row[3],
+        "updated_at": row[4],
+    }
+
+
+def set_source_credentials(
+    conn: sqlite3.Connection, source: str, auth_type: str, credentials: dict
+) -> None:
+    now = _now()
+    conn.execute(
+        """
+        INSERT INTO source_connections (source, auth_type, credentials, connected_at, updated_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(source) DO UPDATE SET
+            auth_type    = excluded.auth_type,
+            credentials  = excluded.credentials,
+            updated_at   = excluded.updated_at
+        """,
+        (source, auth_type, json.dumps(credentials), now, now),
+    )
+    conn.commit()
+
+
+def clear_source_connection(conn: sqlite3.Connection, source: str) -> None:
+    conn.execute("DELETE FROM source_connections WHERE source = ?", (source,))
+    conn.commit()
 
 
 def get_last_history_id(conn: sqlite3.Connection) -> str | None:
