@@ -1,5 +1,13 @@
+import logging
 import sqlite3
 import time
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    force=True,
+)
 
 from pollers.gmail.auth import get_gmail_service
 from pollers.gmail.poller import poll
@@ -53,11 +61,14 @@ def main():
                 thread_msgs = fetch_thread_messages(service, e.content.thread_id)
                 context = build_thread_context(thread_msgs, user_id)
                 result = generate_todo(context, e)
-                save_todo(conn, e.event_id, e.content.message_id, e.content.thread_id, result, user_id)
 
                 if result["should_generate_todo"]:
+                    saved = save_todo(conn, e.event_id, e.content.message_id, e.content.thread_id, result, user_id)
                     todo = result["todo"]
-                    print(f"  [todo] {todo['urgency'].upper()} | {todo['title']} | {todo['suggested_action']}")
+                    if saved:
+                        print(f"  [todo] {todo['urgency'].upper()} | {todo['title']} | {todo['suggested_action']}")
+                    else:
+                        print(f"  [dup] {todo['title']}")
                 else:
                     print(f"  [skip] {result['reasoning']}")
 

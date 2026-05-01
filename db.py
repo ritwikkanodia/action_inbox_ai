@@ -324,19 +324,30 @@ def save_todo(
     thread_id: str,
     result: dict,
     user_email: str = "",
-) -> None:
+) -> bool:
     todo = result.get("todo") or {}
+    title = (todo.get("title") or "").strip()
+    if not title:
+        return False
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    existing = conn.execute(
+        "SELECT title FROM todos WHERE source = 'gmail' AND created_at >= ?",
+        (cutoff,),
+    ).fetchall()
+    for (et,) in existing:
+        if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.80:
+            return False
     authuser = f"?authuser={user_email}" if user_email else ""
     relevant_link = (
         todo.get("relevant_link")
         or f"https://mail.google.com/mail/u/0/{authuser}#all/{thread_id}"
     )
-    _save_todo(
+    return _save_todo(
         conn,
         todo_id=f"todo_{message_id}",
         source="gmail",
         dedup_key=message_id,
-        title=todo.get("title"),
+        title=title,
         suggested_action=todo.get("suggested_action"),
         urgency=todo.get("urgency"),
         estimated_time_minutes=todo.get("estimated_time_minutes"),
