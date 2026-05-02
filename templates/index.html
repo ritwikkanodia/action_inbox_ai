@@ -558,7 +558,7 @@
             <button class="btn-connect" id="gmail-connect-btn">Connect with Google</button>
           </div>
           <div id="gmail-connected-row" style="display:none; gap:8px; align-items:center;">
-            <span class="source-card-hint">Authorized via OAuth</span>
+            <span class="source-card-hint" id="gmail-email-hint">Authorized via OAuth</span>
             <button class="btn-disconnect" id="gmail-disconnect-btn">Disconnect</button>
           </div>
         </div>
@@ -935,11 +935,12 @@
     document.getElementById('fathom-key-input').value = '';
   }
 
-  function setGmailConnected() {
+  function setGmailConnected(email) {
     document.getElementById('gmail-status').textContent = 'Connected';
     document.getElementById('gmail-status').className = 'source-connected-badge on';
     document.getElementById('gmail-connect-row').style.display = 'none';
     document.getElementById('gmail-connected-row').style.display = 'flex';
+    document.getElementById('gmail-email-hint').textContent = email || 'Authorized via OAuth';
   }
 
   function setGmailDisconnected() {
@@ -959,7 +960,7 @@
         else setFathomDisconnected();
 
         const gmail = data.sources.gmail;
-        if (gmail.connected) setGmailConnected();
+        if (gmail.connected) setGmailConnected(gmail.email);
         else setGmailDisconnected();
       });
   }

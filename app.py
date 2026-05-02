@@ -20,6 +20,8 @@ from auth import (
     login_required,
     start_login,
 )
+from googleapiclient.discovery import build as google_build
+from pollers.gmail.auth import get_auth_flow
 
 # Allow OAuth over http for local development
 os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
@@ -130,7 +132,9 @@ def create_todo():
     due_date = data.get("due_date") or None
     suggested_action = (data.get("suggested_action") or "").strip()
     db = get_db()
-    todo_id = save_user_todo(db, current_user_id(), title, urgency, due_date, suggested_action)
+    user_id = current_user_id()
+    assert user_id
+    todo_id = save_user_todo(db, user_id, title, urgency, due_date, suggested_action)
     return jsonify({"ok": True, "todo_id": todo_id}), 201
 
 
@@ -139,6 +143,7 @@ def create_todo():
 def ask_ai(todo_id):
     db = get_db()
     user_id = current_user_id()
+    assert user_id
     row = db.execute(
         "SELECT title, suggested_action, reasoning, urgency, due_date, source, ai_thread, source_meta "
         "FROM todos WHERE todo_id = ? AND user_id = ?",
@@ -177,9 +182,11 @@ def ask_ai(todo_id):
 @login_required
 def reset_thread(todo_id):
     db = get_db()
+    user_id = current_user_id()
+    assert user_id
     db.execute(
         "UPDATE todos SET ai_thread = NULL, updated_at = ? WHERE todo_id = ? AND user_id = ?",
-        (datetime.now(timezone.utc).isoformat(), todo_id, current_user_id()),
+        (datetime.now(timezone.utc).isoformat(), todo_id, user_id),
     )
     db.commit()
     return jsonify({"ok": True})
@@ -195,9 +202,11 @@ def update_todo(todo_id):
         return jsonify({"error": "no valid fields"}), 400
     sets = ", ".join(f"{k} = ?" for k in updates) + ", updated_at = ?"
     db = get_db()
+    user_id = current_user_id()
+    assert user_id
     db.execute(
         f"UPDATE todos SET {sets} WHERE todo_id = ? AND user_id = ?",
-        (*updates.values(), datetime.now(timezone.utc).isoformat(), todo_id, current_user_id()),
+        (*updates.values(), datetime.now(timezone.utc).isoformat(), todo_id, user_id),
     )
     db.commit()
     return jsonify({"ok": True})
@@ -213,9 +222,11 @@ def update_todo(todo_id):
 def get_settings():
     db = get_db()
     user_id = current_user_id()
+    assert user_id
     fathom = get_source_connection(db, user_id, "fathom")
     fathom_key = (fathom or {}).get("credentials", {}).get("api_key", "") if fathom else None
     gmail = get_source_connection(db, user_id, "gmail")
+    gmail_email = (gmail or {}).get("credentials", {}).get("connected_email") if gmail else None
     return jsonify({
         "sources": {
             "fathom": {
@@ -224,6 +235,7 @@ def get_settings():
             },
             "gmail": {
                 "connected": bool(gmail),
+                "email": gmail_email,
                 "auth_url": url_for("gmail_auth"),
             },
         }
@@ -233,7 +245,6 @@ def get_settings():
 @app.route("/settings/sources/gmail/auth")
 @login_required
 def gmail_auth():
-    from pollers.gmail.auth import get_auth_flow
     flow = get_auth_flow(GMAIL_REDIRECT_URI)
     auth_url, state = flow.authorization_url(
         access_type="offline",
@@ -247,7 +258,6 @@ def gmail_auth():
 @app.route("/oauth/gmail/callback")
 @login_required
 def gmail_callback():
-    from pollers.gmail.auth import get_auth_flow
     oauth_state = session.get("gmail_oauth_state")
     code_verifier = session.get("gmail_oauth_code_verifier")
     if not oauth_state or not code_verifier:
@@ -266,9 +276,16 @@ def gmail_callback():
     )
     creds = flow.credentials
     db = get_db()
-    set_source_credentials(
-        db, current_user_id(), "gmail", "oauth2", json.loads(creds.to_json())
-    )
+    creds_dict = json.loads(creds.to_json())
+    try:
+        gmail_svc = google_build("gmail", "v1", credentials=creds)
+        profile = gmail_svc.users().getProfile(userId="me").execute()
+        creds_dict["connected_email"] = profile.get("emailAddress")
+    except Exception:
+        pass
+    user_id = current_user_id()
+    assert user_id
+    set_source_credentials(db, user_id, "gmail", "oauth2", creds_dict)
     session.pop("gmail_oauth_state", None)
     session.pop("gmail_oauth_code_verifier", None)
     return redirect(url_for("index"))
@@ -283,6 +300,7 @@ def update_source_settings(source: str):
     data = request.get_json(force=True, silent=True) or {}
     db = get_db()
     user_id = current_user_id()
+    assert user_id
     if source == "fathom":
         if data.get("disconnect"):
             clear_source_connection(db, user_id, "fathom")
