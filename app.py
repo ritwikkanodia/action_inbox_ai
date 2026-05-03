@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from agent import resolve_todo
 
 from flask import Flask, g, render_template, request, jsonify, redirect, session, url_for
+from werkzeug.middleware.proxy_fix import ProxyFix
 
 from db import (
     init_db,
@@ -30,6 +31,7 @@ if BASE_URL.startswith("http://localhost") or BASE_URL.startswith("http://127.0.
     os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
 
 app = Flask(__name__)
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(32))
 
 GMAIL_REDIRECT_URI = f"{BASE_URL}/oauth/gmail/callback"
@@ -65,6 +67,12 @@ def get_db():
     return g.db
 
 
+def public_request_url() -> str:
+    query = request.query_string.decode("utf-8")
+    suffix = f"?{query}" if query else ""
+    return f"{BASE_URL}{request.path}{suffix}"
+
+
 @app.teardown_appcontext
 def close_db(exc):
     db = g.pop("db", None)
@@ -91,7 +99,7 @@ def login_start():
 
 @app.route("/oauth/login/callback")
 def login_callback():
-    user_id, error = complete_login(LOGIN_REDIRECT_URI, get_db(), request.url)
+    user_id, error = complete_login(LOGIN_REDIRECT_URI, get_db(), public_request_url())
     if error:
         return f"Login failed: {error}", 400
     return redirect(url_for("index"))
@@ -282,7 +290,7 @@ def gmail_callback():
         code_verifier=code_verifier,
     )
     flow.fetch_token(
-        authorization_response=request.url,
+        authorization_response=public_request_url(),
     )
     creds = flow.credentials
     db = get_db()
