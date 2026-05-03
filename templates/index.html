@@ -81,6 +81,9 @@
     .title { flex: 1; font-size: 14px; font-weight: 500; }
     .title a { color: inherit; text-decoration: none; }
     .title a:hover { text-decoration: underline; text-underline-offset: 3px; }
+    .title-edit-btn { opacity: 0; background: none; border: none; cursor: pointer; font-size: 13px; color: var(--muted); padding: 0 2px; flex-shrink: 0; }
+    .title:hover .title-edit-btn { opacity: 1; }
+    .title-edit-input { font: inherit; font-size: 14px; font-weight: 500; border: none; border-bottom: 1.5px solid var(--accent); outline: none; background: transparent; width: 100%; padding: 0; }
 
     .meta {
       display: flex;
@@ -514,8 +517,8 @@
   {% set pending = is_ai and not t.decision and t.status != 'closed' %}
   <div class="todo {{ t.status }}{% if t.decision == 'rejected' %} rejected-todo{% endif %}{% if pending %} pending-decision{% endif %}">
     <div class="dot {{ t.urgency or 'none' }}"></div>
-    <div class="title">
-      {% if pending %}<span class="suggestion-label">Suggestion</span>{% endif %}{% if t.relevant_link %}<a href="{{ t.relevant_link }}" target="_blank">{{ t.title or '(untitled)' }}</a>{% else %}{{ t.title or '(untitled)' }}{% endif %}
+    <div class="title" data-id="{{ t.todo_id }}" data-title="{{ t.title | e }}">
+      {% if pending %}<span class="suggestion-label">Suggestion</span>{% endif %}{% if t.relevant_link %}<a href="{{ t.relevant_link }}" target="_blank">{{ t.title or '(untitled)' }}</a>{% else %}<span class="title-text">{{ t.title or '(untitled)' }}</span>{% endif %}<button class="title-edit-btn" title="Edit title">✎</button>
     </div>
     <div class="meta">
       <span class="col-due due editable" data-id="{{ t.todo_id }}" data-field="due_date" data-value="{{ t.due_date or '' }}">{{ t.due_date | fmt_dt }}</span>
@@ -755,6 +758,10 @@
   switchTab('open');
 
   document.addEventListener('click', e => {
+    if (e.target.matches('.title-edit-btn')) {
+      startTitleEdit(e.target.closest('.title'));
+      return;
+    }
     if (e.target.matches('.accept-btn')) {
       const id = e.target.dataset.id;
       fetch(`/todos/${id}`, {
@@ -797,6 +804,54 @@
       });
     }
   });
+
+  function startTitleEdit(titleDiv) {
+    if (titleDiv.querySelector('.title-edit-input')) return;
+    const id = titleDiv.dataset.id;
+    const current = titleDiv.dataset.title;
+    const textTarget = titleDiv.querySelector('.title-text, a');
+    if (!textTarget) return;
+
+    const editBtn = titleDiv.querySelector('.title-edit-btn');
+    if (editBtn) editBtn.style.display = 'none';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'title-edit-input';
+    input.value = current;
+    textTarget.replaceWith(input);
+    input.focus();
+    input.select();
+
+    function restore() {
+      input.replaceWith(textTarget);
+      if (editBtn) editBtn.style.display = '';
+    }
+
+    function save() {
+      const newTitle = input.value.trim();
+      if (!newTitle || newTitle === current) { restore(); return; }
+      fetch(`/todos/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle }),
+      }).then(r => {
+        if (r.ok) {
+          textTarget.textContent = newTitle;
+          titleDiv.dataset.title = newTitle;
+          const askBtn = titleDiv.closest('.todo')?.querySelector('.ask-ai-btn');
+          if (askBtn) askBtn.dataset.title = newTitle;
+        }
+        restore();
+      }).catch(() => restore());
+    }
+
+    input.addEventListener('blur', save);
+    input.addEventListener('keydown', ev => {
+      if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
+      if (ev.key === 'Escape') { input.removeEventListener('blur', save); restore(); }
+    });
+  }
 
   const modal       = document.getElementById('ai-modal');
   const modalTitle  = document.getElementById('ai-modal-title');

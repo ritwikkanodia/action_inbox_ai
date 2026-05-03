@@ -195,7 +195,7 @@ def reset_thread(todo_id):
 @app.route("/todos/<todo_id>", methods=["PATCH"])
 @login_required
 def update_todo(todo_id):
-    ALLOWED = {"due_date", "urgency", "status", "decision"}
+    ALLOWED = {"due_date", "urgency", "status", "decision", "title"}
     data = request.get_json(force=True)
     updates = {k: v for k, v in data.items() if k in ALLOWED}
     if not updates:
