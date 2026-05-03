@@ -63,7 +63,7 @@ def _poll_gmail_for_user(conn: sqlite3.Connection, user: dict) -> None:
             from_email = e.actors.from_.email if e.actors.from_ else "unknown"
             print(f"[messagesAdded] msg={e.content.message_id} | from={from_email} | subject={e.content.subject!r} | labels={e.metadata.labels}")
         elif e.type == "messagesDeleted":
-            print(f"[messagesDeleted] msg={e.content.message_id} | permanently deleted")
+            print(f"[messagesDeletedd] msg={e.content.message_id} | permanently deleted")
         elif e.type == "labelsAdded":
             print(f"[labelsAdded] msg={e.content.message_id} | labels added={e.metadata.labels}")
         elif e.type == "labelsRemoved":
