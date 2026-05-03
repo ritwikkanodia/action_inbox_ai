@@ -24,15 +24,23 @@ LOGIN_SCOPES = [
     "https://www.googleapis.com/auth/userinfo.profile",
 ]
 CREDENTIALS_FILE = "credentials.json"
+CREDENTIALS_ENV_VAR = "GOOGLE_CREDENTIALS_JSON"
 
 # Google sometimes echoes scopes back in a different order/form; the strict
 # default makes oauthlib raise. Relaxing it is standard for openid logins.
 os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
 
-def _client_id() -> str:
+def _client_config() -> dict:
+    raw_config = os.environ.get(CREDENTIALS_ENV_VAR)
+    if raw_config:
+        return json.loads(raw_config)
     with open(CREDENTIALS_FILE) as f:
-        data = json.load(f)
+        return json.load(f)
+
+
+def _client_id() -> str:
+    data = _client_config()
     section = data.get("web") or data.get("installed") or {}
     return section.get("client_id", "")
 
@@ -43,8 +51,8 @@ def _login_flow(
     state: str | None = None,
     code_verifier: str | None = None,
 ) -> Flow:
-    return Flow.from_client_secrets_file(
-        CREDENTIALS_FILE,
+    return Flow.from_client_config(
+        _client_config(),
         scopes=LOGIN_SCOPES,
         redirect_uri=redirect_uri,
         state=state,

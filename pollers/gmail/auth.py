@@ -1,4 +1,5 @@
 import json
+import os
 import sqlite3
 
 from google.auth.transport.requests import Request
@@ -10,6 +11,15 @@ from db import get_source_connection, set_source_credentials
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 CREDENTIALS_FILE = "credentials.json"
+CREDENTIALS_ENV_VAR = "GOOGLE_CREDENTIALS_JSON"
+
+
+def _client_config() -> dict:
+    raw_config = os.environ.get(CREDENTIALS_ENV_VAR)
+    if raw_config:
+        return json.loads(raw_config)
+    with open(CREDENTIALS_FILE) as f:
+        return json.load(f)
 
 
 def get_auth_flow(
@@ -18,8 +28,8 @@ def get_auth_flow(
     state: str | None = None,
     code_verifier: str | None = None,
 ) -> Flow:
-    return Flow.from_client_secrets_file(
-        CREDENTIALS_FILE,
+    return Flow.from_client_config(
+        _client_config(),
         scopes=SCOPES,
         redirect_uri=redirect_uri,
         state=state,

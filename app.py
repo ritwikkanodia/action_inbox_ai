@@ -23,14 +23,17 @@ from auth import (
 from googleapiclient.discovery import build as google_build
 from pollers.gmail.auth import get_auth_flow
 
-# Allow OAuth over http for local development
-os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
+BASE_URL = os.environ.get("BASE_URL", "http://localhost:5001").rstrip("/")
+
+# Allow OAuth over http only for local development.
+if BASE_URL.startswith("http://localhost") or BASE_URL.startswith("http://127.0.0.1"):
+    os.environ.setdefault("OAUTHLIB_INSECURE_TRANSPORT", "1")
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(32))
 
-GMAIL_REDIRECT_URI = "http://localhost:5001/oauth/gmail/callback"
-LOGIN_REDIRECT_URI = "http://localhost:5001/oauth/login/callback"
+GMAIL_REDIRECT_URI = f"{BASE_URL}/oauth/gmail/callback"
+LOGIN_REDIRECT_URI = f"{BASE_URL}/oauth/login/callback"
 
 
 @app.template_filter("fmt_dt")
@@ -44,12 +47,19 @@ def fmt_dt(value: str | None) -> str:
         return value[:16]
 
 
-DB_PATH = "gmail_events.db"
+DB_PATH = os.environ.get("DB_PATH", "gmail_events.db")
+
+
+def _ensure_db_parent_dir() -> None:
+    parent = os.path.dirname(DB_PATH)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
 
 
 def get_db():
     if "db" not in g:
-        g.db = sqlite3.connect(DB_PATH)
+        _ensure_db_parent_dir()
+        g.db = sqlite3.connect(DB_PATH, timeout=30)
         g.db.row_factory = sqlite3.Row
         init_db(g.db)
     return g.db
