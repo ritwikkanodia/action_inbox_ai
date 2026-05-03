@@ -12,8 +12,10 @@ def poll(conn: sqlite3.Connection, user_id: str) -> int:
     conn_row = get_source_connection(conn, user_id, "fathom")
     api_key = (conn_row or {}).get("credentials", {}).get("api_key", "")
     if not api_key:
-        print(f"[fathom] Fathom API key not configured for user {user_id[:8]}, skipping")
+        print(f"[fathom] {user_id[:8]}: API key not configured, skipping")
         return 0
+
+    fathom_label = f"...{api_key[-6:]}"
 
     polled_at = datetime.now(timezone.utc).isoformat()
     last_polled_at = get_fathom_last_polled_at(conn, user_id)
@@ -42,4 +44,6 @@ def poll(conn: sqlite3.Connection, user_id: str) -> int:
         print(f"[fathom] {meeting.get('title')!r} — saved {len(action_items)} action item(s)")
 
     set_fathom_last_polled_at(conn, user_id, polled_at)
+    if not saved:
+        print(f"[fathom] {fathom_label}: No new action items.")
     return saved

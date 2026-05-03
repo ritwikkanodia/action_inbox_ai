@@ -126,9 +126,7 @@ def main():
 
                 if "fathom" in enabled_sources:
                     try:
-                        saved = fathom_poller.poll(conn, user["user_id"])
-                        if not saved:
-                            print(f"[fathom:{user_label}] No new action items.")
+                        fathom_poller.poll(conn, user["user_id"])
                     except Exception as exc:
                         print(f"[fathom:{user_label}] error: {exc}")
 
