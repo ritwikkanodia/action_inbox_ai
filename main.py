@@ -52,7 +52,7 @@ def _poll_gmail_for_user(conn: sqlite3.Connection, user: dict) -> None:
     try:
         service = get_gmail_service(conn, user_id)
     except RuntimeError as exc:
-        print(f"[gmail] {user['email']}: {exc}")
+        print(f"[gmail] {user_id[:8]}: {exc}")
         return
 
     gmail_email = get_gmail_email(service)
@@ -99,7 +99,7 @@ def _poll_gmail_for_user(conn: sqlite3.Connection, user: dict) -> None:
             print(f"  [skip] {result['reasoning']}")
 
     if not events:
-        print(f"[gmail] {user['email']}: No changes.")
+        print(f"[gmail] {gmail_email}: No changes.")
 
 
 def main():
