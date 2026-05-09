@@ -47,6 +47,11 @@ def get_gmail_email(service) -> str:
     return profile["emailAddress"]
 
 
+def _truncate(s: str, n: int) -> str:
+    s = s or ""
+    return s if len(s) <= n else s[: n - 1] + "…"
+
+
 def _poll_gmail_for_user(conn: sqlite3.Connection, user: dict) -> None:
     user_id = user["user_id"]
     try:
@@ -58,48 +63,50 @@ def _poll_gmail_for_user(conn: sqlite3.Connection, user: dict) -> None:
     gmail_email = get_gmail_email(service)
     events = poll(service, conn, user_id)
 
-    for e in events:
-        if e.type == "messagesAdded":
-            from_email = e.actors.from_.email if e.actors.from_ else "unknown"
-            print(f"[messagesAdded] msg={e.content.message_id} | from={from_email} | subject={e.content.subject!r} | labels={e.metadata.labels}")
-        elif e.type == "messagesDeleted":
-            print(f"[messagesDeletedd] msg={e.content.message_id} | permanently deleted")
-        elif e.type == "labelsAdded":
-            print(f"[labelsAdded] msg={e.content.message_id} | labels added={e.metadata.labels}")
-        elif e.type == "labelsRemoved":
-            print(f"[labelsRemoved] msg={e.content.message_id} | labels removed={e.metadata.labels}")
+    inbound = [e for e in events if e.type == "messagesAdded"]
+    if not inbound:
+        print(f"[gmail] {gmail_email}: idle")
+        return
 
-        if e.type != "messagesAdded":
-            continue
+    counts = {"todo": 0, "dup": 0, "skip": 0, "spam": 0}
+    for e in inbound:
+        from_email = e.actors.from_.email if e.actors.from_ else "unknown"
+        prefix = f"[gmail] {gmail_email}   from={_truncate(from_email, 32):<32} | \"{_truncate(e.content.subject, 50)}\""
 
         if is_spam(e):
-            print(f"  [spam] filtered out")
+            counts["spam"] += 1
+            print(f"{prefix} → spam")
             continue
 
         thread_msgs = fetch_thread_messages(service, e.content.thread_id)
         context = build_thread_context(thread_msgs, gmail_email)
         result = generate_todo(context, e)
 
-        if result["should_generate_todo"]:
-            saved = save_todo(
-                conn,
-                e.event_id,
-                e.content.message_id,
-                e.content.thread_id,
-                result,
-                user_id,
-                gmail_email,
-            )
-            todo = result["todo"]
-            if saved:
-                print(f"  [todo] {todo['urgency'].upper()} | {todo['title']} | {todo['suggested_action']}")
-            else:
-                print(f"  [dup] {todo['title']}")
-        else:
-            print(f"  [skip] {result['reasoning']}")
+        if not result["should_generate_todo"]:
+            counts["skip"] += 1
+            print(f"{prefix} → skip: {_truncate(result['reasoning'], 80)}")
+            continue
 
-    if not events:
-        print(f"[gmail] {gmail_email}: No changes.")
+        saved = save_todo(
+            conn,
+            e.event_id,
+            e.content.message_id,
+            e.content.thread_id,
+            result,
+            user_id,
+            gmail_email,
+        )
+        todo = result["todo"]
+        if saved:
+            counts["todo"] += 1
+            print(f"{prefix} → TODO[{todo['urgency']}] {_truncate(todo['title'], 60)}")
+        else:
+            counts["dup"] += 1
+            print(f"{prefix} → dup")
+
+    parts = [f"{v} {k}" for k, v in counts.items() if v]
+    summary = ", ".join(parts) if parts else "no actions"
+    print(f"[gmail] {gmail_email}: {len(inbound)} fetched → {summary}")
 
 
 def main():

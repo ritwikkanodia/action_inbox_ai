@@ -13,7 +13,11 @@ from db import (
     get_source_connection,
     set_source_credentials,
     clear_source_connection,
+    get_user_state,
+    set_user_state,
+    clear_user_state,
 )
+from pollers.gmail.poller import BACKFILL_PENDING_KEY, BACKFILLED_EMAIL_KEY
 from auth import (
     complete_login,
     current_user,
@@ -304,6 +308,14 @@ def gmail_callback():
     user_id = current_user_id()
     assert user_id
     set_source_credentials(db, user_id, "gmail", "oauth2", creds_dict)
+
+    connected_email = creds_dict.get("connected_email")
+    if connected_email:
+        backfilled_email = get_user_state(db, user_id, BACKFILLED_EMAIL_KEY)
+        if backfilled_email != connected_email:
+            set_user_state(db, user_id, BACKFILL_PENDING_KEY, connected_email)
+            clear_user_state(db, user_id, "history_id")
+
     session.pop("gmail_oauth_state", None)
     session.pop("gmail_oauth_code_verifier", None)
     return redirect(url_for("index"))

@@ -383,6 +383,14 @@ def set_user_state(conn: sqlite3.Connection, user_id: str, key: str, value: str)
     conn.commit()
 
 
+def clear_user_state(conn: sqlite3.Connection, user_id: str, key: str) -> None:
+    conn.execute(
+        "DELETE FROM user_state WHERE user_id = ? AND key = ?",
+        (user_id, key),
+    )
+    conn.commit()
+
+
 # ---------------------------------------------------------------------------
 # Source connections
 # ---------------------------------------------------------------------------
