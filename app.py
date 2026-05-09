@@ -309,10 +309,15 @@ def gmail_callback():
     assert user_id
     set_source_credentials(db, user_id, "gmail", "oauth2", creds_dict)
 
-    connected_email = creds_dict.get("connected_email")
+    connected_email = (creds_dict.get("connected_email") or "").strip().lower()
     if connected_email:
-        backfilled_email = get_user_state(db, user_id, BACKFILLED_EMAIL_KEY)
-        if backfilled_email != connected_email:
+        creds_dict["connected_email"] = connected_email
+        set_source_credentials(db, user_id, "gmail", "oauth2", creds_dict)
+        backfilled_email = (get_user_state(db, user_id, BACKFILLED_EMAIL_KEY) or "").strip().lower()
+        if backfilled_email == connected_email:
+            print(f"[gmail] reconnect of {connected_email} — skipping backfill")
+        else:
+            print(f"[gmail] new account {connected_email} (previous: {backfilled_email or 'none'}) — scheduling backfill")
             set_user_state(db, user_id, BACKFILL_PENDING_KEY, connected_email)
             clear_user_state(db, user_id, "history_id")
 
