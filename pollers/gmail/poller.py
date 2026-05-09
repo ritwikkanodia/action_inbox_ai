@@ -1,11 +1,21 @@
 import base64
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from googleapiclient.errors import HttpError as GApiHttpError
 
 from pollers.gmail.events import Actor, Actors, Content, GmailEvent, Metadata
-from db import get_last_history_id, set_last_history_id, save_event
+from db import (
+    get_last_history_id,
+    set_last_history_id,
+    save_event,
+    get_user_state,
+    set_user_state,
+    clear_user_state,
+)
+
+BACKFILL_PENDING_KEY = "gmail_backfill_pending"
+BACKFILLED_EMAIL_KEY = "gmail_backfilled_email"
 
 HISTORY_TYPES = ["messageAdded", "messageDeleted", "labelAdded", "labelRemoved"]
 
@@ -141,13 +151,70 @@ def _build_simple_event(
     )
 
 
+def _backfill_messages(
+    service, conn: sqlite3.Connection, user_id: str, days: int = 3
+) -> list[GmailEvent]:
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff_str = cutoff.strftime("%Y/%m/%d")
+
+    events: list[GmailEvent] = []
+    page_token = None
+    page_num = 0
+
+    while True:
+        kwargs: dict = {
+            "userId": "me",
+            "q": f"after:{cutoff_str} -in:sent -in:drafts",
+        }
+        if page_token:
+            kwargs["pageToken"] = page_token
+
+        response = service.users().messages().list(**kwargs).execute()
+        page_num += 1
+        stubs = response.get("messages", [])
+        print(f"[gmail]   backfill: page {page_num} — fetching {len(stubs)} messages…")
+
+        for msg_stub in stubs:
+            try:
+                full_msg = fetch_full_message(service, msg_stub["id"])
+            except GApiHttpError as e:
+                if e.resp.status == 404:
+                    continue
+                raise
+
+            if set(full_msg.get("labelIds", [])) & {"SENT", "DRAFT"}:
+                continue
+
+            evt = _build_email_received(full_msg, user_id, "backfill")
+            events.append(evt)
+            save_event(conn, evt)
+
+        page_token = response.get("nextPageToken")
+        if not page_token:
+            break
+
+    print(f"[gmail]   backfill: fetched {len(events)} inbound messages — generating todos…")
+    return events
+
+
 def poll(service, conn: sqlite3.Connection, user_id: str) -> list[GmailEvent]:
+    pending_email = get_user_state(conn, user_id, BACKFILL_PENDING_KEY)
+    if pending_email:
+        # Capture baseline before fetching so incremental polls pick up anything
+        # that arrives during backfill (dedup handles overlap).
+        current_id = get_current_history_id(service)
+        print(f"[gmail] {pending_email}: backfill (3d window)")
+        events = _backfill_messages(service, conn, user_id, days=3)
+        set_last_history_id(conn, user_id, current_id)
+        set_user_state(conn, user_id, BACKFILLED_EMAIL_KEY, pending_email)
+        clear_user_state(conn, user_id, BACKFILL_PENDING_KEY)
+        return events
+
     last_id = get_last_history_id(conn, user_id)
 
     if last_id is None:
         current_id = get_current_history_id(service)
         set_last_history_id(conn, user_id, current_id)
-        print(f"[init] Baseline historyId set to {current_id}. Waiting for changes...")
         return []
 
     events: list[GmailEvent] = []
@@ -177,14 +244,12 @@ def poll(service, conn: sqlite3.Connection, user_id: str) -> list[GmailEvent]:
                 # TODO: handle SENT and DRAFT events (follow-up tracking, unsent drafts)
                 stub_labels = set(msg_stub.get("labelIds", []))
                 if stub_labels & {"SENT", "DRAFT"}:
-                    print(f"[messagesAdded] msg={msg_stub['id']} | skipping {stub_labels & {'SENT', 'DRAFT'}}")
                     continue
 
                 try:
                     full_msg = fetch_full_message(service, msg_stub["id"])
                 except GApiHttpError as e:
                     if e.resp.status == 404:
-                        print(f"[messagesAdded] msg={msg_stub['id']} | 404 - message no longer exists, skipping")
                         continue
                     raise
 
