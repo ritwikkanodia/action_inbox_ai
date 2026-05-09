@@ -1,22 +1,24 @@
-import os
 import sqlite3
 from datetime import datetime, timezone
 
 import requests
 
-from db import get_fathom_last_polled_at, set_fathom_last_polled_at, save_fathom_todo
+from db import get_fathom_last_polled_at, set_fathom_last_polled_at, save_fathom_todo, get_source_connection
 
 FATHOM_API_URL = "https://api.fathom.ai/external/v1/meetings"
 
 
-def poll(conn: sqlite3.Connection) -> int:
-    api_key = os.environ.get("FATHOM_API_KEY", "")
+def poll(conn: sqlite3.Connection, user_id: str) -> int:
+    conn_row = get_source_connection(conn, user_id, "fathom")
+    api_key = (conn_row or {}).get("credentials", {}).get("api_key", "")
     if not api_key:
-        print("[fathom] FATHOM_API_KEY not set, skipping")
+        print(f"[fathom] {user_id[:8]}: API key not configured, skipping")
         return 0
 
+    fathom_label = f"...{api_key[-6:]}"
+
     polled_at = datetime.now(timezone.utc).isoformat()
-    last_polled_at = get_fathom_last_polled_at(conn)
+    last_polled_at = get_fathom_last_polled_at(conn, user_id)
 
     params = {"include_action_items": "true", "limit": 50}
     if last_polled_at:
@@ -37,9 +39,11 @@ def poll(conn: sqlite3.Connection) -> int:
             print(f"[fathom] {meeting.get('title')!r} — no action items, skipping")
             continue
         for idx, item in enumerate(action_items):
-            save_fathom_todo(conn, meeting, idx, item)
+            save_fathom_todo(conn, user_id, meeting, idx, item)
             saved += 1
         print(f"[fathom] {meeting.get('title')!r} — saved {len(action_items)} action item(s)")
 
-    set_fathom_last_polled_at(conn, polled_at)
+    set_fathom_last_polled_at(conn, user_id, polled_at)
+    if not saved:
+        print(f"[fathom] {fathom_label}: No new action items.")
     return saved

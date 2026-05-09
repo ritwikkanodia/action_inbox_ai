@@ -27,10 +27,10 @@ cp .env.example .env   # fill in keys
 **Required env vars** (`.env`):
 ```
 OPENAI_API_KEY=...
-FATHOM_API_KEY=...
 ```
 
 **Gmail OAuth** — download `credentials.json` from Google Cloud Console (Gmail API enabled). The browser flow runs automatically on first start.
+**Fathom** — each user connects their own Fathom API key from Settings in the web UI.
 
 ## Running
 
@@ -42,7 +42,7 @@ python main.py
 flask --app app run --debug --port 5001
 ```
 
-Open `http://127.0.0.1:5001/`
+Open `http://localhost:5001/`
 
 
 ## Project layout

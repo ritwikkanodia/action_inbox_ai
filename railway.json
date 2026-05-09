@@ -1,0 +1,6 @@
+{
+  "$schema": "https://railway.com/railway.schema.json",
+  "deploy": {
+    "startCommand": "python main.py & exec gunicorn --bind 0.0.0.0:${PORT:-8000} app:app"
+  }
+}

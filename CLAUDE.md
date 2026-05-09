@@ -18,9 +18,9 @@ python app.py
 
 Required env vars (put in `.env`):
 - `OPENAI_API_KEY` — used by `todo_generator.py` and `app.py`
-- `FATHOM_API_KEY` — used by `fathom_poller.py`
 
 Gmail OAuth credentials go in `credentials.json` (downloaded from Google Cloud Console). `token.json` is auto-created on first run via browser flow.
+Fathom API keys are stored per user from Settings in the web UI; there is no global fallback key.
 
 ## Architecture
 
