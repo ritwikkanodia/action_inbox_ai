@@ -6,7 +6,10 @@ from agents import function_tool
 
 from agent.db import open_db
 from pollers.gmail.auth import get_gmail_service
-from pollers.gmail.thread_context import build_thread_context, fetch_thread_messages
+from pollers.gmail.thread_context import (
+    fetch_thread_messages,
+    user_has_recent_reply,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +22,24 @@ def _gmail_service(user_id: str):
         conn.close()
 
 
+def _build_full_thread_context(messages: list[dict], user_email: str) -> str:
+    """Format an entire Gmail thread for the agent: every message, no truncation."""
+    parts = []
+    for msg in messages:
+        role = (
+            "You"
+            if user_email.lower() in msg["from_email"].lower()
+            else msg["from_name"] or msg["from_email"]
+        )
+        parts.append(f"[{msg['received_at']}] {role}:\n{msg['body_text']}")
+    note = (
+        "\nNote: you replied to this thread recently."
+        if user_has_recent_reply(messages, user_email)
+        else "\nNote: you have not replied to the latest message."
+    )
+    return "\n---\n".join(parts) + note
+
+
 def fetch_gmail_thread_context(source_meta_json, user_id: str) -> str | None:
     """Used by the input builder to inject the linked thread on turn 1."""
     try:
@@ -29,7 +50,7 @@ def fetch_gmail_thread_context(source_meta_json, user_id: str) -> str | None:
         service = _gmail_service(user_id)
         user_email = service.users().getProfile(userId="me").execute()["emailAddress"]
         messages = fetch_thread_messages(service, thread_id)
-        return build_thread_context(messages, user_email)
+        return _build_full_thread_context(messages, user_email)
     except Exception:
         logger.exception("Failed to fetch Gmail thread context")
         return None
@@ -89,6 +110,6 @@ def gmail_tools(user_id: str) -> list[Any]:
         service = _gmail_service(user_id)
         user_email = service.users().getProfile(userId="me").execute()["emailAddress"]
         messages = fetch_thread_messages(service, thread_id)
-        return build_thread_context(messages, user_email)
+        return _build_full_thread_context(messages, user_email)
 
     return [search_email_threads, fetch_email_thread]
