@@ -2,12 +2,13 @@ import json
 import os
 import sqlite3
 
+from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
-from db import get_source_connection, set_source_credentials
+from db import clear_source_connection, get_source_connection, set_source_credentials
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
 CREDENTIALS_FILE = "credentials.json"
@@ -48,11 +49,21 @@ def get_gmail_service(conn: sqlite3.Connection, user_id: str):
 
     if not creds.valid:
         if creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except RefreshError as e:
+                # Google has revoked the refresh token (Testing-mode 7-day expiry,
+                # user revoked access, password change, etc.). Clear the stored
+                # credentials so the UI flips to "not connected" and prompts re-auth.
+                clear_source_connection(conn, user_id, "gmail")
+                raise RuntimeError(
+                    "Gmail access revoked by Google. Reconnect Gmail in settings."
+                ) from e
             set_source_credentials(
                 conn, user_id, "gmail", "oauth2", json.loads(creds.to_json())
             )
         else:
+            clear_source_connection(conn, user_id, "gmail")
             raise RuntimeError(
                 "Gmail credentials expired. Re-authorize via the settings page."
             )

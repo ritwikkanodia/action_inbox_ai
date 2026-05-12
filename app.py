@@ -2,6 +2,11 @@ import json
 import os
 import sqlite3
 from datetime import datetime, timezone
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from agent import resolve_todo
 
 from flask import Flask, g, render_template, request, jsonify, redirect, session, url_for
@@ -138,7 +143,14 @@ def index():
         """,
         (user_id,),
     ).fetchall()
-    return render_template("index.html", todos=todos, user=current_user())
+    gmail_connected = bool(get_source_connection(db, user_id, "gmail"))
+    return render_template(
+        "index.html",
+        todos=todos,
+        user=current_user(),
+        gmail_connected=gmail_connected,
+        gmail_auth_url=url_for("gmail_auth"),
+    )
 
 
 @app.route("/todos", methods=["POST"])
@@ -158,6 +170,40 @@ def create_todo():
     assert user_id
     todo_id = save_user_todo(db, user_id, title, urgency, due_date, suggested_action)
     return jsonify({"ok": True, "todo_id": todo_id}), 201
+
+
+def _extract_text(content) -> str:
+    """Flatten an SDK message 'content' field to plain text."""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict):
+                # output_text, input_text, refusal, etc.
+                text = item.get("text") or item.get("refusal") or ""
+                if text:
+                    parts.append(text)
+            elif isinstance(item, str):
+                parts.append(item)
+        return "".join(parts)
+    return ""
+
+
+def _thread_for_client(thread):
+    """Filter an SDK input list down to renderable {role, content} bubbles."""
+    out = []
+    for item in thread or []:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        if role not in ("user", "assistant"):
+            continue
+        text = _extract_text(item.get("content"))
+        if not text:
+            continue
+        out.append({"role": role, "content": text})
+    return out
 
 
 @app.route("/todos/<todo_id>/ask-ai", methods=["POST"])
@@ -187,9 +233,9 @@ def ask_ai(todo_id):
 
     # If thread already exists and no new message, return it without an LLM call
     if thread and not user_message:
-        return jsonify({"thread": thread})
+        return jsonify({"thread": _thread_for_client(thread)})
 
-    thread = resolve_todo(dict(row), thread, user_message)
+    thread = resolve_todo(dict(row), thread, user_message, user_id)
 
     db.execute(
         "UPDATE todos SET ai_thread = ?, updated_at = ? WHERE todo_id = ? AND user_id = ?",
@@ -197,7 +243,7 @@ def ask_ai(todo_id):
     )
     db.commit()
 
-    return jsonify({"thread": thread})
+    return jsonify({"thread": _thread_for_client(thread)})
 
 
 @app.route("/todos/<todo_id>/reset-thread", methods=["POST"])
