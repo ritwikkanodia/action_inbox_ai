@@ -6,7 +6,6 @@ minimum scopes needed to identify the user; data-source authorization
 happens later inside the Settings modal.
 """
 
-import json
 import os
 from functools import wraps
 from typing import Callable
@@ -23,8 +22,6 @@ LOGIN_SCOPES = [
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
 ]
-CREDENTIALS_FILE = "credentials.json"
-CREDENTIALS_ENV_VAR = "GOOGLE_CREDENTIALS_JSON"
 
 # Google sometimes echoes scopes back in a different order/form; the strict
 # default makes oauthlib raise. Relaxing it is standard for openid logins.
@@ -32,17 +29,25 @@ os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
 
 def _client_config() -> dict:
-    raw_config = os.environ.get(CREDENTIALS_ENV_VAR)
-    if raw_config:
-        return json.loads(raw_config)
-    with open(CREDENTIALS_FILE) as f:
-        return json.load(f)
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise RuntimeError(
+            "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set in the environment."
+        )
+    return {
+        "web": {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+        }
+    }
 
 
 def _client_id() -> str:
-    data = _client_config()
-    section = data.get("web") or data.get("installed") or {}
-    return section.get("client_id", "")
+    return os.environ.get("GOOGLE_CLIENT_ID", "")
 
 
 def _login_flow(

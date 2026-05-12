@@ -19,9 +19,29 @@ from db import (
 
 log = logging.getLogger(__name__)
 
-DEFAULT_HISTORY_PATH = str(
-    Path.home() / "Library/Application Support/Dia/User Data/Default/History"
-)
+_BROWSER_HISTORY_PATHS = {
+    "dia": "Library/Application Support/Dia/User Data/Default/History",
+    "chrome": "Library/Application Support/Google/Chrome/Default/History",
+}
+DEFAULT_BROWSER = "chrome"
+
+
+def _resolve_history_path() -> str | None:
+    override = os.environ.get("BROWSER_HISTORY_PATH")
+    if override:
+        return override
+    browser = os.environ.get("BROWSER", DEFAULT_BROWSER).strip().lower()
+    relative = _BROWSER_HISTORY_PATHS.get(browser)
+    if not relative:
+        log.warning(
+            "Unknown BROWSER=%r. Supported: %s",
+            browser,
+            ", ".join(sorted(_BROWSER_HISTORY_PATHS)),
+        )
+        return None
+    return str(Path.home() / relative)
+
+
 MIN_INTERVAL_SECONDS = 1000  # 1 hour
 WINDOW_HOURS = 24
 MAX_ROWS = 500
@@ -228,8 +248,8 @@ def _save_todos_from_digest(
 
 
 def poll(conn: sqlite3.Connection, user_id: str) -> int:
-    history_path = os.environ.get("BROWSER_HISTORY_PATH", DEFAULT_HISTORY_PATH)
-    if not os.path.exists(history_path):
+    history_path = _resolve_history_path()
+    if not history_path or not os.path.exists(history_path):
         log.info("History file not found at %s, skipping", history_path)
         return 0
 
