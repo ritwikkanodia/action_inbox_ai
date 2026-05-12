@@ -11,16 +11,24 @@ from googleapiclient.discovery import build
 from db import clear_source_connection, get_source_connection, set_source_credentials
 
 SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
-CREDENTIALS_FILE = "credentials.json"
-CREDENTIALS_ENV_VAR = "GOOGLE_CREDENTIALS_JSON"
 
 
 def _client_config() -> dict:
-    raw_config = os.environ.get(CREDENTIALS_ENV_VAR)
-    if raw_config:
-        return json.loads(raw_config)
-    with open(CREDENTIALS_FILE) as f:
-        return json.load(f)
+    client_id = os.environ.get("GOOGLE_CLIENT_ID")
+    client_secret = os.environ.get("GOOGLE_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        raise RuntimeError(
+            "GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set in the environment."
+        )
+    return {
+        "web": {
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+            "token_uri": "https://oauth2.googleapis.com/token",
+            "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+        }
+    }
 
 
 def get_auth_flow(

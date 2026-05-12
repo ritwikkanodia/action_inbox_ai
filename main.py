@@ -22,7 +22,10 @@ from db import init_db, list_active_users, save_todo
 
 DB_PATH = os.environ.get("DB_PATH", "gmail_events.db")
 POLL_INTERVAL_SECONDS = 30
-DEFAULT_ENABLED_SOURCES = {"gmail", "fathom", "browser_history", "system"}
+KNOWN_SOURCES = {"gmail", "fathom", "browser_history", "system"}
+# `browser_history` (reads Dia browser history) and `system` (snapshots
+# macOS Downloads/Desktop/Documents) are macOS-specific and opt-in.
+DEFAULT_ENABLED_SOURCES = {"gmail", "fathom"}
 
 
 def _ensure_db_parent_dir() -> None:
@@ -36,10 +39,10 @@ def _enabled_sources() -> set[str]:
     if not raw:
         return set(DEFAULT_ENABLED_SOURCES)
     enabled = {source.strip() for source in raw.split(",") if source.strip()}
-    unknown = enabled - DEFAULT_ENABLED_SOURCES
+    unknown = enabled - KNOWN_SOURCES
     if unknown:
         print(f"[config] Ignoring unknown ENABLED_SOURCES values: {', '.join(sorted(unknown))}")
-    return enabled & DEFAULT_ENABLED_SOURCES
+    return enabled & KNOWN_SOURCES
 
 
 def get_gmail_email(service) -> str:
