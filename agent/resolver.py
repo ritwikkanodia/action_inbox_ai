@@ -5,13 +5,13 @@ from agents import Agent, Runner, WebSearchTool
 from agent.input_builder import build_initial_input
 from agent.prompt import INSTRUCTIONS
 from agent.tools.email import gmail_tools
-from agent.tools.local_files import local_file_tools
+# from agent.tools.local_files import local_file_tools
 
 
 def _build_agent(user_id: str) -> Agent:
     tools: list[Any] = [WebSearchTool()]
     tools.extend(gmail_tools(user_id))
-    tools.extend(local_file_tools())
+    # tools.extend(local_file_tools())
     return Agent(
         name="Resolver",
         model="gpt-5.2",
