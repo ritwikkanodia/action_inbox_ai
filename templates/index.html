@@ -341,6 +341,40 @@
     }
     #ai-send-btn:disabled { opacity: 0.4; cursor: default; }
 
+    .ai-clarify {
+      margin-top: 10px; display: flex; flex-direction: column; gap: 14px;
+    }
+    .clarify-group { display: flex; flex-direction: column; gap: 6px; }
+    .clarify-q { font-weight: 600; font-size: 13px; color: var(--text); }
+    .clarify-opts { display: flex; flex-wrap: wrap; gap: 6px; }
+    .clarify-opt {
+      font-family: inherit; font-size: 12px; font-weight: 500;
+      background: white; color: var(--text);
+      border: 1px solid var(--border); border-radius: 20px;
+      padding: 5px 12px; cursor: pointer; transition: background 0.1s, border-color 0.1s;
+    }
+    .clarify-opt:hover { border-color: #aaa; }
+    .clarify-opt.selected { background: var(--text); color: white; border-color: var(--text); }
+    .clarify-input-row {
+      display: flex; gap: 6px; margin-top: 4px;
+    }
+    .clarify-other-input {
+      flex: 1; font-family: inherit; font-size: 12px;
+      border: 1px solid var(--border); border-radius: 6px;
+      padding: 5px 10px; outline: none; color: var(--text); box-sizing: border-box;
+    }
+    .clarify-other-input:focus { border-color: #aaa; }
+    .clarify-send {
+      font-family: inherit; font-size: 12px; font-weight: 500;
+      background: var(--text); color: white;
+      border: none; border-radius: 6px;
+      padding: 5px 14px; cursor: pointer; flex-shrink: 0;
+    }
+    .clarify-send:disabled { opacity: 0.4; cursor: default; }
+    .clarify-stale-note {
+      font-size: 12px; color: var(--muted); font-style: italic;
+    }
+
     .source-badge {
       display: inline-block;
       font-size: 10px;
@@ -899,13 +933,168 @@
 
   marked.setOptions({ breaks: true });
 
+  const CLARIFY_TAGGED_RE = /```clarify\r?\n([\s\S]*?)```/;
+  const ANY_FENCE_RE = /```[^\n`]*\r?\n([\s\S]*?)```/g;
+
+  function parseClarify(content) {
+    // Try the explicitly tagged block first
+    const tagged = content.match(CLARIFY_TAGGED_RE);
+    if (tagged) {
+      try {
+        const parsed = JSON.parse(tagged[1]);
+        if (Array.isArray(parsed.questions) && parsed.questions.length > 0) return parsed.questions;
+      } catch {}
+    }
+    // Fall back: scan every fenced block for a JSON object with a non-empty "questions" array
+    ANY_FENCE_RE.lastIndex = 0;
+    let m;
+    while ((m = ANY_FENCE_RE.exec(content)) !== null) {
+      try {
+        const parsed = JSON.parse(m[1]);
+        if (Array.isArray(parsed.questions) && parsed.questions.length > 0) return parsed.questions;
+      } catch {}
+    }
+    return null;
+  }
+
+  function stripClarify(content) {
+    if (CLARIFY_TAGGED_RE.test(content)) return content.replace(CLARIFY_TAGGED_RE, '').trim();
+    // Strip the last fenced block (the one we matched as a clarify block)
+    return content.replace(/```[^\n`]*\r?\n[\s\S]*?```\s*$/, '').trim();
+  }
+
+  function sendClarifyAnswer(question, answer) {
+    const msg = `Q: ${question}\nA: ${answer}`;
+    const userBubble = document.createElement('div');
+    userBubble.className = 'ai-bubble user';
+    userBubble.textContent = msg;
+    threadEl.appendChild(userBubble);
+    threadEl.scrollTop = threadEl.scrollHeight;
+    callAI(currentId, msg);
+  }
+
+  function buildClarifyUI(questions, isActive) {
+    const container = document.createElement('div');
+    container.className = 'ai-clarify';
+
+    // One question at a time. If the model sent multiple, only the first is interactive;
+    // any extras are shown as stale follow-ups (defensive — prompt asks for length 1).
+    questions.forEach((q, qi) => {
+      const group = document.createElement('div');
+      group.className = 'clarify-group';
+
+      const qLabel = document.createElement('div');
+      qLabel.className = 'clarify-q';
+      qLabel.textContent = q.question;
+      group.appendChild(qLabel);
+
+      const optsRow = document.createElement('div');
+      optsRow.className = 'clarify-opts';
+
+      const options = Array.isArray(q.options) ? q.options : [];
+      const interactive = isActive && qi === 0;
+
+      options.forEach(opt => {
+        const btn = document.createElement('button');
+        btn.className = 'clarify-opt';
+        btn.textContent = opt;
+        btn.disabled = !interactive;
+        if (interactive) {
+          btn.addEventListener('click', () => {
+            if (container.dataset.sent === '1') return;
+            container.dataset.sent = '1';
+            container.querySelectorAll('button, input').forEach(el => { el.disabled = true; });
+            btn.classList.add('selected');
+            sendClarifyAnswer(q.question, opt);
+          });
+        }
+        optsRow.appendChild(btn);
+      });
+
+      // Free-text input + Send (always present when interactive; for empty-options
+      // questions it's the only input, shown inline)
+      let otherBtn = null;
+      let inputRow = null;
+      let otherInput = null;
+      let sendBtn = null;
+
+      if (interactive) {
+        otherInput = document.createElement('input');
+        otherInput.type = 'text';
+        otherInput.className = 'clarify-other-input';
+        otherInput.placeholder = 'Type your answer…';
+
+        sendBtn = document.createElement('button');
+        sendBtn.className = 'clarify-send';
+        sendBtn.textContent = 'Send';
+        sendBtn.disabled = true;
+
+        inputRow = document.createElement('div');
+        inputRow.className = 'clarify-input-row';
+        inputRow.appendChild(otherInput);
+        inputRow.appendChild(sendBtn);
+
+        function doSend() {
+          const v = otherInput.value.trim();
+          if (!v || container.dataset.sent === '1') return;
+          container.dataset.sent = '1';
+          container.querySelectorAll('button, input').forEach(el => { el.disabled = true; });
+          sendClarifyAnswer(q.question, v);
+        }
+
+        otherInput.addEventListener('input', () => {
+          sendBtn.disabled = !otherInput.value.trim();
+        });
+        otherInput.addEventListener('keydown', e => {
+          if (e.key === 'Enter') { e.preventDefault(); doSend(); }
+        });
+        sendBtn.addEventListener('click', doSend);
+
+        if (options.length > 0) {
+          // Show "Other…" toggle that reveals the input row
+          otherBtn = document.createElement('button');
+          otherBtn.className = 'clarify-opt';
+          otherBtn.textContent = 'Other…';
+          inputRow.style.display = 'none';
+          otherBtn.addEventListener('click', () => {
+            otherBtn.classList.add('selected');
+            inputRow.style.display = '';
+            otherInput.focus();
+          });
+          optsRow.appendChild(otherBtn);
+        }
+      } else if (options.length === 0) {
+        // Stale free-text question: show a disabled placeholder so user sees the shape
+        const placeholder = document.createElement('div');
+        placeholder.className = 'clarify-stale-note';
+        placeholder.textContent = '(awaiting answer)';
+        group.appendChild(placeholder);
+      }
+
+      group.appendChild(optsRow);
+      if (inputRow) group.appendChild(inputRow);
+
+      container.appendChild(group);
+    });
+
+    return container;
+  }
+
   function renderThread(thread) {
     threadEl.innerHTML = '';
-    thread.forEach(msg => {
+    thread.forEach((msg, idx) => {
       const div = document.createElement('div');
       div.className = `ai-bubble ${msg.role}`;
       if (msg.role === 'assistant') {
-        div.innerHTML = marked.parse(msg.content);
+        const questions = parseClarify(msg.content);
+        if (questions) {
+          const stripped = stripClarify(msg.content);
+          if (stripped) div.innerHTML = marked.parse(stripped);
+          const isActive = idx === thread.length - 1;
+          div.appendChild(buildClarifyUI(questions, isActive));
+        } else {
+          div.innerHTML = marked.parse(msg.content);
+        }
       } else {
         div.textContent = msg.content;
       }
