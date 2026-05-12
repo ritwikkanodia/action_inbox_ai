@@ -1,4 +1,4 @@
-# active_ai
+# action_inbox_ai
 
 A personal productivity assistant that turns signals from your Gmail and Fathom meetings (and optionally your browser history and macOS folders) into a prioritised todo list — with a per-task AI assistant built in.
 
