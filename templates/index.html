@@ -447,9 +447,32 @@
       padding: 5px 12px;
       cursor: pointer;
     }
+    .gmail-banner {
+      background: #fff4e5;
+      border-bottom: 1px solid #f0c987;
+      color: #7a4a00;
+      padding: 10px 24px;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .gmail-banner a {
+      color: #7a4a00;
+      font-weight: 600;
+      text-decoration: underline;
+    }
   </style>
 </head>
 <body>
+
+{% if not gmail_connected %}
+<div class="gmail-banner">
+  <span>Gmail isn't connected — new emails aren't being processed and email-aware AI tools are disabled.</span>
+  <a href="{{ gmail_auth_url }}">Reconnect Gmail</a>
+</div>
+{% endif %}
 
 <header>
   <div class="tabs">

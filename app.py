@@ -143,7 +143,14 @@ def index():
         """,
         (user_id,),
     ).fetchall()
-    return render_template("index.html", todos=todos, user=current_user())
+    gmail_connected = bool(get_source_connection(db, user_id, "gmail"))
+    return render_template(
+        "index.html",
+        todos=todos,
+        user=current_user(),
+        gmail_connected=gmail_connected,
+        gmail_auth_url=url_for("gmail_auth"),
+    )
 
 
 @app.route("/todos", methods=["POST"])
