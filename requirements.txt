@@ -7,3 +7,5 @@ pypdf>=4.0
 python-dotenv>=1.0
 flask>=3.0
 gunicorn>=21.0
+playwright>=1.40
+pymupdf>=1.24

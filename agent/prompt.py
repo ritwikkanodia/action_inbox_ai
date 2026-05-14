@@ -12,6 +12,12 @@ You operate in a multi-step loop with these tools:
   - search_local_files(query) / read_local_file(path) (only when configured): Spotlight \
     search and read of the user's own files — notes, PDFs, drafts, project files, \
     saved docs that may contain context the email thread doesn't.
+  - use_browser(task): delegate to a sub-agent that drives a real Chromium window \
+    logged into the user's accounts (cookies persist across runs). Use for actions \
+    web_search cannot do: checking authenticated dashboards, pulling account-specific \
+    info (orders, bookings, statements), filling forms. Give one concrete English \
+    goal per call. Prefer web_search for public facts; reach for use_browser only \
+    when the answer is behind a login or requires interaction.
 
 ## How to operate
 

@@ -1,3 +1,4 @@
+import base64
 import logging
 import os
 import subprocess
@@ -8,6 +9,10 @@ from typing import Any
 from agents import function_tool
 
 logger = logging.getLogger(__name__)
+
+OCR_MODEL = "gpt-5.2"
+OCR_MAX_PAGES = 5
+OCR_DPI = 200
 
 DENY_SUBSTRINGS = (
     ".ssh/", ".aws/", ".gnupg/", ".config/", "Library/",
@@ -38,6 +43,63 @@ def _is_allowed(path: Path, root: Path) -> bool:
     return not any(d in s for d in DENY_SUBSTRINGS)
 
 
+def _ocr_pdf_with_vision(p: Path) -> str | None:
+    """Rasterize PDF pages and OCR via OpenAI vision. Returns None on failure."""
+    try:
+        import fitz  # pymupdf
+    except ImportError:
+        logger.warning("pymupdf not installed; cannot OCR scanned PDF %s", p)
+        return None
+    try:
+        from openai import OpenAI
+    except ImportError:
+        return None
+
+    try:
+        doc = fitz.open(str(p))
+    except Exception:
+        logger.exception("pymupdf failed to open %s", p)
+        return None
+
+    images_b64: list[str] = []
+    try:
+        for i, page in enumerate(doc):
+            if i >= OCR_MAX_PAGES:
+                break
+            pix = page.get_pixmap(dpi=OCR_DPI)
+            images_b64.append(base64.b64encode(pix.tobytes("png")).decode("ascii"))
+    finally:
+        doc.close()
+
+    if not images_b64:
+        return None
+
+    try:
+        client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        content: list[dict[str, Any]] = [{
+            "type": "input_text",
+            "text": (
+                "Transcribe all readable text from these document page images. "
+                "Preserve field labels and values (e.g. 'Passport No: X1234567'). "
+                "Output plain text only, one page per section separated by "
+                "'\\n--- page N ---\\n'. No commentary."
+            ),
+        }]
+        for b64 in images_b64:
+            content.append({
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{b64}",
+            })
+        resp = client.responses.create(
+            model=OCR_MODEL,
+            input=[{"role": "user", "content": content}],
+        )
+        return resp.output_text
+    except Exception:
+        logger.exception("Vision OCR failed for %s", p)
+        return None
+
+
 def _read_text(p: Path) -> str:
     if p.suffix.lower() == ".pdf":
         try:
@@ -59,7 +121,14 @@ def _read_text(p: Path) -> str:
             total += len(text)
             if total >= MAX_READ_BYTES:
                 break
-        return "\n".join(chunks)[:MAX_READ_BYTES]
+        extracted = "\n".join(chunks)[:MAX_READ_BYTES]
+        # If pypdf got essentially nothing, the PDF is likely a scan with no
+        # text layer. Fall back to OCR via OpenAI vision.
+        if len(extracted.strip()) < 40:
+            ocr = _ocr_pdf_with_vision(p)
+            if ocr:
+                return ocr[:MAX_READ_BYTES]
+        return extracted
     data = p.read_bytes()[:MAX_READ_BYTES]
     try:
         return data.decode("utf-8")
