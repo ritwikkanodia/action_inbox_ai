@@ -14,7 +14,7 @@ def _build_agent(user_id: str) -> Agent:
     # tools.extend(local_file_tools())
     return Agent(
         name="Resolver",
-        model="gpt-5.2",
+        model="gpt-5.4-mini",
         instructions=INSTRUCTIONS,
         tools=tools,
     )
