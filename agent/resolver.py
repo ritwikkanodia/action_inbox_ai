@@ -2,7 +2,7 @@ from typing import Any
 
 from agents import Agent, Runner, WebSearchTool
 
-from agent.input_builder import build_initial_input
+from agent.input_builder import build_initial_inputs
 from agent.prompt import INSTRUCTIONS
 from agent.tools.email import gmail_tools
 # from agent.tools.local_files import local_file_tools
@@ -32,9 +32,7 @@ def resolve_todo(
         if user_message:
             input_items.append({"role": "user", "content": user_message})
     else:
-        input_items = [
-            {"role": "user", "content": build_initial_input(todo, user_message, user_id)}
-        ]
+        input_items = build_initial_inputs(todo, user_message, user_id)
 
     result = Runner.run_sync(agent, input_items)
     return list(result.to_input_list())
