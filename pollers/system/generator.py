@@ -66,7 +66,7 @@ def generate_todos(snapshot_json: str, open_todos: list[str] | None = None) -> l
     user_content = "\n\n".join(blocks)
     try:
         response = _get_client().chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5.4-mini",
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
