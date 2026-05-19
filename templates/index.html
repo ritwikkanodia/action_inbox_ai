@@ -11,6 +11,7 @@
 
     :root {
       --bg: #f7f6f3;
+      --panel: #ffffff;
       --border: #e2e0da;
       --text: #1a1a1a;
       --muted: #9a9893;
@@ -19,21 +20,25 @@
       --low: #3a8f5f;
     }
 
+    html, body { height: 100%; }
     body {
       background: var(--bg);
       color: var(--text);
       font-family: 'DM Sans', sans-serif;
       font-size: 14px;
-      max-width: 960px;
-      margin: 0 auto;
-      padding: 48px 24px 80px;
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
     }
 
-    header {
+    header.top {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 32px;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      flex-shrink: 0;
     }
 
     .tabs { display: flex; align-items: center; gap: 4px; }
@@ -47,57 +52,151 @@
 
     header .count { color: var(--muted); font-size: 13px; }
 
-    #todo-list.show-open   .todo.closed        { display: none; }
-    #todo-list.show-open   .todo.rejected-todo { display: none; }
-    #todo-list.show-closed .todo:not(.closed):not(.header-row) { display: none; }
-    #todo-list.show-closed .header-row .ask-ai-btn { visibility: hidden; }
-    #todo-list.show-rejected .todo:not(.rejected-todo):not(.header-row) { display: none; }
+    /* Two-pane layout */
+    #app {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 360px 1fr;
+      min-height: 0;
+    }
+
+    aside#sidebar {
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+    }
+
+    section#detail-pane {
+      overflow-y: auto;
+      background: var(--panel);
+      padding: 32px 40px 60px;
+    }
+
+    /* Sidebar list rows */
+    #todo-list { display: flex; flex-direction: column; }
+    #todo-list.show-open   .todo-row.closed,
+    #todo-list.show-open   .todo-row.rejected-todo { display: none; }
+    #todo-list.show-closed .todo-row:not(.closed) { display: none; }
+    #todo-list.show-rejected .todo-row:not(.rejected-todo) { display: none; }
 
     .empty {
       text-align: center;
       color: var(--muted);
-      padding: 64px 0;
+      padding: 64px 16px;
     }
 
-    .todo {
+    .todo-row {
       display: flex;
-      align-items: center;
-      gap: 12px;
-      padding: 14px 0;
+      align-items: flex-start;
+      gap: 10px;
+      padding: 12px 16px;
       border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.08s;
     }
+    .todo-row:hover { background: #f1efe9; }
+    .todo-row.selected { background: #ece9e0; }
 
     .dot {
       width: 8px;
       height: 8px;
       border-radius: 50%;
       flex-shrink: 0;
+      margin-top: 6px;
     }
     .dot.high   { background: var(--high); }
     .dot.medium { background: var(--medium); }
     .dot.low    { background: var(--low); }
     .dot.none   { background: var(--border); }
 
-    .title { flex: 1; font-size: 14px; font-weight: 500; }
-    .title a { color: inherit; text-decoration: none; }
-    .title a:hover { text-decoration: underline; text-underline-offset: 3px; }
-    .title-edit-btn { opacity: 0; background: none; border: none; cursor: pointer; font-size: 13px; color: var(--muted); padding: 0 2px; flex-shrink: 0; }
-    .title:hover .title-edit-btn { opacity: 1; }
-    .title-edit-input { font: inherit; font-size: 14px; font-weight: 500; border: none; border-bottom: 1.5px solid var(--accent); outline: none; background: transparent; width: 100%; padding: 0; }
-
-    .meta {
+    .row-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+    .row-title {
+      font-size: 14px;
+      font-weight: 500;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      word-break: break-word;
+    }
+    .row-meta {
       display: flex;
       align-items: center;
+      gap: 8px;
+      font-size: 11px;
       color: var(--muted);
-      font-size: 12px;
-      white-space: nowrap;
+    }
+    .row-due { font-weight: 500; color: var(--text); }
+
+    .todo-row.closed .row-title { text-decoration: line-through; color: var(--muted); }
+    .todo-row.pending-decision .row-title { font-style: italic; color: #777; }
+
+    .suggestion-label {
+      display: inline-block;
+      font-size: 9px; font-weight: 500; text-transform: uppercase;
+      letter-spacing: 0.06em; color: #b07d2a;
+      background: #fef3e2; border-radius: 8px;
+      padding: 1px 5px; margin-right: 6px;
+      vertical-align: middle;
     }
 
-    .col-due      { width: 160px; text-align: left; }
-    .col-urgency  { width: 72px;  text-align: left; }
-    .col-status   { width: 80px;  text-align: left; }
-    .col-source   { width: 90px;  text-align: left; }
-    .col-created  { width: 160px; text-align: left; }
+    .source-badge {
+      display: inline-block;
+      font-size: 9px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 1px 5px;
+      border-radius: 8px;
+    }
+    .source-badge.gmail  { background: #e8f0fe; color: #3367d6; }
+    .source-badge.fathom { background: #f3e8fd; color: #7c3aed; }
+    .source-badge.user   { background: #f0f0f0; color: #555; }
+    .source-badge.browser_history { background: #e6f7ee; color: #137a4a; }
+    .source-badge.system { background: #fff3e0; color: #e65100; }
+
+    /* Detail pane */
+    .detail-empty {
+      color: var(--muted);
+      text-align: center;
+      padding: 120px 0;
+      font-size: 14px;
+    }
+
+    .detail-header { display: flex; flex-direction: column; gap: 14px; margin-bottom: 28px; }
+    .detail-title-row { display: flex; align-items: flex-start; gap: 12px; }
+    .detail-title {
+      flex: 1;
+      font-size: 22px;
+      font-weight: 500;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+    .detail-title.editing { display: none; }
+    .detail-title-input {
+      font: inherit; font-size: 22px; font-weight: 500;
+      border: none; border-bottom: 1.5px solid var(--text); outline: none;
+      background: transparent; width: 100%; padding: 0;
+      font-family: 'DM Sans', sans-serif;
+    }
+    .detail-edit-title-btn {
+      background: none; border: none; cursor: pointer;
+      font-size: 14px; color: var(--muted);
+      padding: 4px;
+    }
+    .detail-edit-title-btn:hover { color: var(--text); }
+
+    .detail-meta-grid {
+      display: grid;
+      grid-template-columns: 100px 1fr;
+      gap: 8px 16px;
+      font-size: 13px;
+    }
+    .detail-meta-grid dt { color: var(--muted); font-weight: 400; }
+    .detail-meta-grid dd { color: var(--text); }
 
     .status {
       display: inline-block;
@@ -112,76 +211,195 @@
     .status.ongoing { background: #fef3e2; color: #c47d20; }
     .status.closed  { background: #e8f5e9; color: #3a8f5f; }
 
-    .todo-actions { display: flex; gap: 6px; flex-shrink: 0; }
-    .accept-btn, .reject-btn {
-      font-family: inherit; font-size: 11px; font-weight: 500;
-      border: 1px solid var(--border); border-radius: 4px;
-      padding: 2px 8px; cursor: pointer; background: none;
-    }
-    .accept-btn { color: #3a8f5f; }
-    .accept-btn:hover { background: #e8f5e9; border-color: #3a8f5f; }
-    .reject-btn { color: #c94040; }
-    .reject-btn:hover { background: #fce8e6; border-color: #c94040; }
-
-    /* Pending-decision todos: visually distinct as suggestions */
-    .todo.pending-decision {
-      background: #fffdf5;
-      border-bottom-style: dashed;
-      opacity: 0.88;
-    }
-    .todo.pending-decision .title,
-    .todo.pending-decision .title a { color: #777; font-style: italic; }
-    .todo.pending-decision .editable {
-      pointer-events: none;
-      cursor: default;
-      text-decoration: none !important;
-    }
-    .suggestion-label {
-      display: inline-block;
-      font-size: 10px; font-weight: 500; text-transform: uppercase;
-      letter-spacing: 0.06em; color: #b07d2a;
-      background: #fef3e2; border-radius: 10px;
-      padding: 2px 6px; margin-right: 8px;
-      vertical-align: middle; flex-shrink: 0;
-    }
-
-    .due { color: var(--text); font-weight: 500; }
-
-    .header-row { padding-bottom: 8px; border-bottom: 2px solid var(--text); }
-    .col-label { flex: 1; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-    .header-row .meta span { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
-
     .urgency.high   { color: var(--high); }
     .urgency.medium { color: var(--medium); }
     .urgency.low    { color: var(--low); }
-
-    .todo.closed .title,
-    .todo.closed .title a { text-decoration: line-through; color: var(--muted); }
 
     .editable { cursor: pointer; }
     .editable:hover { text-decoration: underline; text-decoration-style: dashed; text-underline-offset: 3px; }
 
     .edit-select, .edit-date {
       font-family: inherit;
-      font-size: 12px;
+      font-size: 13px;
       border: 1px solid var(--border);
       border-radius: 4px;
-      padding: 2px 4px;
+      padding: 2px 6px;
       background: white;
       color: var(--text);
       outline: none;
     }
-    .edit-date { width: 155px; }
 
-    .ask-ai-btn {
-      font-family: inherit; font-size: 11px; font-weight: 500;
-      color: var(--muted); background: none;
+    .accept-btn, .reject-btn {
+      font-family: inherit; font-size: 12px; font-weight: 500;
       border: 1px solid var(--border); border-radius: 4px;
-      padding: 2px 8px; cursor: pointer; flex-shrink: 0;
+      padding: 4px 10px; cursor: pointer; background: white;
     }
-    .ask-ai-btn:hover { border-color: var(--text); color: var(--text); }
-    .ask-ai-btn:disabled { opacity: 0.5; cursor: default; }
+    .accept-btn { color: #3a8f5f; }
+    .accept-btn:hover { background: #e8f5e9; border-color: #3a8f5f; }
+    .reject-btn { color: #c94040; }
+    .reject-btn:hover { background: #fce8e6; border-color: #c94040; }
 
+    .detail-section {
+      margin-top: 28px;
+      padding-top: 22px;
+      border-top: 1px solid var(--border);
+    }
+    .detail-section h3 {
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+    .detail-section .body-text {
+      font-size: 14px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    /* Gmail thread */
+    .thread-msg {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      background: var(--bg);
+    }
+    .thread-msg.is-user { background: #f3f6ff; border-color: #d6dfff; }
+    .thread-msg-hdr {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    .thread-msg-from { font-weight: 500; color: var(--text); }
+    .thread-msg-body {
+      font-size: 13px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: var(--text);
+    }
+    .thread-msg-body.collapsed {
+      max-height: 8em;
+      overflow: hidden;
+      position: relative;
+      mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
+      -webkit-mask-image: linear-gradient(to bottom, black 70%, transparent 100%);
+    }
+    .thread-msg-expand {
+      font-size: 11px;
+      color: var(--muted);
+      background: none;
+      border: none;
+      cursor: pointer;
+      padding: 4px 0 0;
+      font-family: inherit;
+    }
+    .thread-msg-expand:hover { color: var(--text); }
+
+    .context-link {
+      display: inline-block;
+      font-size: 12px;
+      color: var(--muted);
+      text-decoration: none;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 3px 8px;
+      margin-top: 6px;
+    }
+    .context-link:hover { color: var(--text); border-color: var(--text); }
+
+    .context-error { color: var(--muted); font-size: 13px; font-style: italic; }
+    .context-loading { color: var(--muted); font-size: 13px; }
+
+    /* Inline Ask-AI in detail pane */
+    .ai-section { margin-top: 28px; padding-top: 22px; border-top: 1px solid var(--border); }
+    .ai-section-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+    .ai-section-header h3 {
+      font-size: 11px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--muted);
+    }
+    #ai-new-thread-btn {
+      font-size: 11px; color: var(--muted); background: none;
+      border: 1px solid var(--border); border-radius: 4px;
+      padding: 2px 8px; cursor: pointer; font-family: inherit;
+    }
+    #ai-new-thread-btn:hover { color: var(--text); border-color: var(--text); }
+
+    #ai-thread {
+      display: flex; flex-direction: column; gap: 10px;
+      margin-bottom: 12px;
+    }
+    .ai-bubble {
+      max-width: 92%; padding: 10px 14px;
+      border-radius: 10px; font-size: 14px; line-height: 1.6;
+      word-break: break-word;
+    }
+    .ai-bubble.assistant {
+      background: #f3f3f1; color: var(--text);
+      align-self: flex-start; border-bottom-left-radius: 3px;
+    }
+    .ai-bubble.assistant h1, .ai-bubble.assistant h2, .ai-bubble.assistant h3 {
+      font-size: 14px; font-weight: 600; margin: 10px 0 4px;
+    }
+    .ai-bubble.assistant h1:first-child, .ai-bubble.assistant h2:first-child, .ai-bubble.assistant h3:first-child { margin-top: 0; }
+    .ai-bubble.assistant p { margin: 0 0 8px; }
+    .ai-bubble.assistant p:last-child { margin-bottom: 0; }
+    .ai-bubble.assistant ul, .ai-bubble.assistant ol { margin: 4px 0 8px 18px; }
+    .ai-bubble.assistant li { margin-bottom: 3px; }
+    .ai-bubble.assistant strong { font-weight: 600; }
+    .ai-bubble.assistant em { font-style: italic; }
+    .ai-bubble.assistant code {
+      font-family: monospace; font-size: 13px;
+      background: #e8e7e3; border-radius: 3px; padding: 1px 4px;
+    }
+    .ai-bubble.assistant pre {
+      background: #e8e7e3; border-radius: 6px;
+      padding: 10px 12px; overflow-x: auto; margin: 6px 0;
+    }
+    .ai-bubble.assistant pre code { background: none; padding: 0; }
+    .ai-bubble.user {
+      background: var(--text); color: white;
+      align-self: flex-end; border-bottom-right-radius: 3px;
+      white-space: pre-wrap;
+    }
+    .ai-bubble.loading {
+      background: #f3f3f1; color: var(--muted);
+      align-self: flex-start; font-style: italic;
+    }
+    #ai-input-area {
+      display: flex; gap: 8px;
+      border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px; background: white;
+    }
+    #ai-followup {
+      flex: 1; font-family: inherit; font-size: 13px;
+      border: none; outline: none; color: var(--text);
+      resize: none; min-height: 36px; max-height: 140px;
+    }
+    #ai-send-btn {
+      font-family: inherit; font-size: 13px; font-weight: 500;
+      background: var(--text); color: white;
+      border: none; border-radius: 6px;
+      padding: 7px 14px; cursor: pointer; flex-shrink: 0;
+      align-self: flex-end;
+    }
+    #ai-send-btn:disabled { opacity: 0.4; cursor: default; }
+
+    /* Settings modal (unchanged) */
     #settings-modal {
       display: none; position: fixed; inset: 0;
       background: rgba(0,0,0,0.35); z-index: 100;
@@ -204,9 +422,7 @@
       font-size: 18px; color: var(--muted); background: none; border: none; cursor: pointer;
     }
     #settings-body { padding: 20px; display: flex; flex-direction: column; gap: 20px; }
-    .source-card {
-      border: 1px solid var(--border); border-radius: 6px; overflow: hidden;
-    }
+    .source-card { border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
     .source-card-header {
       display: flex; align-items: center; gap: 10px;
       padding: 12px 14px;
@@ -245,117 +461,6 @@
     .btn-disconnect:hover { border-color: var(--high); color: var(--high); }
     .source-card-hint { font-size: 11px; color: var(--muted); }
 
-    #ai-modal {
-      display: none; position: fixed; inset: 0;
-      background: rgba(0,0,0,0.35); z-index: 100;
-      align-items: center; justify-content: center;
-    }
-    #ai-modal.open { display: flex; }
-    #ai-modal-box {
-      background: white; border-radius: 8px;
-      width: min(620px, 90vw); height: min(72vh, 600px);
-      display: flex; flex-direction: column;
-      position: relative; overflow: hidden;
-    }
-    #ai-modal-header {
-      padding: 16px 20px 12px;
-      border-bottom: 1px solid var(--border);
-      flex-shrink: 0;
-    }
-    #ai-modal-title { font-size: 13px; font-weight: 500; color: var(--muted); padding-right: 24px; }
-    #ai-modal-actions { position: absolute; top: 10px; right: 14px; display: flex; align-items: center; gap: 8px; }
-    #ai-new-thread-btn {
-      font-size: 11px; color: var(--muted); background: none;
-      border: 1px solid var(--border); border-radius: 4px;
-      padding: 2px 8px; cursor: pointer;
-    }
-    #ai-new-thread-btn:hover { color: var(--text); border-color: var(--text); }
-    #ai-modal-close {
-      font-size: 18px; color: var(--muted); background: none; border: none; cursor: pointer;
-    }
-    #ai-thread {
-      flex: 1; overflow-y: auto; padding: 16px 20px;
-      display: flex; flex-direction: column; gap: 12px;
-    }
-    .ai-bubble {
-      max-width: 88%; padding: 12px 16px;
-      border-radius: 10px; font-size: 14px; line-height: 1.6;
-      word-break: break-word;
-    }
-    .ai-bubble.assistant {
-      background: #f3f3f1; color: var(--text);
-      align-self: flex-start; border-bottom-left-radius: 3px;
-    }
-    .ai-bubble.assistant h1,
-    .ai-bubble.assistant h2,
-    .ai-bubble.assistant h3 {
-      font-size: 14px; font-weight: 600; margin: 10px 0 4px;
-    }
-    .ai-bubble.assistant h1:first-child,
-    .ai-bubble.assistant h2:first-child,
-    .ai-bubble.assistant h3:first-child { margin-top: 0; }
-    .ai-bubble.assistant p { margin: 0 0 8px; }
-    .ai-bubble.assistant p:last-child { margin-bottom: 0; }
-    .ai-bubble.assistant ul,
-    .ai-bubble.assistant ol { margin: 4px 0 8px 18px; }
-    .ai-bubble.assistant li { margin-bottom: 3px; }
-    .ai-bubble.assistant strong { font-weight: 600; }
-    .ai-bubble.assistant em { font-style: italic; }
-    .ai-bubble.assistant code {
-      font-family: monospace; font-size: 13px;
-      background: #e8e7e3; border-radius: 3px; padding: 1px 4px;
-    }
-    .ai-bubble.assistant pre {
-      background: #e8e7e3; border-radius: 6px;
-      padding: 10px 12px; overflow-x: auto; margin: 6px 0;
-    }
-    .ai-bubble.assistant pre code { background: none; padding: 0; }
-    .ai-bubble.assistant hr { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
-    .ai-bubble.user {
-      background: var(--text); color: white;
-      align-self: flex-end; border-bottom-right-radius: 3px;
-      white-space: pre-wrap;
-    }
-    .ai-bubble.loading {
-      background: #f3f3f1; color: var(--muted);
-      align-self: flex-start; border-bottom-left-radius: 3px;
-      font-style: italic;
-    }
-    #ai-input-area {
-      padding: 12px 16px;
-      border-top: 1px solid var(--border);
-      display: flex; gap: 8px; flex-shrink: 0;
-    }
-    #ai-followup {
-      flex: 1; font-family: inherit; font-size: 13px;
-      border: 1px solid var(--border); border-radius: 6px;
-      padding: 7px 10px; outline: none; color: var(--text);
-      resize: none;
-    }
-    #ai-followup:focus { border-color: #aaa; }
-    #ai-send-btn {
-      font-family: inherit; font-size: 13px; font-weight: 500;
-      background: var(--text); color: white;
-      border: none; border-radius: 6px;
-      padding: 7px 14px; cursor: pointer; flex-shrink: 0;
-    }
-    #ai-send-btn:disabled { opacity: 0.4; cursor: default; }
-
-    .source-badge {
-      display: inline-block;
-      font-size: 10px;
-      font-weight: 500;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      padding: 2px 6px;
-      border-radius: 10px;
-    }
-    .source-badge.gmail  { background: #e8f0fe; color: #3367d6; }
-    .source-badge.fathom { background: #f3e8fd; color: #7c3aed; }
-    .source-badge.user   { background: #f0f0f0; color: #555; }
-    .source-badge.browser_history { background: #e6f7ee; color: #137a4a; }
-    .source-badge.system { background: #fff3e0; color: #e65100; }
-
     .new-todo-btn {
       font-family: inherit;
       font-size: 13px;
@@ -380,9 +485,7 @@
       color: var(--text);
       background: white;
     }
-    .user-chip img {
-      width: 22px; height: 22px; border-radius: 50%;
-    }
+    .user-chip img { width: 22px; height: 22px; border-radius: 50%; }
     .user-chip .user-initial {
       width: 22px; height: 22px; border-radius: 50%;
       background: var(--text); color: white;
@@ -402,16 +505,12 @@
       display: none;
       flex-direction: column;
       gap: 10px;
-      padding: 16px 0;
+      padding: 14px 16px;
       border-bottom: 1px solid var(--border);
+      background: var(--panel);
     }
     .new-todo-form.open { display: flex; }
-    .new-todo-form .form-row {
-      display: flex;
-      gap: 8px;
-      align-items: center;
-      flex-wrap: wrap;
-    }
+    .new-todo-form .form-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .new-todo-form input[type="text"],
     .new-todo-form select,
     .new-todo-form input[type="datetime-local"] {
@@ -424,28 +523,19 @@
       color: var(--text);
       outline: none;
     }
-    .new-todo-form input[type="text"] { flex: 1; min-width: 200px; }
+    .new-todo-form input[type="text"] { flex: 1; min-width: 160px; }
     .new-todo-form .form-actions { display: flex; gap: 8px; }
     .btn-save {
-      font-family: inherit;
-      font-size: 13px;
-      font-weight: 500;
-      background: var(--text);
-      color: white;
-      border: none;
-      border-radius: 5px;
-      padding: 5px 14px;
-      cursor: pointer;
+      font-family: inherit; font-size: 13px; font-weight: 500;
+      background: var(--text); color: white;
+      border: none; border-radius: 5px;
+      padding: 5px 14px; cursor: pointer;
     }
     .btn-cancel {
-      font-family: inherit;
-      font-size: 13px;
-      color: var(--muted);
-      background: none;
-      border: 1px solid var(--border);
-      border-radius: 5px;
-      padding: 5px 12px;
-      cursor: pointer;
+      font-family: inherit; font-size: 13px;
+      color: var(--muted); background: none;
+      border: 1px solid var(--border); border-radius: 5px;
+      padding: 5px 12px; cursor: pointer;
     }
     .gmail-banner {
       background: #fff4e5;
@@ -458,10 +548,22 @@
       justify-content: space-between;
       gap: 12px;
     }
-    .gmail-banner a {
-      color: #7a4a00;
-      font-weight: 600;
-      text-decoration: underline;
+    .gmail-banner a { color: #7a4a00; font-weight: 600; text-decoration: underline; }
+
+    /* Mobile: single-column with detail-overlay */
+    .back-btn {
+      display: none;
+      background: none; border: none; cursor: pointer;
+      font-family: inherit; font-size: 13px; color: var(--muted);
+      padding: 0 0 12px;
+    }
+    @media (max-width: 720px) {
+      #app { grid-template-columns: 1fr; }
+      aside#sidebar { border-right: none; }
+      section#detail-pane { display: none; padding: 24px 20px 60px; }
+      #app.detail-open aside#sidebar { display: none; }
+      #app.detail-open section#detail-pane { display: block; }
+      .back-btn { display: block; }
     }
   </style>
 </head>
@@ -474,7 +576,7 @@
 </div>
 {% endif %}
 
-<header>
+<header class="top">
   <div class="tabs">
     <button class="tab-btn active" id="tabOpen">Open</button>
     <button class="tab-btn" id="tabClosed">Closed</button>
@@ -500,71 +602,54 @@
   </div>
 </header>
 
-<div class="new-todo-form" id="newTodoForm">
-  <div class="form-row">
-    <input type="text" id="ntTitle" placeholder="What needs to be done?" autocomplete="off">
-    <select id="ntUrgency">
-      <option value="low">Low</option>
-      <option value="medium" selected>Medium</option>
-      <option value="high">High</option>
-    </select>
-    <input type="datetime-local" id="ntDueDate">
-  </div>
-  <div class="form-row">
-    <input type="text" id="ntAction" placeholder="Suggested action (optional)" autocomplete="off">
-  </div>
-  <div class="form-actions">
-    <button class="btn-save" id="saveNewTodo">Add todo</button>
-    <button class="btn-cancel" id="cancelNewTodo">Cancel</button>
-  </div>
-</div>
+<div id="app">
+  <aside id="sidebar">
+    <div class="new-todo-form" id="newTodoForm">
+      <div class="form-row">
+        <input type="text" id="ntTitle" placeholder="What needs to be done?" autocomplete="off">
+        <select id="ntUrgency">
+          <option value="low">Low</option>
+          <option value="medium" selected>Medium</option>
+          <option value="high">High</option>
+        </select>
+        <input type="datetime-local" id="ntDueDate">
+      </div>
+      <div class="form-row">
+        <input type="text" id="ntAction" placeholder="Suggested action (optional)" autocomplete="off">
+      </div>
+      <div class="form-actions">
+        <button class="btn-save" id="saveNewTodo">Add todo</button>
+        <button class="btn-cancel" id="cancelNewTodo">Cancel</button>
+      </div>
+    </div>
 
-<div id="todo-list" class="show-open">
-{% if not todos %}
-  <p class="empty">No todos yet.</p>
-{% else %}
-  <div class="todo header-row">
-    <div class="dot" style="visibility:hidden"></div>
-    <div class="col-label">Title</div>
-    <div class="meta">
-      <span class="col-due">Due</span>
-      <span class="col-urgency">Urgency</span>
-      <span class="col-status">Status</span>
-      <span class="col-source">Source</span>
-      <span class="col-created">Created</span>
+    <div id="todo-list" class="show-open">
+      {% if not todos %}
+        <p class="empty">No todos yet.</p>
+      {% else %}
+        {% for t in todos %}
+        {% set is_ai = t.source in ('gmail', 'fathom', 'browser_history', 'system') %}
+        {% set pending = is_ai and not t.decision and t.status != 'closed' %}
+        <div class="todo-row {{ t.status }}{% if t.decision == 'rejected' %} rejected-todo{% endif %}{% if pending %} pending-decision{% endif %}" data-id="{{ t.todo_id }}">
+          <div class="dot {{ t.urgency or 'none' }}"></div>
+          <div class="row-body">
+            <div class="row-title">{% if pending %}<span class="suggestion-label">Suggestion</span>{% endif %}{{ t.title or '(untitled)' }}</div>
+            <div class="row-meta">
+              {% if t.due_date %}<span class="row-due">{{ t.due_date | fmt_dt }}</span>{% endif %}
+              <span class="source-badge {{ t.source or 'gmail' }}">{{ 'browser' if t.source == 'browser_history' else ('system' if t.source == 'system' else (t.source or 'gmail')) }}</span>
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      {% endif %}
     </div>
-    <button class="ask-ai-btn" style="visibility:hidden" aria-hidden="true">Ask AI</button>
-  </div>
-  {% for t in todos %}
-  {% set is_ai = t.source in ('gmail', 'fathom', 'browser_history', 'system') %}
-  {% set pending = is_ai and not t.decision and t.status != 'closed' %}
-  <div class="todo {{ t.status }}{% if t.decision == 'rejected' %} rejected-todo{% endif %}{% if pending %} pending-decision{% endif %}">
-    <div class="dot {{ t.urgency or 'none' }}"></div>
-    <div class="title" data-id="{{ t.todo_id }}" data-title="{{ t.title | e }}">
-      {% if pending %}<span class="suggestion-label">Suggestion</span>{% endif %}{% if t.relevant_link %}<a href="{{ t.relevant_link }}" target="_blank">{{ t.title or '(untitled)' }}</a>{% else %}<span class="title-text">{{ t.title or '(untitled)' }}</span>{% endif %}<button class="title-edit-btn" title="Edit title">✎</button>
-    </div>
-    <div class="meta">
-      <span class="col-due due editable" data-id="{{ t.todo_id }}" data-field="due_date" data-value="{{ t.due_date or '' }}">{{ t.due_date | fmt_dt }}</span>
-      <span class="col-urgency urgency {{ t.urgency or '' }} editable" data-id="{{ t.todo_id }}" data-field="urgency" data-value="{{ t.urgency or '' }}">{{ t.urgency or '—' }}</span>
-      <span class="col-status editable" data-id="{{ t.todo_id }}" data-field="status" data-value="{{ t.status }}"><span class="status {{ t.status }}">{{ t.status }}</span></span>
-      <span class="col-source"><span class="source-badge {{ t.source or 'gmail' }}">{{ 'browser' if t.source == 'browser_history' else ('system' if t.source == 'system' else (t.source or 'gmail')) }}</span></span>
-      <span class="col-created">{{ t.created_at | fmt_dt }}</span>
-    </div>
-    {% if pending %}
-    <div class="todo-actions">
-      <button class="accept-btn" data-id="{{ t.todo_id }}">Accept</button>
-      <button class="reject-btn" data-id="{{ t.todo_id }}">Reject</button>
-    </div>
-    {% elif t.decision == 'rejected' %}
-    <div class="todo-actions">
-      <button class="accept-btn" data-id="{{ t.todo_id }}">Accept</button>
-    </div>
-    {% else %}
-    <button class="ask-ai-btn" data-id="{{ t.todo_id }}" data-title="{{ t.title | e }}">Ask AI</button>
-    {% endif %}
-  </div>
-  {% endfor %}
-{% endif %}
+  </aside>
+
+  <section id="detail-pane">
+    <button class="back-btn" id="backBtn">← Back</button>
+    <div id="detail-empty" class="detail-empty">Select an action item to see details.</div>
+    <div id="detail-content" style="display:none;"></div>
+  </section>
 </div>
 
 <div id="settings-modal">
@@ -610,31 +695,27 @@
   </div>
 </div>
 
-<div id="ai-modal">
-  <div id="ai-modal-box">
-    <div id="ai-modal-header">
-      <div id="ai-modal-title"></div>
-      <div id="ai-modal-actions">
-        <button id="ai-new-thread-btn" title="Start a new thread">New thread</button>
-        <button id="ai-modal-close">×</button>
-      </div>
-    </div>
-    <div id="ai-thread"></div>
-    <div id="ai-input-area">
-      <input type="text" id="ai-followup" placeholder="Ask a follow-up…" autocomplete="off">
-      <button id="ai-send-btn">Send</button>
-    </div>
-  </div>
-</div>
-
+<script id="todos-data" type="application/json">{{ todos_json | safe }}</script>
 <script>
   const URGENCY_OPTIONS = ['low', 'medium', 'high'];
   const STATUS_OPTIONS  = ['open', 'ongoing', 'closed'];
 
+  const todosById = {};
+  (JSON.parse(document.getElementById('todos-data').textContent) || []).forEach(t => {
+    todosById[t.todo_id] = t;
+  });
+
+  marked.setOptions({ breaks: true });
+
   function fmtDue(iso) {
     if (!iso) return '—';
     const d = new Date(iso);
+    if (isNaN(d)) return iso;
     return d.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit', hour12: true });
+  }
+
+  function escapeHtml(s) {
+    return (s || '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
   function patch(id, field, value) {
@@ -642,6 +723,278 @@
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ [field]: value || null }),
+    });
+  }
+
+  // ---------------- Sidebar state ----------------
+  const todoList = document.getElementById('todo-list');
+  const tabOpen     = document.getElementById('tabOpen');
+  const tabClosed   = document.getElementById('tabClosed');
+  const tabRejected = document.getElementById('tabRejected');
+  const countEl     = document.getElementById('todoCount');
+
+  function countByFilter(filter) {
+    return Array.from(document.querySelectorAll('#todo-list .todo-row')).filter(r => {
+      if (filter === 'open') return !r.classList.contains('closed') && !r.classList.contains('rejected-todo');
+      if (filter === 'closed') return r.classList.contains('closed');
+      if (filter === 'rejected') return r.classList.contains('rejected-todo');
+      return false;
+    }).length;
+  }
+
+  let currentFilter = 'open';
+
+  function switchTab(tab) {
+    currentFilter = tab;
+    tabOpen.classList.remove('active');
+    tabClosed.classList.remove('active');
+    tabRejected.classList.remove('active');
+    todoList.className = `show-${tab}`;
+    if (tab === 'open') tabOpen.classList.add('active');
+    else if (tab === 'closed') tabClosed.classList.add('active');
+    else tabRejected.classList.add('active');
+    countEl.textContent = countByFilter(tab);
+
+    // If selected todo is filtered out, clear selection
+    if (selectedId) {
+      const row = document.querySelector(`.todo-row[data-id="${selectedId}"]`);
+      if (row && getComputedStyle(row).display === 'none') {
+        clearSelection();
+      }
+    }
+  }
+
+  tabOpen.addEventListener('click',     () => switchTab('open'));
+  tabClosed.addEventListener('click',   () => switchTab('closed'));
+  tabRejected.addEventListener('click', () => switchTab('rejected'));
+
+  // ---------------- Selection / detail rendering ----------------
+  let selectedId = null;
+  const contextCache = {};   // { todo_id: contextData }
+  const threadCache  = {};   // { todo_id: [{role, content}] }
+  const detailEmpty   = document.getElementById('detail-empty');
+  const detailContent = document.getElementById('detail-content');
+  const appEl = document.getElementById('app');
+
+  function clearSelection() {
+    selectedId = null;
+    document.querySelectorAll('.todo-row.selected').forEach(r => r.classList.remove('selected'));
+    detailEmpty.style.display = '';
+    detailContent.style.display = 'none';
+    detailContent.innerHTML = '';
+    appEl.classList.remove('detail-open');
+    if (location.hash) history.replaceState(null, '', location.pathname);
+  }
+
+  document.getElementById('backBtn').addEventListener('click', () => {
+    appEl.classList.remove('detail-open');
+  });
+
+  function selectTodo(id) {
+    const t = todosById[id];
+    if (!t) return;
+    selectedId = id;
+    document.querySelectorAll('.todo-row.selected').forEach(r => r.classList.remove('selected'));
+    const row = document.querySelector(`.todo-row[data-id="${id}"]`);
+    if (row) row.classList.add('selected');
+
+    detailEmpty.style.display = 'none';
+    detailContent.style.display = '';
+    renderDetail(t);
+    appEl.classList.add('detail-open');
+
+    if (location.hash !== `#todo/${id}`) {
+      history.replaceState(null, '', `#todo/${id}`);
+    }
+  }
+
+  document.querySelectorAll('.todo-row').forEach(row => {
+    row.addEventListener('click', () => selectTodo(row.dataset.id));
+  });
+
+  function renderDetail(t) {
+    const pending = ['gmail','fathom','browser_history','system'].includes(t.source) && !t.decision && t.status !== 'closed';
+    const rejected = t.decision === 'rejected';
+
+    let decisionHtml = '';
+    if (pending) {
+      decisionHtml = `
+        <button class="accept-btn" data-action="accept">Accept</button>
+        <button class="reject-btn" data-action="reject">Reject</button>`;
+    } else if (rejected) {
+      decisionHtml = `<button class="accept-btn" data-action="accept">Accept</button>`;
+    }
+
+    detailContent.innerHTML = `
+      <div class="detail-header">
+        <div class="detail-title-row">
+          <div class="detail-title" id="detailTitle">${escapeHtml(t.title || '(untitled)')}</div>
+          <button class="detail-edit-title-btn" id="detailEditTitleBtn" title="Edit title">✎</button>
+        </div>
+
+        <dl class="detail-meta-grid">
+          <dt>Source</dt>
+          <dd><span class="source-badge ${t.source || 'user'}">${t.source === 'browser_history' ? 'browser' : (t.source || 'user')}</span></dd>
+
+          <dt>Status</dt>
+          <dd><span class="editable" data-field="status" data-value="${t.status || ''}"><span class="status ${t.status || ''}">${t.status || '—'}</span></span></dd>
+
+          <dt>Urgency</dt>
+          <dd><span class="editable urgency ${t.urgency || ''}" data-field="urgency" data-value="${t.urgency || ''}">${t.urgency || '—'}</span></dd>
+
+          <dt>Due</dt>
+          <dd><span class="editable" data-field="due_date" data-value="${t.due_date || ''}">${fmtDue(t.due_date)}</span></dd>
+
+          <dt>Created</dt>
+          <dd>${fmtDue(t.created_at)}</dd>
+
+          ${t.estimated_time_minutes ? `<dt>Estimate</dt><dd>${t.estimated_time_minutes} min</dd>` : ''}
+
+          ${t.relevant_link ? `<dt>Link</dt><dd><a href="${escapeHtml(t.relevant_link)}" target="_blank" class="context-link">Open ↗</a></dd>` : ''}
+        </dl>
+
+        ${decisionHtml ? `<div class="detail-actions" style="display:flex;gap:8px;">${decisionHtml}</div>` : ''}
+      </div>
+
+      ${t.suggested_action ? `<div class="detail-section"><h3>Suggested action</h3><div class="body-text">${escapeHtml(t.suggested_action)}</div></div>` : ''}
+      ${t.reasoning ? `<div class="detail-section"><h3>Reasoning</h3><div class="body-text">${escapeHtml(t.reasoning)}</div></div>` : ''}
+
+      <div class="detail-section" id="context-section" style="display:none;">
+        <h3 id="context-heading">Context</h3>
+        <div id="context-body"></div>
+      </div>
+
+      <div class="ai-section">
+        <div class="ai-section-header">
+          <h3>Ask AI</h3>
+          <button id="ai-new-thread-btn">New thread</button>
+        </div>
+        <div id="ai-thread"></div>
+        <div id="ai-input-area">
+          <textarea id="ai-followup" placeholder="Ask a follow-up…" rows="1"></textarea>
+          <button id="ai-send-btn">Send</button>
+        </div>
+      </div>
+    `;
+
+    wireDetailHandlers(t);
+    loadContext(t);
+    loadAiThread(t);
+  }
+
+  function wireDetailHandlers(t) {
+    // Decision buttons
+    detailContent.querySelectorAll('[data-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const decision = btn.dataset.action === 'accept' ? 'accepted' : 'rejected';
+        fetch(`/todos/${t.todo_id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ decision }),
+        }).then(r => {
+          if (!r.ok) return;
+          t.decision = decision;
+          const row = document.querySelector(`.todo-row[data-id="${t.todo_id}"]`);
+          if (row) {
+            row.classList.remove('pending-decision', 'rejected-todo');
+            if (decision === 'rejected') row.classList.add('rejected-todo');
+            const label = row.querySelector('.suggestion-label');
+            if (label) label.remove();
+          }
+          renderDetail(t);
+          switchTab(currentFilter);
+        });
+      });
+    });
+
+    // Editable fields
+    detailContent.querySelectorAll('.editable').forEach(cell => {
+      cell.addEventListener('click', () => {
+        if (cell.querySelector('select,input')) return;
+        const field = cell.dataset.field;
+        const value = cell.dataset.value;
+
+        function commit(newVal) {
+          patch(t.todo_id, field, newVal).then(r => {
+            if (!r.ok) { alert('Save failed'); return; }
+            t[field] = newVal || null;
+            if (field === 'status') {
+              const row = document.querySelector(`.todo-row[data-id="${t.todo_id}"]`);
+              if (row) {
+                row.classList.remove('open','ongoing','closed');
+                row.classList.add(newVal);
+              }
+            }
+            if (field === 'urgency') {
+              const row = document.querySelector(`.todo-row[data-id="${t.todo_id}"]`);
+              if (row) {
+                const dot = row.querySelector('.dot');
+                if (dot) dot.className = `dot ${newVal || 'none'}`;
+              }
+            }
+            if (field === 'due_date') {
+              const row = document.querySelector(`.todo-row[data-id="${t.todo_id}"]`);
+              if (row) {
+                const dueEl = row.querySelector('.row-due');
+                if (newVal) {
+                  if (dueEl) dueEl.textContent = fmtDue(newVal);
+                  else {
+                    const meta = row.querySelector('.row-meta');
+                    const span = document.createElement('span');
+                    span.className = 'row-due';
+                    span.textContent = fmtDue(newVal);
+                    meta.insertBefore(span, meta.firstChild);
+                  }
+                } else if (dueEl) dueEl.remove();
+              }
+            }
+            renderDetail(t);
+            switchTab(currentFilter);
+          });
+        }
+
+        let widget;
+        if (field === 'urgency') widget = makeSelect(URGENCY_OPTIONS, value, commit);
+        else if (field === 'status') widget = makeSelect(STATUS_OPTIONS, value, commit);
+        else widget = makeDateInput(value, commit);
+
+        cell.innerHTML = '';
+        cell.appendChild(widget);
+        widget.focus();
+      });
+    });
+
+    // Title edit
+    const editBtn = document.getElementById('detailEditTitleBtn');
+    if (editBtn) editBtn.addEventListener('click', () => startTitleEdit(t));
+
+    // Ask AI handlers
+    const sendBtn = document.getElementById('ai-send-btn');
+    const followup = document.getElementById('ai-followup');
+    sendBtn.addEventListener('click', () => {
+      const msg = followup.value.trim();
+      if (!msg) return;
+      const userBubble = document.createElement('div');
+      userBubble.className = 'ai-bubble user';
+      userBubble.textContent = msg;
+      document.getElementById('ai-thread').appendChild(userBubble);
+      followup.value = '';
+      callAI(t.todo_id, msg);
+    });
+    followup.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }
+    });
+    followup.addEventListener('input', () => {
+      followup.style.height = 'auto';
+      followup.style.height = Math.min(140, followup.scrollHeight) + 'px';
+    });
+
+    document.getElementById('ai-new-thread-btn').addEventListener('click', () => {
+      fetch(`/todos/${t.todo_id}/reset-thread`, { method: 'POST' }).then(() => {
+        delete threadCache[t.todo_id];
+        document.getElementById('ai-thread').innerHTML = '';
+        callAI(t.todo_id, null);
+      });
     });
   }
 
@@ -654,8 +1007,10 @@
       if (o === current) opt.selected = true;
       sel.appendChild(opt);
     });
-    sel.addEventListener('change', () => onCommit(sel.value));
-    sel.addEventListener('blur',   () => onCommit(sel.value));
+    let committed = false;
+    function fire() { if (!committed) { committed = true; onCommit(sel.value); } }
+    sel.addEventListener('change', fire);
+    sel.addEventListener('blur', fire);
     return sel;
   }
 
@@ -665,256 +1020,167 @@
     inp.className = 'edit-date';
     if (current) inp.value = current.slice(0, 16);
     inp.addEventListener('blur', () => onCommit(inp.value ? new Date(inp.value).toISOString() : ''));
-    inp.addEventListener('keydown', e => { if (e.key === 'Enter') inp.blur(); if (e.key === 'Escape') inp.blur(); });
+    inp.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === 'Escape') inp.blur(); });
     return inp;
   }
 
-  const openFormBtn  = document.getElementById('openFormBtn');
-  const newTodoForm  = document.getElementById('newTodoForm');
-  const cancelBtn    = document.getElementById('cancelNewTodo');
-  const saveBtn      = document.getElementById('saveNewTodo');
-
-  function resetForm() {
-    document.getElementById('ntTitle').value = '';
-    document.getElementById('ntUrgency').value = 'medium';
-    document.getElementById('ntDueDate').value = '';
-    document.getElementById('ntAction').value = '';
-    newTodoForm.classList.remove('open');
-  }
-
-  openFormBtn.addEventListener('click', () => {
-    newTodoForm.classList.toggle('open');
-    if (newTodoForm.classList.contains('open')) document.getElementById('ntTitle').focus();
-  });
-
-  cancelBtn.addEventListener('click', resetForm);
-
-  saveBtn.addEventListener('click', () => {
-    const title = document.getElementById('ntTitle').value.trim();
-    if (!title) { document.getElementById('ntTitle').focus(); return; }
-    const urgency = document.getElementById('ntUrgency').value;
-    const dueDateRaw = document.getElementById('ntDueDate').value;
-    const due_date = dueDateRaw ? new Date(dueDateRaw).toISOString() : null;
-    const suggested_action = document.getElementById('ntAction').value.trim();
-    fetch('/todos', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, urgency, due_date, suggested_action }),
-    }).then(r => {
-      if (r.ok) { location.reload(); } else { alert('Failed to save todo'); }
-    });
-  });
-
-  document.getElementById('ntTitle').addEventListener('keydown', e => {
-    if (e.key === 'Enter') saveBtn.click();
-    if (e.key === 'Escape') resetForm();
-  });
-
-  document.querySelectorAll('.editable').forEach(cell => {
-    cell.addEventListener('click', () => {
-      if (cell.querySelector('select,input')) return;
-      const { id, field, value } = cell.dataset;
-
-      function commit(newVal) {
-        patch(id, field, newVal).then(r => r.ok ? null : alert('Save failed'));
-        cell.dataset.value = newVal;
-        if (field === 'due_date') {
-          cell.textContent = fmtDue(newVal);
-        } else if (field === 'urgency') {
-          cell.className = `col-urgency urgency ${newVal} editable`;
-          cell.dataset.field = field; cell.dataset.id = id; cell.dataset.value = newVal;
-          cell.textContent = newVal || '—';
-        } else if (field === 'status') {
-          cell.innerHTML = `<span class="status ${newVal}">${newVal}</span>`;
-        }
-      }
-
-      let widget;
-      if (field === 'urgency') {
-        widget = makeSelect(URGENCY_OPTIONS, value, commit);
-      } else if (field === 'status') {
-        widget = makeSelect(STATUS_OPTIONS, value, commit);
-      } else {
-        widget = makeDateInput(value, commit);
-      }
-
-      cell.innerHTML = '';
-      cell.appendChild(widget);
-      widget.focus();
-    });
-  });
-
-  const todoList    = document.getElementById('todo-list');
-  const tabOpen     = document.getElementById('tabOpen');
-  const tabClosed   = document.getElementById('tabClosed');
-  const tabRejected = document.getElementById('tabRejected');
-  const countEl     = document.getElementById('todoCount');
-
-  const allRows      = document.querySelectorAll('#todo-list .todo:not(.header-row)');
-  const openCount    = [...allRows].filter(r => !r.classList.contains('closed') && !r.classList.contains('rejected-todo')).length;
-  const closedCount  = [...allRows].filter(r =>  r.classList.contains('closed')).length;
-  const rejectedCount = [...allRows].filter(r => r.classList.contains('rejected-todo')).length;
-
-  function switchTab(tab) {
-    tabOpen.classList.remove('active');
-    tabClosed.classList.remove('active');
-    tabRejected.classList.remove('active');
-    if (tab === 'open') {
-      todoList.className = 'show-open';
-      tabOpen.classList.add('active');
-      countEl.textContent = openCount;
-    } else if (tab === 'closed') {
-      todoList.className = 'show-closed';
-      tabClosed.classList.add('active');
-      countEl.textContent = closedCount;
-    } else {
-      todoList.className = 'show-rejected';
-      tabRejected.classList.add('active');
-      countEl.textContent = rejectedCount;
-    }
-  }
-
-  tabOpen.addEventListener('click',     () => switchTab('open'));
-  tabClosed.addEventListener('click',   () => switchTab('closed'));
-  tabRejected.addEventListener('click', () => switchTab('rejected'));
-
-  switchTab('open');
-
-  document.addEventListener('click', e => {
-    if (e.target.matches('.title-edit-btn')) {
-      startTitleEdit(e.target.closest('.title'));
-      return;
-    }
-    if (e.target.matches('.accept-btn')) {
-      const id = e.target.dataset.id;
-      fetch(`/todos/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision: 'accepted' }),
-      }).then(r => {
-        if (r.ok) {
-          const actions = e.target.closest('.todo-actions');
-          const todoEl = actions.closest('.todo');
-          todoEl.classList.remove('pending-decision', 'rejected-todo');
-          // Replace actions with Ask AI button
-          const btn = document.createElement('button');
-          btn.className = 'ask-ai-btn';
-          btn.dataset.id = id;
-          btn.dataset.title = todoEl.querySelector('.title').textContent.trim();
-          btn.textContent = 'Ask AI';
-          btn.addEventListener('click', () => openModal(btn.dataset.id, btn.dataset.title));
-          const label = todoEl.querySelector('.suggestion-label');
-          if (label) label.remove();
-          actions.replaceWith(btn);
-        }
-      });
-    }
-    if (e.target.matches('.reject-btn')) {
-      const id = e.target.dataset.id;
-      fetch(`/todos/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ decision: 'rejected' }),
-      }).then(r => {
-        if (r.ok) {
-          const todoEl = e.target.closest('.todo');
-          todoEl.classList.remove('pending-decision');
-          todoEl.classList.add('rejected-todo');
-          // Replace both buttons with just Accept
-          const actions = e.target.closest('.todo-actions');
-          actions.innerHTML = `<button class="accept-btn" data-id="${id}">Accept</button>`;
-        }
-      });
-    }
-  });
-
-  function startTitleEdit(titleDiv) {
-    if (titleDiv.querySelector('.title-edit-input')) return;
-    const id = titleDiv.dataset.id;
-    const current = titleDiv.dataset.title;
-    const textTarget = titleDiv.querySelector('.title-text, a');
-    if (!textTarget) return;
-
-    const editBtn = titleDiv.querySelector('.title-edit-btn');
-    if (editBtn) editBtn.style.display = 'none';
-
+  function startTitleEdit(t) {
+    const titleDiv = document.getElementById('detailTitle');
+    if (!titleDiv || titleDiv.classList.contains('editing')) return;
     const input = document.createElement('input');
     input.type = 'text';
-    input.className = 'title-edit-input';
-    input.value = current;
-    textTarget.replaceWith(input);
+    input.className = 'detail-title-input';
+    input.value = t.title || '';
+    titleDiv.classList.add('editing');
+    titleDiv.parentNode.insertBefore(input, titleDiv);
     input.focus();
     input.select();
 
-    function restore() {
-      input.replaceWith(textTarget);
-      if (editBtn) editBtn.style.display = '';
-    }
-
-    function save() {
+    let done = false;
+    function finish(save) {
+      if (done) return; done = true;
       const newTitle = input.value.trim();
-      if (!newTitle || newTitle === current) { restore(); return; }
-      fetch(`/todos/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: newTitle }),
-      }).then(r => {
-        if (r.ok) {
-          textTarget.textContent = newTitle;
-          titleDiv.dataset.title = newTitle;
-          const askBtn = titleDiv.closest('.todo')?.querySelector('.ask-ai-btn');
-          if (askBtn) askBtn.dataset.title = newTitle;
-        }
-        restore();
-      }).catch(() => restore());
+      if (save && newTitle && newTitle !== t.title) {
+        fetch(`/todos/${t.todo_id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: newTitle }),
+        }).then(r => {
+          if (r.ok) {
+            t.title = newTitle;
+            titleDiv.textContent = newTitle;
+            const row = document.querySelector(`.todo-row[data-id="${t.todo_id}"] .row-title`);
+            if (row) {
+              // preserve suggestion label if present
+              const label = row.querySelector('.suggestion-label');
+              row.textContent = newTitle;
+              if (label) row.prepend(label);
+            }
+          }
+        });
+      }
+      input.remove();
+      titleDiv.classList.remove('editing');
     }
 
-    input.addEventListener('blur', save);
-    input.addEventListener('keydown', ev => {
-      if (ev.key === 'Enter') { ev.preventDefault(); input.blur(); }
-      if (ev.key === 'Escape') { input.removeEventListener('blur', save); restore(); }
+    input.addEventListener('blur', () => finish(true));
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      if (e.key === 'Escape') finish(false);
     });
   }
 
-  const modal       = document.getElementById('ai-modal');
-  const modalTitle  = document.getElementById('ai-modal-title');
-  const threadEl    = document.getElementById('ai-thread');
-  const followupEl  = document.getElementById('ai-followup');
-  const sendBtn     = document.getElementById('ai-send-btn');
+  // ---------------- Context loading ----------------
+  function loadContext(t) {
+    const section = document.getElementById('context-section');
+    const heading = document.getElementById('context-heading');
+    const body = document.getElementById('context-body');
 
-  const threadCache = {};  // { todo_id: [{role, content}, ...] }
-  let currentId = null;
+    if (t.source === 'user') {
+      section.style.display = 'none';
+      return;
+    }
+    section.style.display = '';
 
-  document.getElementById('ai-modal-close').addEventListener('click', () => modal.classList.remove('open'));
-  modal.addEventListener('click', e => { if (e.target === modal) modal.classList.remove('open'); });
+    if (contextCache[t.todo_id]) {
+      renderContext(contextCache[t.todo_id], heading, body);
+      return;
+    }
 
-  document.getElementById('ai-new-thread-btn').addEventListener('click', () => {
-    if (!currentId) return;
-    fetch(`/todos/${currentId}/reset-thread`, { method: 'POST' }).then(() => {
-      delete threadCache[currentId];
-      threadEl.innerHTML = '';
-      callAI(currentId, null);
-    });
-  });
+    body.innerHTML = '<div class="context-loading">Loading…</div>';
+    fetch(`/todos/${t.todo_id}/context`)
+      .then(r => r.json())
+      .then(data => {
+        contextCache[t.todo_id] = data;
+        // Make sure we're still on this todo
+        if (selectedId !== t.todo_id) return;
+        renderContext(data, heading, body);
+      })
+      .catch(() => {
+        if (selectedId !== t.todo_id) return;
+        body.innerHTML = '<div class="context-error">Couldn\'t load context.</div>';
+      });
+  }
 
-  marked.setOptions({ breaks: true });
+  function renderContext(data, heading, body) {
+    if (data.error) {
+      heading.textContent = 'Context';
+      body.innerHTML = `<div class="context-error">${escapeHtml(data.error)}</div>`;
+      return;
+    }
+    if (data.source === 'gmail') {
+      heading.textContent = 'Email thread';
+      if (!data.thread || data.thread.length === 0) {
+        body.innerHTML = '<div class="context-error">No messages in this thread.</div>';
+        return;
+      }
+      const msgs = data.thread.map(m => {
+        const when = fmtDue(m.received_at);
+        const sender = m.is_user ? 'You' : escapeHtml(m.from_name || m.from_email || '(unknown)');
+        const longBody = (m.body_text || '').length > 600;
+        const bodyClass = longBody ? 'thread-msg-body collapsed' : 'thread-msg-body';
+        const expandBtn = longBody ? '<button class="thread-msg-expand">Show more</button>' : '';
+        return `
+          <div class="thread-msg${m.is_user ? ' is-user' : ''}">
+            <div class="thread-msg-hdr">
+              <span class="thread-msg-from">${sender}</span>
+              <span>${when}</span>
+            </div>
+            <div class="${bodyClass}">${escapeHtml(m.body_text || '')}</div>
+            ${expandBtn}
+          </div>`;
+      }).join('');
+      const link = data.thread_url ? `<a href="${escapeHtml(data.thread_url)}" target="_blank" class="context-link">Open in Gmail ↗</a>` : '';
+      body.innerHTML = msgs + link;
+      body.querySelectorAll('.thread-msg-expand').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const b = btn.previousElementSibling;
+          b.classList.remove('collapsed');
+          btn.remove();
+        });
+      });
+      return;
+    }
+    if (data.source === 'fathom') {
+      heading.textContent = 'Meeting';
+      const assigneeName = data.assignee && data.assignee.name ? data.assignee.name : null;
+      body.innerHTML = `
+        <div class="body-text">${escapeHtml(data.meeting_title || '(no title)')}</div>
+        ${assigneeName ? `<div class="body-text" style="margin-top:6px; color: var(--muted); font-size:13px;">Assigned to ${escapeHtml(assigneeName)}</div>` : ''}
+        ${data.recording_url ? `<a href="${escapeHtml(data.recording_url)}" target="_blank" class="context-link">Open recording ↗</a>` : ''}
+      `;
+      return;
+    }
+    if (data.source === 'browser_history') {
+      heading.textContent = 'Page';
+      body.innerHTML = `
+        ${data.page_title ? `<div class="body-text">${escapeHtml(data.page_title)}</div>` : ''}
+        ${data.page_url ? `<a href="${escapeHtml(data.page_url)}" target="_blank" class="context-link">Open page ↗</a>` : ''}
+      `;
+      return;
+    }
+    heading.textContent = 'Context';
+    body.innerHTML = '<div class="context-error">No additional context.</div>';
+  }
 
+  // ---------------- Ask AI ----------------
   function renderThread(thread) {
+    const threadEl = document.getElementById('ai-thread');
+    if (!threadEl) return;
     threadEl.innerHTML = '';
     thread.forEach(msg => {
       const div = document.createElement('div');
       div.className = `ai-bubble ${msg.role}`;
-      if (msg.role === 'assistant') {
-        div.innerHTML = marked.parse(msg.content);
-      } else {
-        div.textContent = msg.content;
-      }
+      if (msg.role === 'assistant') div.innerHTML = marked.parse(msg.content);
+      else div.textContent = msg.content;
       threadEl.appendChild(div);
     });
     threadEl.scrollTop = threadEl.scrollHeight;
   }
 
   function addLoadingBubble() {
+    const threadEl = document.getElementById('ai-thread');
+    if (!threadEl) return;
     const div = document.createElement('div');
     div.className = 'ai-bubble loading';
     div.id = 'ai-loading-bubble';
@@ -929,8 +1195,10 @@
   }
 
   function callAI(todoId, message) {
-    sendBtn.disabled = true;
-    followupEl.disabled = true;
+    const sendBtn = document.getElementById('ai-send-btn');
+    const followup = document.getElementById('ai-followup');
+    if (sendBtn) sendBtn.disabled = true;
+    if (followup) followup.disabled = true;
     addLoadingBubble();
     const body = message ? { message } : {};
     return fetch(`/todos/${todoId}/ask-ai`, {
@@ -942,69 +1210,110 @@
       .then(data => {
         removeLoadingBubble();
         threadCache[todoId] = data.thread;
+        if (selectedId !== todoId) return;
         renderThread(data.thread);
-        sendBtn.disabled = false;
-        followupEl.disabled = false;
-        followupEl.focus();
+        if (sendBtn) sendBtn.disabled = false;
+        if (followup) { followup.disabled = false; followup.focus(); }
       })
       .catch(() => {
         removeLoadingBubble();
-        alert('AI request failed');
-        sendBtn.disabled = false;
-        followupEl.disabled = false;
+        if (sendBtn) sendBtn.disabled = false;
+        if (followup) followup.disabled = false;
       });
   }
 
-  function openModal(id, title) {
-    currentId = id;
-    modalTitle.textContent = title;
-    followupEl.value = '';
-    modal.classList.add('open');
-
-    if (threadCache[id] && threadCache[id].length > 0) {
-      renderThread(threadCache[id]);
-      followupEl.focus();
-    } else {
-      threadEl.innerHTML = '';
-      callAI(id, null);
+  function loadAiThread(t) {
+    const threadEl = document.getElementById('ai-thread');
+    if (threadCache[t.todo_id] && threadCache[t.todo_id].length > 0) {
+      renderThread(threadCache[t.todo_id]);
+      return;
     }
+    if (t.has_ai_thread) {
+      // Persisted thread exists on the server but not in our cache — fetch it (no AI call).
+      callAI(t.todo_id, null);
+      return;
+    }
+    // No existing conversation. Show a CTA instead of auto-triggering AI generation.
+    threadEl.innerHTML = `
+      <div style="color: var(--muted); font-size: 13px; padding: 8px 0;">
+        Ask a question, or
+        <button id="ai-kickoff-btn" style="font: inherit; font-size: 13px; color: var(--text); background: none; border: none; padding: 0; cursor: pointer; text-decoration: underline;">get AI suggestions</button>
+        for this item.
+      </div>`;
+    const kickoff = document.getElementById('ai-kickoff-btn');
+    if (kickoff) kickoff.addEventListener('click', () => {
+      threadEl.innerHTML = '';
+      callAI(t.todo_id, null);
+    });
   }
 
-  sendBtn.addEventListener('click', () => {
-    const msg = followupEl.value.trim();
-    if (!msg || !currentId) return;
-    // Optimistically show user bubble
-    const userBubble = document.createElement('div');
-    userBubble.className = 'ai-bubble user';
-    userBubble.textContent = msg;
-    threadEl.appendChild(userBubble);
-    threadEl.scrollTop = threadEl.scrollHeight;
-    followupEl.value = '';
-    callAI(currentId, msg);
-  });
+  // ---------------- New-todo form ----------------
+  const openFormBtn  = document.getElementById('openFormBtn');
+  const newTodoForm  = document.getElementById('newTodoForm');
+  const cancelBtn    = document.getElementById('cancelNewTodo');
+  const saveBtnNew   = document.getElementById('saveNewTodo');
 
-  followupEl.addEventListener('keydown', e => {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }
-  });
+  function resetForm() {
+    document.getElementById('ntTitle').value = '';
+    document.getElementById('ntUrgency').value = 'medium';
+    document.getElementById('ntDueDate').value = '';
+    document.getElementById('ntAction').value = '';
+    newTodoForm.classList.remove('open');
+  }
 
-  document.querySelectorAll('.ask-ai-btn').forEach(btn => {
-    btn.addEventListener('click', () => {
-      openModal(btn.dataset.id, btn.dataset.title);
+  openFormBtn.addEventListener('click', () => {
+    newTodoForm.classList.toggle('open');
+    if (newTodoForm.classList.contains('open')) document.getElementById('ntTitle').focus();
+  });
+  cancelBtn.addEventListener('click', resetForm);
+
+  saveBtnNew.addEventListener('click', () => {
+    const title = document.getElementById('ntTitle').value.trim();
+    if (!title) { document.getElementById('ntTitle').focus(); return; }
+    const urgency = document.getElementById('ntUrgency').value;
+    const dueDateRaw = document.getElementById('ntDueDate').value;
+    const due_date = dueDateRaw ? new Date(dueDateRaw).toISOString() : null;
+    const suggested_action = document.getElementById('ntAction').value.trim();
+    fetch('/todos', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ title, urgency, due_date, suggested_action }),
+    }).then(r => {
+      if (r.ok) location.reload();
+      else alert('Failed to save todo');
     });
   });
 
-  // Settings modal
+  document.getElementById('ntTitle').addEventListener('keydown', e => {
+    if (e.key === 'Enter') saveBtnNew.click();
+    if (e.key === 'Escape') resetForm();
+  });
+
+  // ---------------- Init: select from hash, then first todo ----------------
+  switchTab('open');
+
+  function initSelection() {
+    const m = location.hash.match(/^#todo\/([^/]+)$/);
+    if (m && todosById[m[1]]) {
+      selectTodo(m[1]);
+      return;
+    }
+    // Auto-select first visible todo
+    const first = document.querySelector('#todo-list .todo-row:not(.closed):not(.rejected-todo)');
+    if (first) selectTodo(first.dataset.id);
+  }
+  initSelection();
+
+  // ---------------- Settings modal (unchanged) ----------------
   const settingsModal = document.getElementById('settings-modal');
 
   function setFathomConnected(preview) {
     document.getElementById('fathom-status').textContent = 'Connected';
     document.getElementById('fathom-status').className = 'source-connected-badge on';
     document.getElementById('fathom-input-row').style.display = 'none';
-    const connectedRow = document.getElementById('fathom-connected-row');
-    connectedRow.style.display = 'flex';
+    document.getElementById('fathom-connected-row').style.display = 'flex';
     document.getElementById('fathom-key-preview').textContent = preview || '';
   }
-
   function setFathomDisconnected() {
     document.getElementById('fathom-status').textContent = 'Not connected';
     document.getElementById('fathom-status').className = 'source-connected-badge off';
@@ -1012,7 +1321,6 @@
     document.getElementById('fathom-connected-row').style.display = 'none';
     document.getElementById('fathom-key-input').value = '';
   }
-
   function setGmailConnected(email) {
     document.getElementById('gmail-status').textContent = 'Connected';
     document.getElementById('gmail-status').className = 'source-connected-badge on';
@@ -1020,29 +1328,23 @@
     document.getElementById('gmail-connected-row').style.display = 'flex';
     document.getElementById('gmail-email-hint').textContent = email || 'Authorized via OAuth';
   }
-
   function setGmailDisconnected() {
     document.getElementById('gmail-status').textContent = 'Not connected';
     document.getElementById('gmail-status').className = 'source-connected-badge off';
     document.getElementById('gmail-connect-row').style.display = 'block';
     document.getElementById('gmail-connected-row').style.display = 'none';
   }
-
   function openSettingsModal() {
     settingsModal.classList.add('open');
-    fetch('/settings')
-      .then(r => r.json())
-      .then(data => {
-        const fathom = data.sources.fathom;
-        if (fathom.connected) setFathomConnected(fathom.api_key_preview);
-        else setFathomDisconnected();
-
-        const gmail = data.sources.gmail;
-        if (gmail.connected) setGmailConnected(gmail.email);
-        else setGmailDisconnected();
-      });
+    fetch('/settings').then(r => r.json()).then(data => {
+      const fathom = data.sources.fathom;
+      if (fathom.connected) setFathomConnected(fathom.api_key_preview);
+      else setFathomDisconnected();
+      const gmail = data.sources.gmail;
+      if (gmail.connected) setGmailConnected(gmail.email);
+      else setGmailDisconnected();
+    });
   }
-
   document.getElementById('openSettingsBtn').addEventListener('click', openSettingsModal);
   document.getElementById('settings-modal-close').addEventListener('click', () => settingsModal.classList.remove('open'));
   settingsModal.addEventListener('click', e => { if (e.target === settingsModal) settingsModal.classList.remove('open'); });
@@ -1056,37 +1358,27 @@
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_key: key }),
-    })
-      .then(r => r.json())
-      .then(data => {
-        if (data.ok) setFathomConnected(data.api_key_preview);
-        else alert(data.error || 'Failed to connect');
-      })
-      .finally(() => { btn.disabled = false; });
+    }).then(r => r.json()).then(data => {
+      if (data.ok) setFathomConnected(data.api_key_preview);
+      else alert(data.error || 'Failed to connect');
+    }).finally(() => { btn.disabled = false; });
   });
-
   document.getElementById('fathom-disconnect-btn').addEventListener('click', () => {
     fetch('/settings/sources/fathom', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ disconnect: true }),
-    })
-      .then(r => r.json())
-      .then(data => { if (data.ok) setFathomDisconnected(); });
+    }).then(r => r.json()).then(data => { if (data.ok) setFathomDisconnected(); });
   });
-
   document.getElementById('gmail-connect-btn').addEventListener('click', () => {
     window.location.href = '/settings/sources/gmail/auth';
   });
-
   document.getElementById('gmail-disconnect-btn').addEventListener('click', () => {
     fetch('/settings/sources/gmail', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ disconnect: true }),
-    })
-      .then(r => r.json())
-      .then(data => { if (data.ok) setGmailDisconnected(); });
+    }).then(r => r.json()).then(data => { if (data.ok) setGmailDisconnected(); });
   });
 </script>
 </body>
