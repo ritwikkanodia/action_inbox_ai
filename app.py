@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(override=True)
 
 from agent import resolve_todo
 
@@ -205,6 +205,8 @@ def _extract_text(content) -> str:
 
 def _thread_for_client(thread):
     """Filter an SDK input list down to renderable {role, content} bubbles."""
+    from agent.input_builder import HIDDEN_CONTEXT_SENTINEL
+
     out = []
     for item in thread or []:
         if not isinstance(item, dict):
@@ -214,6 +216,8 @@ def _thread_for_client(thread):
             continue
         text = _extract_text(item.get("content"))
         if not text:
+            continue
+        if role == "user" and text.startswith(HIDDEN_CONTEXT_SENTINEL):
             continue
         out.append({"role": role, "content": text})
     return out
