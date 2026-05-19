@@ -3,6 +3,9 @@ import os
 import sqlite3
 import time
 
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
