@@ -89,11 +89,15 @@
         {% set src_label = 'browser' if t.source == 'browser_history' else ('system' if t.source == 'system' else (t.source or 'gmail')) %}
         <div class="todo-row {{ t.status }}{% if t.decision == 'rejected' %} rejected-todo{% endif %}{% if pending %} pending-decision{% endif %}"
              data-id="{{ t.todo_id }}"
-             data-urgency="{{ t.urgency or 'none' }}">
+             data-urgency="{{ t.urgency or 'none' }}"
+             {% if t.relevant_link %}data-link="{{ t.relevant_link }}"{% endif %}>
           <div class="row-body">
             <div class="row-title">
               {% if pending %}<span class="suggestion-label">Suggestion</span>{% endif %}
-              <span class="row-title-text">{{ t.title or '(untitled)' }}</span>
+              <span class="row-title-inner">
+                <span class="row-title-text">{{ t.title or '(untitled)' }}</span>
+                <button class="row-edit-title-btn" title="Edit title">✎</button>
+              </span>
               <span class="source-badge inline-source {{ t.source or 'gmail' }}">{{ src_label }}</span>
             </div>
             <div class="row-meta">

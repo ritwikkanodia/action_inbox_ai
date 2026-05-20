@@ -125,6 +125,18 @@ function selectTodo(id) {
 function bindRowClick(row) {
   row.addEventListener('click', (e) => {
     if (e.target.closest('.row-inline-actions')) return;
+    if (e.target.closest('.row-title-input')) return;
+
+    if (e.target.closest('.row-edit-title-btn')) {
+      startRowTitleEdit(row, todosById[row.dataset.id]);
+      return;
+    }
+
+    if (e.target.closest('.row-title-text')) {
+      const link = row.dataset.link;
+      if (link) { window.open(link, '_blank', 'noopener'); return; }
+    }
+
     if (appEl.classList.contains('list-only')) {
       localStorage.setItem('viewMode', 'split');
       applyViewMode('split');
@@ -447,6 +459,52 @@ function startTitleEdit(t) {
   });
 }
 
+function startRowTitleEdit(row, t) {
+  if (!t) return;
+  const titleSpan = row.querySelector('.row-title-text');
+  if (!titleSpan || titleSpan.classList.contains('editing')) return;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'row-title-input';
+  input.value = t.title || '';
+  titleSpan.classList.add('editing');
+  titleSpan.parentNode.insertBefore(input, titleSpan);
+  input.focus();
+  input.select();
+
+  input.addEventListener('click', e => e.stopPropagation());
+
+  let done = false;
+  function finish(save) {
+    if (done) return; done = true;
+    const newTitle = input.value.trim();
+    if (save && newTitle && newTitle !== t.title) {
+      fetch(`/todos/${t.todo_id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title: newTitle }),
+      }).then(r => {
+        if (r.ok) {
+          t.title = newTitle;
+          titleSpan.textContent = newTitle;
+          if (selectedId === t.todo_id) {
+            const detailTitle = document.getElementById('detailTitle');
+            if (detailTitle) detailTitle.textContent = newTitle;
+          }
+        }
+      });
+    }
+    input.remove();
+    titleSpan.classList.remove('editing');
+  }
+
+  input.addEventListener('blur', () => finish(true));
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+    if (e.key === 'Escape') finish(false);
+  });
+}
+
 // ---------------- Context loading ----------------
 function loadContext(t) {
   const section = document.getElementById('context-section');
@@ -645,10 +703,14 @@ function buildRow(t) {
   row.className = `todo-row ${t.status || 'open'}`;
   row.dataset.id = t.todo_id;
   row.dataset.urgency = t.urgency || 'none';
+  if (t.relevant_link) row.dataset.link = t.relevant_link;
   row.innerHTML = `
     <div class="row-body">
       <div class="row-title">
-        <span class="row-title-text">${escapeHtml(t.title || '(untitled)')}</span>
+        <span class="row-title-inner">
+          <span class="row-title-text">${escapeHtml(t.title || '(untitled)')}</span>
+          <button class="row-edit-title-btn" title="Edit title">✎</button>
+        </span>
         <span class="source-badge inline-source ${t.source || 'user'}">${sourceLabel(t.source)}</span>
       </div>
       <div class="row-meta">
