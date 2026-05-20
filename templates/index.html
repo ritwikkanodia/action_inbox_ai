@@ -134,6 +134,21 @@
       letter-spacing: 0.05em;
     }
 
+    .view-toggle-btn {
+      background: none;
+      border: 1px solid var(--rule);
+      color: var(--ink-2);
+      font-family: var(--sans);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.04em;
+      padding: 5px 10px;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+    }
+    .view-toggle-btn:hover { color: var(--ink); border-color: var(--rule-strong); }
+
     /* Two-pane layout */
     #app {
       flex: 1;
@@ -155,6 +170,166 @@
       background: var(--paper-soft);
       padding: 56px 56px 80px;
     }
+
+    /* Collapsed (list-only) mode */
+    #app.list-only { grid-template-columns: 1fr; }
+    #app.list-only section#detail-pane { display: none; }
+    #app.list-only aside#sidebar {
+      border-right: none;
+      width: 100%;
+    }
+    #app.list-only #todo-list,
+    #app.list-only .list-header {
+      max-width: 1180px;
+      margin-left: auto;
+      margin-right: auto;
+      width: 100%;
+    }
+    #app.list-only .todo-row {
+      cursor: pointer;
+      padding: 10px 32px;
+      align-items: center;
+    }
+    #app.list-only .list-header { padding: 10px 32px; }
+    #app.list-only .row-body { gap: 0; min-width: 0; }
+    #app.list-only .row-title {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      -webkit-line-clamp: unset;
+      line-clamp: unset;
+      -webkit-box-orient: unset;
+      overflow: visible;
+      min-width: 0;
+    }
+    #app.list-only .row-title-text {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #app.list-only .row-meta { display: none; }
+    .source-badge.inline-source { display: none; }
+    #app.list-only .source-badge.inline-source { display: inline-block; flex-shrink: 0; }
+
+    /* In list-only mode: no left urgency edge bar, no persistent "selected" highlight */
+    #app.list-only .todo-row::before { display: none; }
+    #app.list-only .todo-row.selected { background: transparent; }
+    #app.list-only .todo-row.selected:hover { background: rgba(216, 209, 191, 0.25); }
+    #app.list-only .row-inline-actions { display: flex; }
+
+    /* Column widths shared by header + each row's action strip */
+    :root {
+      --col-urgency:  72px;
+      --col-status:   80px;
+      --col-due:      150px;
+      --col-gap:      8px;
+    }
+
+    .row-inline-actions {
+      display: none;
+      align-items: center;
+      gap: var(--col-gap);
+      margin-left: 16px;
+      flex-shrink: 0;
+    }
+    .row-act {
+      background: transparent;
+      border: 1px solid var(--rule);
+      color: var(--ink-2);
+      font-family: var(--sans);
+      font-size: 11px;
+      font-weight: 500;
+      padding: 4px 9px;
+      border-radius: 12px;
+      cursor: pointer;
+      line-height: 1.2;
+      transition: background 0.12s, color 0.12s, border-color 0.12s;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      text-align: center;
+      box-sizing: border-box;
+    }
+    .row-act:hover { background: var(--paper-deep); color: var(--ink); border-color: var(--rule-strong); }
+
+    .row-decision-slot {
+      width: 160px;
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      flex-shrink: 0;
+      margin-left: var(--col-gap);
+    }
+    .row-act.accept, .row-act.reject {
+      padding: 4px 12px;
+      font-weight: 500;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      font-size: 10.5px;
+      flex: 1;
+    }
+    .row-act.accept { color: var(--u-low); border-color: var(--u-low); }
+    .row-act.accept:hover { background: rgba(91,111,74,0.12); color: var(--u-low); border-color: var(--u-low); }
+    .row-act.reject { color: var(--u-high); border-color: var(--u-high); }
+    .row-act.reject:hover { background: rgba(122,46,42,0.10); color: var(--u-high); border-color: var(--u-high); }
+
+    .row-act.editable[data-field="urgency"]  { width: var(--col-urgency); text-transform: capitalize; }
+    .row-act.editable[data-field="status"]   { width: var(--col-status); text-transform: capitalize; }
+    .row-act.editable[data-field="due_date"] { width: var(--col-due); }
+
+    /* Color coding for urgency pill */
+    .row-act.editable[data-field="urgency"][data-value="high"]   { color: var(--u-high);   border-color: var(--u-high);   background: rgba(122,46,42,0.06); }
+    .row-act.editable[data-field="urgency"][data-value="medium"] { color: var(--u-medium); border-color: var(--u-medium); background: rgba(168,117,58,0.07); }
+    .row-act.editable[data-field="urgency"][data-value="low"]    { color: var(--u-low);    border-color: var(--u-low);    background: rgba(91,111,74,0.07); }
+
+    /* Color coding for status pill */
+    .row-act.editable[data-field="status"][data-value="open"]    { background: var(--pill-blue-bg);  color: var(--pill-blue-fg);  border-color: transparent; }
+    .row-act.editable[data-field="status"][data-value="ongoing"] { background: var(--pill-amber-bg); color: var(--pill-amber-fg); border-color: transparent; }
+    .row-act.editable[data-field="status"][data-value="closed"]  { background: var(--pill-green-bg); color: var(--pill-green-fg); border-color: transparent; }
+
+    .row-act .edit-select, .row-act .edit-date {
+      font-family: var(--sans);
+      font-size: 11px;
+      border: none;
+      background: transparent;
+      outline: none;
+      color: var(--ink);
+      padding: 0;
+      width: 100%;
+    }
+
+    /* Column header strip — only in list-only mode */
+    .list-header {
+      display: none;
+      align-items: center;
+      padding: 10px 20px 10px 24px;
+      border-bottom: 1px solid var(--rule);
+      background: transparent;
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+      background: var(--paper);
+    }
+    #app.list-only .list-header { display: flex; }
+    .list-header .lh-title { flex: 1; min-width: 0; }
+    .list-header .lh-cell {
+      flex-shrink: 0;
+      text-align: center;
+      box-sizing: border-box;
+    }
+    .list-header .lh-cell + .lh-cell { margin-left: var(--col-gap); }
+    .list-header .lh-spacer { margin-left: 16px; }
+    .list-header .lh-urgency  { width: var(--col-urgency); }
+    .list-header .lh-status   { width: var(--col-status); }
+    .list-header .lh-due      { width: var(--col-due); }
+    .list-header .lh-decision { width: 160px; }
 
     /* Sidebar list rows */
     #todo-list { display: flex; flex-direction: column; }
@@ -907,25 +1082,33 @@
       to   { opacity: 1; transform: translateY(0); }
     }
 
-    /* Mobile: single-column with detail-overlay */
+    /* "Back to list" button — desktop collapses to list-only; mobile dismisses detail overlay */
     .back-btn {
-      display: none;
-      background: none; border: none; cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: none;
+      border: 1px solid var(--rule);
+      cursor: pointer;
       font-family: var(--mono);
       font-size: 10px;
       letter-spacing: 0.14em;
       text-transform: uppercase;
-      color: var(--ink-3);
-      padding: 0 0 20px;
-      transition: color 0.15s;
+      color: var(--ink-2);
+      padding: 6px 12px;
+      border-radius: 12px;
+      margin-bottom: 28px;
+      transition: color 0.15s, border-color 0.15s, background 0.15s;
     }
-    .back-btn:hover { color: var(--accent); }
+    .back-btn:hover { color: var(--ink); border-color: var(--rule-strong); background: var(--paper-deep); }
     @media (max-width: 760px) {
       #app { grid-template-columns: 1fr; }
       aside#sidebar { border-right: none; }
       section#detail-pane { display: none; padding: 32px 24px 60px; }
       #app.detail-open aside#sidebar { display: none; }
       #app.detail-open section#detail-pane { display: block; }
+      #app.list-only aside#sidebar { display: flex; }
+      #app.list-only section#detail-pane { display: none; }
       .back-btn { display: block; }
       header.top { padding: 18px 24px 14px; flex-wrap: wrap; gap: 12px; }
       .detail-title { font-size: 30px; }
@@ -954,6 +1137,7 @@
   </div>
   <div style="display:flex;align-items:center;gap:12px;">
     <span class="count" id="todoCount">{{ todos|length }}</span>
+    <button class="view-toggle-btn" id="viewToggleBtn" title="Toggle view" aria-label="Toggle view">List</button>
     <button class="new-todo-btn" id="openSettingsBtn">Settings</button>
     <button class="new-todo-btn" id="openFormBtn">+ New</button>
     {% if user %}
@@ -993,6 +1177,15 @@
       </div>
     </div>
 
+    <div class="list-header" aria-hidden="true">
+      <div class="lh-title"></div>
+      <div class="lh-spacer"></div>
+      <div class="lh-cell lh-urgency">Urgency</div>
+      <div class="lh-cell lh-status">Status</div>
+      <div class="lh-cell lh-due">Due</div>
+      <div class="lh-cell lh-decision"></div>
+    </div>
+
     <div id="todo-list" class="show-open">
       {% if not todos %}
         <p class="empty">No todos yet.</p>
@@ -1003,10 +1196,21 @@
         <div class="todo-row {{ t.status }}{% if t.decision == 'rejected' %} rejected-todo{% endif %}{% if pending %} pending-decision{% endif %}" data-id="{{ t.todo_id }}">
           <div class="dot {{ t.urgency or 'none' }}"></div>
           <div class="row-body">
-            <div class="row-title">{% if pending %}<span class="suggestion-label">Suggestion</span>{% endif %}{{ t.title or '(untitled)' }}</div>
+            <div class="row-title">{% if pending %}<span class="suggestion-label">Suggestion</span>{% endif %}<span class="row-title-text">{{ t.title or '(untitled)' }}</span><span class="source-badge inline-source {{ t.source or 'gmail' }}">{{ 'browser' if t.source == 'browser_history' else ('system' if t.source == 'system' else (t.source or 'gmail')) }}</span></div>
             <div class="row-meta">
               {% if t.due_date %}<span class="row-due">{{ t.due_date | fmt_dt }}</span>{% endif %}
               <span class="source-badge {{ t.source or 'gmail' }}">{{ 'browser' if t.source == 'browser_history' else ('system' if t.source == 'system' else (t.source or 'gmail')) }}</span>
+            </div>
+          </div>
+          <div class="row-inline-actions" data-id="{{ t.todo_id }}">
+            <span class="row-act editable" data-field="urgency" data-value="{{ t.urgency or '' }}" title="Urgency">{{ t.urgency or '—' }}</span>
+            <span class="row-act editable" data-field="status" data-value="{{ t.status or '' }}" title="Status">{{ t.status or '—' }}</span>
+            <span class="row-act editable" data-field="due_date" data-value="{{ t.due_date or '' }}" title="Due date">{% if t.due_date %}{{ t.due_date | fmt_dt }}{% else %}set due{% endif %}</span>
+            <div class="row-decision-slot">
+              {% if pending %}
+              <button class="row-act accept" data-action="accept" title="Accept">Accept</button>
+              <button class="row-act reject" data-action="reject" title="Reject">Reject</button>
+              {% endif %}
             </div>
           </div>
         </div>
@@ -1016,7 +1220,7 @@
   </aside>
 
   <section id="detail-pane">
-    <button class="back-btn" id="backBtn">← Back</button>
+    <button class="back-btn" id="backBtn" title="Collapse to list view">← Back to list</button>
     <div id="detail-empty" class="detail-empty">Select an action item to see details.</div>
     <div id="detail-content" style="display:none;"></div>
   </section>
@@ -1158,6 +1362,8 @@
 
   document.getElementById('backBtn').addEventListener('click', () => {
     appEl.classList.remove('detail-open');
+    localStorage.setItem('viewMode', 'list');
+    applyViewMode('list');
   });
 
   function selectTodo(id) {
@@ -1179,7 +1385,130 @@
   }
 
   document.querySelectorAll('.todo-row').forEach(row => {
-    row.addEventListener('click', () => selectTodo(row.dataset.id));
+    row.addEventListener('click', (e) => {
+      // Clicks on inline action controls should not bubble to row selection.
+      if (e.target.closest('.row-inline-actions')) return;
+      // In list-only mode, clicking a row expands into split view with that todo selected.
+      if (appEl.classList.contains('list-only')) {
+        localStorage.setItem('viewMode', 'split');
+        applyViewMode('split');
+      }
+      selectTodo(row.dataset.id);
+    });
+  });
+
+  // ---------------- View mode toggle (split <-> list-only) ----------------
+  const viewToggleBtn = document.getElementById('viewToggleBtn');
+  function applyViewMode(mode) {
+    if (mode === 'list') {
+      appEl.classList.add('list-only');
+      viewToggleBtn.textContent = 'Split';
+      viewToggleBtn.title = 'Switch to split view';
+    } else {
+      appEl.classList.remove('list-only');
+      viewToggleBtn.textContent = 'List';
+      viewToggleBtn.title = 'Switch to list-only view';
+    }
+  }
+  applyViewMode(localStorage.getItem('viewMode') === 'list' ? 'list' : 'split');
+  viewToggleBtn.addEventListener('click', () => {
+    const next = appEl.classList.contains('list-only') ? 'split' : 'list';
+    localStorage.setItem('viewMode', next);
+    applyViewMode(next);
+  });
+
+  // ---------------- Row inline action handlers (list-only mode) ----------------
+  function updateRowFromField(row, field, newVal) {
+    if (!row) return;
+    if (field === 'status') {
+      row.classList.remove('open','ongoing','closed');
+      row.classList.add(newVal);
+    } else if (field === 'urgency') {
+      const dot = row.querySelector('.dot');
+      if (dot) dot.className = `dot ${newVal || 'none'}`;
+    } else if (field === 'due_date') {
+      const dueEl = row.querySelector('.row-due');
+      if (newVal) {
+        if (dueEl) dueEl.textContent = fmtDue(newVal);
+        else {
+          const meta = row.querySelector('.row-meta');
+          const span = document.createElement('span');
+          span.className = 'row-due';
+          span.textContent = fmtDue(newVal);
+          meta.insertBefore(span, meta.firstChild);
+        }
+      } else if (dueEl) dueEl.remove();
+    }
+    // Refresh the inline action cell's label + data-value
+    const cell = row.querySelector(`.row-inline-actions .editable[data-field="${field}"]`);
+    if (cell) {
+      cell.dataset.value = newVal || '';
+      if (field === 'due_date') cell.textContent = newVal ? fmtDue(newVal) : 'set due';
+      else cell.textContent = newVal || '—';
+    }
+  }
+
+  document.querySelectorAll('.row-inline-actions').forEach(strip => {
+    const id = strip.dataset.id;
+
+    // Stop propagation so clicks on the strip don't trigger row selection.
+    strip.addEventListener('click', e => e.stopPropagation());
+
+    strip.querySelectorAll('[data-action]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const t = todosById[id];
+        if (!t) return;
+        const decision = btn.dataset.action === 'accept' ? 'accepted' : 'rejected';
+        fetch(`/todos/${id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ decision }),
+        }).then(r => {
+          if (!r.ok) return;
+          t.decision = decision;
+          const row = document.querySelector(`.todo-row[data-id="${id}"]`);
+          if (row) {
+            row.classList.remove('pending-decision', 'rejected-todo');
+            if (decision === 'rejected') row.classList.add('rejected-todo');
+            const label = row.querySelector('.suggestion-label');
+            if (label) label.remove();
+            row.querySelectorAll('.row-inline-actions .accept, .row-inline-actions .reject').forEach(b => b.remove());
+          }
+          if (selectedId === id) renderDetail(t);
+          switchTab(currentFilter);
+        });
+      });
+    });
+
+    strip.querySelectorAll('.editable').forEach(cell => {
+      cell.addEventListener('click', () => {
+        if (cell.querySelector('select,input')) return;
+        const t = todosById[id];
+        if (!t) return;
+        const field = cell.dataset.field;
+        const value = cell.dataset.value;
+
+        function commit(newVal) {
+          patch(id, field, newVal).then(r => {
+            if (!r.ok) { alert('Save failed'); return; }
+            t[field] = newVal || null;
+            const row = document.querySelector(`.todo-row[data-id="${id}"]`);
+            updateRowFromField(row, field, newVal);
+            if (selectedId === id) renderDetail(t);
+            switchTab(currentFilter);
+          });
+        }
+
+        let widget;
+        if (field === 'urgency') widget = makeSelect(URGENCY_OPTIONS, value, commit);
+        else if (field === 'status') widget = makeSelect(STATUS_OPTIONS, value, commit);
+        else widget = makeDateInput(value, commit);
+
+        cell.innerHTML = '';
+        cell.appendChild(widget);
+        widget.focus();
+      });
+    });
   });
 
   function renderDetail(t) {
