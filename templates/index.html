@@ -318,7 +318,16 @@
       background: var(--paper);
     }
     #app.list-only .list-header { display: flex; }
-    .list-header .lh-title { flex: 1; min-width: 0; }
+    .list-header .lh-body {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .list-header .lh-task,
+    .list-header .lh-source { display: inline-block; }
     .list-header .lh-cell {
       flex-shrink: 0;
       text-align: center;
@@ -1178,7 +1187,10 @@
     </div>
 
     <div class="list-header" aria-hidden="true">
-      <div class="lh-title"></div>
+      <div class="lh-body">
+        <span class="lh-task">Task</span>
+        <span class="lh-source">Source</span>
+      </div>
       <div class="lh-spacer"></div>
       <div class="lh-cell lh-urgency">Urgency</div>
       <div class="lh-cell lh-status">Status</div>
