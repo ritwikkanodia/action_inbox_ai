@@ -197,7 +197,7 @@ def init_db(conn: sqlite3.Connection) -> None:
 
     legacy_user_id = None
     if needs_backfill:
-        legacy_user_id = upsert_user(conn, _legacy_user_email())
+        legacy_user_id, _ = upsert_user(conn, _legacy_user_email())
 
     if needs_sc_rebuild:
         conn.execute("""
@@ -277,8 +277,8 @@ def upsert_user(
     email: str,
     name: str | None = None,
     picture_url: str | None = None,
-) -> str:
-    """Insert or update a user by email. Returns the user's UUID.
+) -> tuple[str, bool]:
+    """Insert or update a user by email. Returns (user_id, is_new).
 
     Existing users get name/picture/last_login_at refreshed if values are
     provided; passing None for those fields leaves the existing value alone.
@@ -300,7 +300,7 @@ def upsert_user(
         vals.append(user_id)
         conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE user_id = ?", vals)
         conn.commit()
-        return user_id
+        return user_id, False
 
     user_id = uuid.uuid4().hex
     conn.execute(
@@ -309,7 +309,7 @@ def upsert_user(
         (user_id, email, name, picture_url, now, now),
     )
     conn.commit()
-    return user_id
+    return user_id, True
 
 
 def get_user_by_id(conn: sqlite3.Connection, user_id: str) -> dict | None:
@@ -690,6 +690,69 @@ def save_todo(
             "raw_llm_response": result.get("_raw"),
         },
     )
+
+
+ONBOARDING_TODOS = [
+    {
+        "dedup_key": "onboarding_email_demo",
+        "title": "[Sample] Reply to Acme's contract redline before Friday",
+        "urgency": "high",
+        "due_offset_days": 3,
+        "suggested_action": (
+            "Acme's legal team sent back the MSA with edits to the indemnity "
+            "and payment terms clauses. Review the redlines, loop in legal if "
+            "anything looks off, and send a reply by EOD Friday so the deal "
+            "stays on track."
+        ),
+        "reasoning": (
+            "👋 Welcome to Action Inbox! This is a sample todo to show you "
+            "what action items extracted from your Gmail look like. Once you "
+            "connect Gmail, real emails that need a response, a decision, or "
+            "a follow-up will show up here automatically — with the thread, "
+            "urgency, and suggested next step already filled in."
+        ),
+    },
+    {
+        "dedup_key": "onboarding_meeting_demo",
+        "title": "[Sample] Send Q2 roadmap deck to the design team",
+        "urgency": "medium",
+        "due_offset_days": 5,
+        "suggested_action": (
+            "You committed to sharing the Q2 roadmap deck with design after "
+            "the planning sync. Polish the deck, drop it in the shared drive, "
+            "and ping the team in #design-leads with a short note on what to "
+            "review first."
+        ),
+        "reasoning": (
+            "📞 This is a sample of how Action Inbox surfaces commitments "
+            "from your meetings. Connect Fathom in Settings and any action "
+            "items you agree to during a call will appear here — linked back "
+            "to the recording so you can replay the moment for context."
+        ),
+    },
+]
+
+
+def seed_onboarding_todos(conn: sqlite3.Connection, user_id: str) -> None:
+    """Insert two welcome/demo todos for a brand-new user."""
+    now = datetime.now(timezone.utc)
+    for spec in ONBOARDING_TODOS:
+        due = (now + timedelta(days=spec["due_offset_days"])).replace(
+            hour=17, minute=0, second=0, microsecond=0
+        )
+        _save_todo(
+            conn,
+            user_id=user_id,
+            todo_id=f"todo_onboarding_{user_id[:8]}_{spec['dedup_key']}",
+            source="user",
+            dedup_key=spec["dedup_key"],
+            title=spec["title"],
+            suggested_action=spec["suggested_action"],
+            urgency=spec["urgency"],
+            due_date=due.isoformat(),
+            reasoning=spec["reasoning"],
+            source_meta={"onboarding": True},
+        )
 
 
 def save_user_todo(

@@ -159,7 +159,12 @@ function applyViewMode(mode) {
     viewToggleBtn.title = 'Switch to list-only view';
   }
 }
-applyViewMode(localStorage.getItem('viewMode') === 'list' ? 'list' : 'split');
+if (window.__FRESH_SIGNUP) {
+  localStorage.setItem('viewMode', 'split');
+  applyViewMode('split');
+} else {
+  applyViewMode(localStorage.getItem('viewMode') === 'list' ? 'list' : 'split');
+}
 viewToggleBtn.addEventListener('click', () => {
   const next = appEl.classList.contains('list-only') ? 'split' : 'list';
   localStorage.setItem('viewMode', next);

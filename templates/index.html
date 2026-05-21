@@ -172,6 +172,7 @@
 </div>
 
 <script id="todos-data" type="application/json">{{ todos_json | safe }}</script>
+<script>window.__FRESH_SIGNUP = {{ 'true' if fresh_signup else 'false' }};</script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 </body>
 </html>

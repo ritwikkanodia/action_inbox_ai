@@ -156,6 +156,7 @@ def index():
         else:
             t["source_meta"] = {}
     gmail_connected = bool(get_source_connection(db, user_id, "gmail"))
+    fresh_signup = bool(session.pop("fresh_signup", False))
     return render_template(
         "index.html",
         todos=todos,
@@ -163,6 +164,7 @@ def index():
         user=current_user(),
         gmail_connected=gmail_connected,
         gmail_auth_url=url_for("gmail_auth"),
+        fresh_signup=fresh_signup,
     )
 
 

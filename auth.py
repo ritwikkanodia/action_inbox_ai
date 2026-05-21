@@ -15,7 +15,7 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as id_token_lib
 from google_auth_oauthlib.flow import Flow
 
-from db import upsert_user
+from db import seed_onboarding_todos, upsert_user
 
 LOGIN_SCOPES = [
     "openid",
@@ -112,12 +112,16 @@ def complete_login(
     if not email:
         return None, "Google did not return an email address."
 
-    user_id = upsert_user(
+    user_id, is_new = upsert_user(
         db,
         email=email,
         name=info.get("name"),
         picture_url=info.get("picture"),
     )
+
+    if is_new:
+        seed_onboarding_todos(db, user_id)
+        session["fresh_signup"] = True
 
     session.pop("login_oauth_state", None)
     session.pop("login_oauth_code_verifier", None)
