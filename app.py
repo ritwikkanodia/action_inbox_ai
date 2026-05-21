@@ -156,6 +156,7 @@ def index():
         else:
             t["source_meta"] = {}
     gmail_connected = bool(get_source_connection(db, user_id, "gmail"))
+    fresh_signup = bool(session.pop("fresh_signup", False))
     return render_template(
         "index.html",
         todos=todos,
@@ -163,6 +164,7 @@ def index():
         user=current_user(),
         gmail_connected=gmail_connected,
         gmail_auth_url=url_for("gmail_auth"),
+        fresh_signup=fresh_signup,
     )
 
 
@@ -182,7 +184,17 @@ def create_todo():
     user_id = current_user_id()
     assert user_id
     todo_id = save_user_todo(db, user_id, title, urgency, due_date, suggested_action)
-    return jsonify({"ok": True, "todo_id": todo_id}), 201
+    row = db.execute(
+        """
+        SELECT todo_id, title, suggested_action, urgency,
+               estimated_time_minutes, due_date, relevant_link, reasoning, status,
+               source, decision, created_at,
+               (ai_thread IS NOT NULL AND ai_thread != '' AND ai_thread != '[]') AS has_ai_thread
+        FROM todos WHERE todo_id = ? AND user_id = ?
+        """,
+        (todo_id, user_id),
+    ).fetchone()
+    return jsonify({"ok": True, "todo_id": todo_id, "todo": dict(row) if row else None}), 201
 
 
 def _extract_text(content) -> str:
