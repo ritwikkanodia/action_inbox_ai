@@ -711,7 +711,6 @@ function buildRow(t) {
           <span class="row-title-text">${escapeHtml(t.title || '(untitled)')}</span>
           <button class="row-edit-title-btn" title="Edit title">✎</button>
         </span>
-        <span class="source-badge inline-source ${t.source || 'user'}">${sourceLabel(t.source)}</span>
       </div>
       <div class="row-meta">
         ${t.due_date ? `<span class="row-due">${fmtDue(t.due_date)}</span>` : ''}
@@ -719,10 +718,10 @@ function buildRow(t) {
       </div>
     </div>
     <div class="row-inline-actions" data-id="${t.todo_id}">
+      <span class="row-source" data-source="${t.source || 'user'}">${sourceLabel(t.source)}</span>
       <span class="row-act editable" data-field="urgency" data-value="${t.urgency || ''}" title="Urgency">${t.urgency || '—'}</span>
       <span class="row-act editable" data-field="status" data-value="${t.status || ''}" title="Status">${t.status || '—'}</span>
       <span class="row-act editable" data-field="due_date" data-value="${t.due_date || ''}" title="Due date">${t.due_date ? fmtDue(t.due_date) : 'set due'}</span>
-      <div class="row-decision-slot"></div>
     </div>
   `;
   return row;

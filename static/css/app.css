@@ -184,10 +184,13 @@
     }
     #app.list-only .todo-row {
       cursor: pointer;
-      padding: 10px 32px;
+      padding: 14px 32px;
       align-items: center;
+      border-bottom: none;
     }
-    #app.list-only .list-header { padding: 10px 32px; }
+    #app.list-only .todo-row + .todo-row {
+      box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.045);
+    }
     #app.list-only .row-body { gap: 0; min-width: 0; }
     #app.list-only .row-title {
       display: flex;
@@ -197,8 +200,6 @@
       min-width: 0;
     }
     #app.list-only .row-meta { display: none; }
-    .source-badge.inline-source { display: none; }
-    #app.list-only .source-badge.inline-source { display: inline-block; flex-shrink: 0; }
 
     /* In list-only mode: no left urgency edge bar, no persistent "selected" highlight */
     #app.list-only .todo-row::before { display: none; }
@@ -208,6 +209,7 @@
 
     /* Column widths shared by header + each row's action strip */
     :root {
+      --col-source:   84px;
       --col-urgency:  72px;
       --col-status:   80px;
       --col-due:      150px;
@@ -223,7 +225,7 @@
     }
     .row-act {
       background: transparent;
-      border: 1px solid var(--rule);
+      border: 1px solid transparent;
       color: var(--ink-2);
       font-family: var(--sans);
       font-size: 11px;
@@ -242,12 +244,26 @@
     .row-act:hover { background: var(--paper-deep); color: var(--ink); border-color: var(--rule-strong); }
 
     .row-decision-slot {
-      width: 160px;
       display: flex;
       gap: 8px;
       justify-content: flex-end;
       flex-shrink: 0;
       margin-left: var(--col-gap);
+    }
+    /* In list-only mode, overlay the decision slot on top of the chip-strip
+       columns on pending rows. The editable chips are kept in flow (with
+       visibility:hidden) so columns still align across pending/non-pending rows. */
+    #app.list-only .row-decision-slot {
+      position: absolute;
+      right: 32px;
+      top: 50%;
+      transform: translateY(-50%);
+      margin: 0;
+      width: auto;
+    }
+    #app.list-only .todo-row.pending-decision .row-act.editable {
+      visibility: hidden;
+      pointer-events: none;
     }
     .row-act.accept, .row-act.reject {
       padding: 4px 12px;
@@ -255,7 +271,7 @@
       text-transform: uppercase;
       letter-spacing: 0.05em;
       font-size: 10.5px;
-      flex: 1;
+      flex: 0 0 auto;
     }
     .row-act.accept { color: var(--u-low); border-color: var(--u-low); }
     .row-act.accept:hover { background: rgba(91,111,74,0.12); color: var(--u-low); border-color: var(--u-low); }
@@ -265,6 +281,32 @@
     .row-act.editable[data-field="urgency"]  { width: var(--col-urgency); text-transform: capitalize; }
     .row-act.editable[data-field="status"]   { width: var(--col-status); text-transform: capitalize; }
     .row-act.editable[data-field="due_date"] { width: var(--col-due); }
+
+    /* Chip borders are quiet at rest, surface on row-hover so the list reads less like a table */
+    .todo-row:hover .row-act.editable { border-color: var(--rule); }
+    .row-act.editable[data-field="due_date"][data-value=""] {
+      color: var(--ink-3); font-style: italic; opacity: 0.75;
+    }
+
+    /* Source rendered as quiet mono label aligned in its own column */
+    .row-source {
+      width: var(--col-source);
+      flex-shrink: 0;
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      text-align: left;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .row-source[data-source="gmail"]           { color: var(--pill-blue-fg); }
+    .row-source[data-source="fathom"]          { color: var(--pill-purple-fg); }
+    .row-source[data-source="user"]            { color: var(--ink-3); }
+    .row-source[data-source="browser_history"] { color: var(--pill-green-fg); }
+    .row-source[data-source="system"]          { color: var(--pill-amber-fg); }
 
     /* Color coding for urgency pill */
     .row-act.editable[data-field="urgency"][data-value="high"]   { color: var(--u-high);   border-color: var(--u-high);   background: rgba(122,46,42,0.06); }
@@ -287,22 +329,22 @@
       width: 100%;
     }
 
-    /* Column header strip — only in list-only mode */
+    /* Column header strip — only in list-only mode. Whisper-quiet: no rule, no background. */
     .list-header {
       display: none;
       align-items: center;
-      padding: 10px 20px 10px 24px;
-      border-bottom: 1px solid var(--rule);
+      padding: 18px 32px 8px;
+      border-bottom: none;
       background: transparent;
       font-family: var(--mono);
-      font-size: 10px;
-      letter-spacing: 0.14em;
+      font-size: 9.5px;
+      letter-spacing: 0.18em;
       text-transform: uppercase;
       color: var(--ink-3);
+      opacity: 0.55;
       position: sticky;
       top: 0;
       z-index: 2;
-      background: var(--paper);
     }
     #app.list-only .list-header { display: flex; }
     .list-header .lh-body {
@@ -310,22 +352,19 @@
       min-width: 0;
       display: flex;
       align-items: center;
-      justify-content: space-between;
       gap: 8px;
     }
-    .list-header .lh-task,
-    .list-header .lh-source { display: inline-block; }
     .list-header .lh-cell {
       flex-shrink: 0;
       text-align: center;
       box-sizing: border-box;
     }
     .list-header .lh-cell + .lh-cell { margin-left: var(--col-gap); }
-    .list-header .lh-spacer { margin-left: 16px; }
+    .list-header .lh-source   { width: var(--col-source); margin-left: 16px; text-align: left; }
     .list-header .lh-urgency  { width: var(--col-urgency); }
     .list-header .lh-status   { width: var(--col-status); }
     .list-header .lh-due      { width: var(--col-due); }
-    .list-header .lh-decision { width: 160px; }
+    .list-header .lh-decision { width: 0; }
 
     /* Sidebar list rows */
     #todo-list { display: flex; flex-direction: column; }

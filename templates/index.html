@@ -70,9 +70,8 @@
     <div class="list-header" aria-hidden="true">
       <div class="lh-body">
         <span class="lh-task">Task</span>
-        <span class="lh-source">Source</span>
       </div>
-      <div class="lh-spacer"></div>
+      <div class="lh-cell lh-source">Source</div>
       <div class="lh-cell lh-urgency">Urgency</div>
       <div class="lh-cell lh-status">Status</div>
       <div class="lh-cell lh-due">Due</div>
@@ -98,7 +97,6 @@
                 <span class="row-title-text">{{ t.title or '(untitled)' }}</span>
                 <button class="row-edit-title-btn" title="Edit title">✎</button>
               </span>
-              <span class="source-badge inline-source {{ t.source or 'gmail' }}">{{ src_label }}</span>
             </div>
             <div class="row-meta">
               {% if t.due_date %}<span class="row-due">{{ t.due_date | fmt_dt }}</span>{% endif %}
@@ -106,15 +104,16 @@
             </div>
           </div>
           <div class="row-inline-actions" data-id="{{ t.todo_id }}">
+            <span class="row-source" data-source="{{ t.source or 'gmail' }}">{{ src_label }}</span>
             <span class="row-act editable" data-field="urgency"  data-value="{{ t.urgency or '' }}"  title="Urgency">{{ t.urgency or '—' }}</span>
             <span class="row-act editable" data-field="status"   data-value="{{ t.status or '' }}"   title="Status">{{ t.status or '—' }}</span>
             <span class="row-act editable" data-field="due_date" data-value="{{ t.due_date or '' }}" title="Due date">{% if t.due_date %}{{ t.due_date | fmt_dt }}{% else %}set due{% endif %}</span>
+            {% if pending %}
             <div class="row-decision-slot">
-              {% if pending %}
               <button class="row-act accept" data-action="accept" title="Accept">Accept</button>
               <button class="row-act reject" data-action="reject" title="Reject">Reject</button>
-              {% endif %}
             </div>
+            {% endif %}
           </div>
         </div>
         {% endfor %}
