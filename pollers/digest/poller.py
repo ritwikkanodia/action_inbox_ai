@@ -65,6 +65,7 @@ def _fetch_buckets(conn: sqlite3.Connection, user_id: str, now_local: datetime) 
     ).isoformat()
     today_start = now_local.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
 
+    cutoff_24h = (now_local - timedelta(hours=24)).isoformat()
     awaiting_rows = conn.execute(
         """
         SELECT todo_id, title
@@ -73,13 +74,14 @@ def _fetch_buckets(conn: sqlite3.Connection, user_id: str, now_local: datetime) 
           AND status = 'open'
           AND decision IS NULL
           AND title IS NOT NULL AND title != ''
+          AND created_at >= ?
         ORDER BY
             CASE WHEN due_date IS NULL THEN 1 ELSE 0 END,
             due_date ASC,
             CASE urgency WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 ELSE 3 END,
             created_at DESC
         """,
-        (user_id,),
+        (user_id, cutoff_24h),
     ).fetchall()
 
     urgent_rows = conn.execute(
@@ -201,7 +203,7 @@ def _render(user: dict, buckets: dict, base_url: str) -> tuple[str, str, str]:
             f"</p>"
         )
         body = (
-            section_html("Awaiting your decision", awaiting, inbox_url)
+            section_html("Awaiting your decision today", awaiting, inbox_url)
             + section_html("Urgent today", urgent, inbox_url)
         )
 
@@ -246,7 +248,7 @@ def _render(user: dict, buckets: dict, base_url: str) -> tuple[str, str, str]:
         lines.append(f"Morning, {name}.")
         if awaiting["count"]:
             lines.append("")
-            lines.append(f"Awaiting your decision ({awaiting['count']}):")
+            lines.append(f"Awaiting your decision today ({awaiting['count']}):")
             for t in awaiting["teasers"]:
                 lines.append(f"  • {t['title']}")
                 lines.append(f"    {base_url}/todos/{t['id']}")
