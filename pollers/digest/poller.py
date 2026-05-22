@@ -7,8 +7,9 @@ The email's job is to pull the user back in, not to summarize their inbox.
 import logging
 import os
 import sqlite3
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from html import escape
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from db import get_user_state, set_user_state
 
@@ -19,10 +20,29 @@ SEND_HOUR_LOCAL = 10
 TEASER_LIMIT = 3
 TITLE_MAX_CHARS = 60
 LAST_SENT_KEY = "digest_last_sent_date"
+DEFAULT_TIMEZONE = "Asia/Kolkata"
 
 
 def _base_url() -> str:
     return os.environ.get("BASE_URL", "http://localhost:5001").rstrip("/")
+
+
+def _user_tz() -> ZoneInfo:
+    """Resolve the timezone used to evaluate the 10am gate.
+
+    Single env var for now (`DIGEST_TIMEZONE`); per-user overrides can be
+    layered on later via `user_state` without changing this signature.
+    """
+    name = os.environ.get("DIGEST_TIMEZONE", DEFAULT_TIMEZONE).strip() or DEFAULT_TIMEZONE
+    try:
+        return ZoneInfo(name)
+    except ZoneInfoNotFoundError:
+        log.warning("DIGEST_TIMEZONE=%r not found; falling back to %s", name, DEFAULT_TIMEZONE)
+        return ZoneInfo(DEFAULT_TIMEZONE)
+
+
+def _now_local() -> datetime:
+    return datetime.now(timezone.utc).astimezone(_user_tz())
 
 
 def _truncate(s: str, n: int = TITLE_MAX_CHARS) -> str:
@@ -268,7 +288,7 @@ def poll(conn: sqlite3.Connection, user: dict) -> int:
         print(f"[digest:{label}] skipped: no email on user")
         return 0
 
-    now_local = datetime.now()
+    now_local = _now_local()
     today_str = now_local.strftime("%Y-%m-%d")
 
     if now_local.hour < SEND_HOUR_LOCAL:

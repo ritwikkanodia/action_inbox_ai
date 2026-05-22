@@ -384,7 +384,7 @@ def digest_preview():
     db = get_db()
     user = current_user()
     assert user
-    now_local = datetime.now()
+    now_local = digest_poller._now_local()
     buckets = digest_poller._fetch_buckets(db, user["user_id"], now_local)
     subject, html, text = digest_poller._render(user, buckets, BASE_URL)
     if request.args.get("format") == "json":
