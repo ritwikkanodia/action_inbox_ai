@@ -249,28 +249,38 @@ def _render(user: dict, buckets: dict, base_url: str) -> tuple[str, str, str]:
 def poll(conn: sqlite3.Connection, user: dict) -> int:
     """Send the morning digest if it's after 10am local and we haven't sent yet today.
 
+    Prints exactly one `[digest:<label>] ...` line per call so the main poll loop
+    shows the digest status for every user on every cycle.
+
     Returns 1 if sent, 0 otherwise.
     """
+    user_id = user["user_id"]
+    recipient = (user.get("email") or "").strip()
+    label = recipient or user_id[:8]
+
     api_key = os.environ.get("RESEND_API_KEY")
     from_addr = os.environ.get("RESEND_FROM")
     if not api_key or not from_addr:
-        log.info("[digest] disabled (RESEND_API_KEY or RESEND_FROM not set)")
+        print(f"[digest:{label}] skipped: RESEND_API_KEY/RESEND_FROM not set")
         return 0
 
-    recipient = (user.get("email") or "").strip()
-    user_id = user["user_id"]
     if not recipient:
-        log.info("[digest:%s] no email on user; skipping", user_id[:8])
+        print(f"[digest:{label}] skipped: no email on user")
         return 0
 
     now_local = datetime.now()
     today_str = now_local.strftime("%Y-%m-%d")
 
     if now_local.hour < SEND_HOUR_LOCAL:
+        print(
+            f"[digest:{label}] skipped: before {SEND_HOUR_LOCAL:02d}:00 local "
+            f"(now {now_local.strftime('%H:%M')})"
+        )
         return 0
 
     last_sent = get_user_state(conn, user_id, LAST_SENT_KEY)
     if last_sent == today_str:
+        print(f"[digest:{label}] skipped: already sent today ({today_str})")
         return 0
 
     buckets = _fetch_buckets(conn, user_id, now_local)
@@ -287,15 +297,14 @@ def poll(conn: sqlite3.Connection, user: dict) -> int:
             "text": text,
         })
     except Exception as exc:
-        log.warning("[digest:%s] send failed: %s", recipient, exc)
+        print(f"[digest:{label}] send failed: {exc}")
         return 0
 
     set_user_state(conn, user_id, LAST_SENT_KEY, today_str)
-    log.info(
-        "[digest:%s] sent (awaiting=%d, urgent=%d, closed_yesterday=%d)",
-        recipient,
-        buckets["awaiting"]["count"],
-        buckets["urgent"]["count"],
-        buckets["closed_yesterday"],
+    print(
+        f"[digest:{label}] sent "
+        f"(awaiting={buckets['awaiting']['count']}, "
+        f"urgent={buckets['urgent']['count']}, "
+        f"closed_yesterday={buckets['closed_yesterday']})"
     )
     return 1
