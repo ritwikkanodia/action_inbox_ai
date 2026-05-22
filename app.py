@@ -22,6 +22,8 @@ from db import (
     set_user_state,
     clear_user_state,
     get_user_by_id,
+    record_page_view,
+    get_user_view_summary,
 )
 from pollers.gmail.poller import BACKFILL_PENDING_KEY, BACKFILLED_EMAIL_KEY
 from pollers.digest import poller as digest_poller
@@ -90,6 +92,22 @@ def close_db(exc):
     db = g.pop("db", None)
     if db is not None:
         db.close()
+
+
+_TRACKED_PATHS = {"/", "/settings"}
+
+
+@app.before_request
+def track_page_view():
+    if request.method != "GET":
+        return
+    if request.path not in _TRACKED_PATHS:
+        return
+    user_id = current_user_id()
+    try:
+        record_page_view(get_db(), user_id, request.path)
+    except Exception:
+        pass
 
 
 # ---------------------------------------------------------------------------
@@ -518,6 +536,12 @@ def update_source_settings(source: str):
             return jsonify({"ok": True, "connected": False})
         return jsonify({"error": "use /settings/sources/gmail/auth to connect"}), 400
     return jsonify({"error": "unhandled"}), 500
+
+
+@app.route("/stats")
+def stats():
+    user_id = request.args.get("user_id") or None
+    return jsonify(get_user_view_summary(get_db(), user_id))
 
 
 if __name__ == "__main__":

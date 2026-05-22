@@ -242,6 +242,16 @@ def init_db(conn: sqlite3.Connection) -> None:
             conn.execute("DELETE FROM state WHERE key = ?", (key,))
 
     conn.executescript("""
+        CREATE TABLE IF NOT EXISTS page_views (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id   TEXT,
+            path      TEXT NOT NULL,
+            timestamp TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_page_views_timestamp
+            ON page_views(timestamp DESC);
+
         CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_dedup
             ON todos(user_id, source, dedup_key) WHERE dedup_key IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_todos_user_status_created
@@ -819,6 +829,45 @@ def save_system_todo(conn: sqlite3.Connection, user_id: str, todo: dict) -> bool
         urgency="low",
         reasoning=todo.get("reasoning", ""),
     )
+
+
+def get_user_view_summary(conn: sqlite3.Connection, user_id: str | None = None) -> list[dict]:
+    filter_clause = "AND pv.user_id = ?" if user_id else ""
+    filter_args = (user_id,) if user_id else ()
+    users = conn.execute(
+        f"""
+        SELECT pv.user_id, u.email, u.name, COUNT(*) AS total_views
+        FROM page_views pv
+        LEFT JOIN users u ON u.user_id = pv.user_id
+        WHERE pv.user_id IS NOT NULL {filter_clause}
+        GROUP BY pv.user_id
+        ORDER BY total_views DESC
+        """,
+        filter_args,
+    ).fetchall()
+    result = []
+    for user_id, email, name, total_views in users:
+        timestamps = conn.execute(
+            "SELECT timestamp, path FROM page_views WHERE user_id = ? ORDER BY timestamp DESC",
+            (user_id,),
+        ).fetchall()
+        result.append({
+            "user_id": user_id,
+            "email": email,
+            "name": name,
+            "total_views": total_views,
+            "views": [{"timestamp": r[0], "path": r[1]} for r in timestamps],
+        })
+    return result
+
+
+def record_page_view(conn: sqlite3.Connection, user_id: str | None, path: str) -> None:
+    conn.execute(
+        "INSERT INTO page_views (user_id, path, timestamp) VALUES (?, ?, ?)",
+        (user_id, path, _now()),
+    )
+    conn.commit()
+
 
 
 def save_event(conn: sqlite3.Connection, event: GmailEvent) -> None:
