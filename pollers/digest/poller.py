@@ -16,7 +16,7 @@ from db import get_user_state, set_user_state
 
 log = logging.getLogger(__name__)
 
-SEND_HOUR_LOCAL = 10
+SEND_HOUR_LOCAL = 9
 TEASER_LIMIT = 3
 TITLE_MAX_CHARS = 60
 LAST_SENT_KEY = "digest_last_sent_date"
@@ -146,7 +146,7 @@ def _render(user: dict, buckets: dict, base_url: str) -> tuple[str, str, str]:
         subject = f"Inbox zero — {today_str}"
     elif awaiting["count"] > 0:
         n = awaiting["count"]
-        subject = f"{n} suggestion{'s' if n != 1 else ''} waiting for you"
+        subject = f"You have {n} suggestion{'s' if n != 1 else ''} that might need your attention"
     else:
         n = urgent["count"]
         subject = f"{n} urgent todo{'s' if n != 1 else ''} today"
@@ -189,8 +189,8 @@ def _render(user: dict, buckets: dict, base_url: str) -> tuple[str, str, str]:
         if awaiting["count"] > 0:
             n = awaiting["count"]
             lede = (
-                f"You have <strong>{n}</strong> suggestion{'s' if n != 1 else ''} "
-                f"waiting for your call."
+                f"You have <strong>{n}</strong> new suggestion{'s' if n != 1 else ''} "
+                f"that need your attention."
             )
         else:
             n = urgent["count"]
@@ -203,8 +203,8 @@ def _render(user: dict, buckets: dict, base_url: str) -> tuple[str, str, str]:
             f"</p>"
         )
         body = (
-            section_html("Awaiting your decision today", awaiting, inbox_url)
-            + section_html("Urgent today", urgent, inbox_url)
+            section_html("Need your Attention", awaiting, inbox_url)
+            + section_html("Urgent", urgent, inbox_url)
         )
 
     footer = ""
