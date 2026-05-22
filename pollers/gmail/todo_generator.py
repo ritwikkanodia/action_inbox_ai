@@ -43,9 +43,9 @@ Set "todo" to null if "should_generate_todo" is false.
 
 Guidelines:
 - Only generate a todo if the email genuinely requires a response or action from the user.
-- Newsletters, notifications, receipts, and automated messages should not generate todos.
+- Newsletters, notifications, receipts, OTPs, sign in requests and automated messages should not generate todos.
 - If the user has already replied recently, lower the urgency or skip entirely.
-- "due_date" should only be set if a concrete deadline is mentioned or strongly implied (e.g. a meeting time, an explicit deadline). Leave null if unclear.
+- "due_date" should only be set if a concrete deadline is mentioned or strongly implied (e.g. a meeting time, an explicit deadline).
 """
 
 
