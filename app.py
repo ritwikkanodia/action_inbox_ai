@@ -23,6 +23,7 @@ from db import (
     clear_user_state,
 )
 from pollers.gmail.poller import BACKFILL_PENDING_KEY, BACKFILLED_EMAIL_KEY
+from pollers.digest import poller as digest_poller
 from auth import (
     complete_login,
     current_user,
@@ -370,6 +371,30 @@ def update_todo(todo_id):
     )
     db.commit()
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Digest preview (renders the same email body without sending)
+# ---------------------------------------------------------------------------
+
+
+@app.route("/digest/preview", methods=["GET"])
+@login_required
+def digest_preview():
+    db = get_db()
+    user = current_user()
+    assert user
+    now_local = datetime.now()
+    buckets = digest_poller._fetch_buckets(db, user["user_id"], now_local)
+    subject, html, text = digest_poller._render(user, buckets, BASE_URL)
+    if request.args.get("format") == "json":
+        return jsonify({
+            "subject": subject,
+            "buckets": buckets,
+            "html": html,
+            "text": text,
+        })
+    return html, 200, {"Content-Type": "text/html; charset=utf-8"}
 
 
 # ---------------------------------------------------------------------------

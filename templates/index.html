@@ -113,6 +113,10 @@
               <button class="row-act accept" data-action="accept" title="Accept">Accept</button>
               <button class="row-act reject" data-action="reject" title="Reject">Reject</button>
             </div>
+            {% elif t.decision == 'rejected' %}
+            <div class="row-decision-slot">
+              <button class="row-act accept" data-action="accept" title="Accept">Accept</button>
+            </div>
             {% endif %}
           </div>
         </div>

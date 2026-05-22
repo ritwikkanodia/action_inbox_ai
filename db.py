@@ -511,6 +511,7 @@ def _save_todo(
     relevant_link: str | None = None,
     reasoning: str | None = "",
     source_meta: dict | None = None,
+    decision: str | None = None,
 ) -> bool:
     if urgency not in _VALID_URGENCY:
         urgency = None
@@ -521,12 +522,13 @@ def _save_todo(
         INSERT OR IGNORE INTO todos (
             todo_id, user_id, source, dedup_key, title, suggested_action, urgency,
             estimated_time_minutes, due_date, relevant_link, reasoning,
-            status, source_meta, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)
+            status, decision, source_meta, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
         """,
         (
             todo_id, user_id, source, dedup_key, title, suggested_action, urgency,
             estimated_time_minutes, due_date, relevant_link, reasoning or "",
+            decision,
             json.dumps(source_meta) if source_meta else None, now, now,
         ),
     )
@@ -775,6 +777,7 @@ def save_user_todo(
         urgency=urgency,
         due_date=due_date,
         reasoning="",
+        decision="accepted",
     )
     return todo_id
 

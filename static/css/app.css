@@ -261,7 +261,8 @@
       margin: 0;
       width: auto;
     }
-    #app.list-only .todo-row.pending-decision .row-act.editable {
+    #app.list-only .todo-row.pending-decision .row-act.editable,
+    #app.list-only .todo-row.rejected-todo .row-act.editable {
       visibility: hidden;
       pointer-events: none;
     }
