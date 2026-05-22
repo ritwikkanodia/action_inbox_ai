@@ -21,14 +21,15 @@ from pollers.gmail.todo_generator import generate_todo
 from pollers.fathom import poller as fathom_poller
 from pollers.browser import poller as browser_history_poller
 from pollers.system import poller as system_poller
+from pollers.digest import poller as digest_poller
 from db import init_db, list_active_users, save_todo
 
 DB_PATH = os.environ.get("DB_PATH", "gmail_events.db")
 POLL_INTERVAL_SECONDS = 30
-KNOWN_SOURCES = {"gmail", "fathom", "browser_history", "system"}
+KNOWN_SOURCES = {"gmail", "fathom", "browser_history", "system", "morning_digest"}
 # `browser_history` (reads Dia browser history) and `system` (snapshots
 # macOS Downloads/Desktop/Documents) are macOS-specific and opt-in.
-DEFAULT_ENABLED_SOURCES = {"gmail", "fathom"}
+DEFAULT_ENABLED_SOURCES = {"gmail", "fathom", "morning_digest"}
 
 
 def _ensure_db_parent_dir() -> None:
@@ -162,6 +163,12 @@ def main():
                             print(f"[system:{user_label}] No new todos generated.")
                     except Exception as exc:
                         print(f"[system:{user_label}] error: {exc}")
+
+                if "morning_digest" in enabled_sources:
+                    try:
+                        digest_poller.poll(conn, user)
+                    except Exception as exc:
+                        print(f"[digest:{user_label}] error: {exc}")
 
         except Exception as exc:
             print(f"[error] {exc}")
