@@ -1,6 +1,8 @@
 google-auth>=2.0
 google-auth-oauthlib>=1.0
 google-api-python-client>=2.0
+msal>=1.28
+requests>=2.31
 openai>=1.0
 openai-agents>=0.17
 pypdf>=4.0

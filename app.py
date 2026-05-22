@@ -35,6 +35,8 @@ from auth import (
 from googleapiclient.discovery import build as google_build
 from pollers.gmail.auth import get_auth_flow, get_gmail_service
 from pollers.gmail.thread_context import fetch_thread_messages
+from pollers.outlook import auth as outlook_auth_module
+from pollers.outlook.poller import fetch_conversation_messages as outlook_fetch_thread
 
 BASE_URL = os.environ.get("BASE_URL", "http://localhost:5001").rstrip("/")
 
@@ -47,6 +49,7 @@ app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(32))
 
 GMAIL_REDIRECT_URI = f"{BASE_URL}/oauth/gmail/callback"
+OUTLOOK_REDIRECT_URI = f"{BASE_URL}/oauth/outlook/callback"
 LOGIN_REDIRECT_URI = f"{BASE_URL}/oauth/login/callback"
 
 
@@ -322,6 +325,33 @@ def todo_context(todo_id):
         except Exception as exc:
             return jsonify({"source": "gmail", "error": f"Couldn't load thread: {exc}"})
 
+    if source == "outlook":
+        conversation_id = meta.get("conversation_id")
+        if not conversation_id:
+            return jsonify({"source": source, "error": "No conversation linked to this todo."})
+        try:
+            token = outlook_auth_module.get_access_token(db, user_id)
+            sc = get_source_connection(db, user_id, "outlook")
+            user_email = (sc or {}).get("credentials", {}).get("connected_email", "")
+            messages = outlook_fetch_thread(token, conversation_id)
+            formatted = [
+                {
+                    "from_name": m["from_name"],
+                    "from_email": m["from_email"],
+                    "received_at": m["received_at"],
+                    "body_text": m["body_text"],
+                    "is_user": bool(user_email) and user_email.lower() in (m["from_email"] or "").lower(),
+                }
+                for m in messages
+            ]
+            return jsonify({
+                "source": "outlook",
+                "thread": formatted,
+                "thread_url": row["relevant_link"],
+            })
+        except Exception as exc:
+            return jsonify({"source": "outlook", "error": f"Couldn't load thread: {exc}"})
+
     if source == "fathom":
         return jsonify({
             "source": "fathom",
@@ -416,6 +446,8 @@ def get_settings():
     fathom_key = (fathom or {}).get("credentials", {}).get("api_key", "") if fathom else None
     gmail = get_source_connection(db, user_id, "gmail")
     gmail_email = (gmail or {}).get("credentials", {}).get("connected_email") if gmail else None
+    outlook = get_source_connection(db, user_id, "outlook")
+    outlook_email = (outlook or {}).get("credentials", {}).get("connected_email") if outlook else None
     return jsonify({
         "sources": {
             "fathom": {
@@ -426,6 +458,11 @@ def get_settings():
                 "connected": bool(gmail),
                 "email": gmail_email,
                 "auth_url": url_for("gmail_auth"),
+            },
+            "outlook": {
+                "connected": bool(outlook),
+                "email": outlook_email,
+                "auth_url": url_for("outlook_auth"),
             },
         }
     })
@@ -493,10 +530,36 @@ def gmail_callback():
     return redirect(url_for("index"))
 
 
+@app.route("/settings/sources/outlook/auth")
+@login_required
+def outlook_auth():
+    flow = outlook_auth_module.get_auth_flow(OUTLOOK_REDIRECT_URI)
+    session["outlook_auth_flow"] = flow
+    return redirect(flow["auth_uri"])
+
+
+@app.route("/oauth/outlook/callback")
+@login_required
+def outlook_callback():
+    auth_flow = session.get("outlook_auth_flow")
+    if not auth_flow:
+        return "Outlook OAuth session expired. Start the Outlook connection flow again.", 400
+    try:
+        creds = outlook_auth_module.complete_auth_flow(auth_flow, dict(request.args))
+    except RuntimeError as exc:
+        return f"Outlook auth failed: {exc}", 400
+    db = get_db()
+    user_id = current_user_id()
+    assert user_id
+    set_source_credentials(db, user_id, "outlook", "oauth2", creds)
+    session.pop("outlook_auth_flow", None)
+    return redirect(url_for("index"))
+
+
 @app.route("/settings/sources/<source>", methods=["POST"])
 @login_required
 def update_source_settings(source: str):
-    ALLOWED_SOURCES = {"fathom", "gmail"}
+    ALLOWED_SOURCES = {"fathom", "gmail", "outlook"}
     if source not in ALLOWED_SOURCES:
         return jsonify({"error": "unknown source"}), 400
     data = request.get_json(force=True, silent=True) or {}
@@ -517,6 +580,12 @@ def update_source_settings(source: str):
             clear_source_connection(db, user_id, "gmail")
             return jsonify({"ok": True, "connected": False})
         return jsonify({"error": "use /settings/sources/gmail/auth to connect"}), 400
+    if source == "outlook":
+        if data.get("disconnect"):
+            clear_source_connection(db, user_id, "outlook")
+            clear_user_state(db, user_id, "outlook_delta_link")
+            return jsonify({"ok": True, "connected": False})
+        return jsonify({"error": "use /settings/sources/outlook/auth to connect"}), 400
     return jsonify({"error": "unhandled"}), 500
 
 

@@ -83,7 +83,7 @@
         <p class="empty">No todos yet.</p>
       {% else %}
         {% for t in todos %}
-        {% set is_ai = t.source in ('gmail', 'fathom', 'browser_history', 'system') %}
+        {% set is_ai = t.source in ('gmail', 'outlook', 'fathom', 'browser_history', 'system') %}
         {% set pending = is_ai and not t.decision and t.status != 'closed' %}
         {% set src_label = 'browser' if t.source == 'browser_history' else ('system' if t.source == 'system' else (t.source or 'gmail')) %}
         <div class="todo-row {{ t.status }}{% if t.decision == 'rejected' %} rejected-todo{% endif %}{% if pending %} pending-decision{% endif %}"
@@ -151,6 +151,21 @@
           <div id="gmail-connected-row">
             <span class="source-card-hint" id="gmail-email-hint">Authorized via OAuth</span>
             <button class="btn-disconnect" id="gmail-disconnect-btn">Disconnect</button>
+          </div>
+        </div>
+      </div>
+      <div class="source-card" id="outlook-card">
+        <div class="source-card-header">
+          <span class="source-card-name">Outlook</span>
+          <span class="source-connected-badge off" id="outlook-status">Not connected</span>
+        </div>
+        <div class="source-card-body">
+          <div id="outlook-connect-row">
+            <button class="btn-connect" id="outlook-connect-btn">Connect with Microsoft</button>
+          </div>
+          <div id="outlook-connected-row">
+            <span class="source-card-hint" id="outlook-email-hint">Authorized via OAuth</span>
+            <button class="btn-disconnect" id="outlook-disconnect-btn">Disconnect</button>
           </div>
         </div>
       </div>

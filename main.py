@@ -18,18 +18,21 @@ from pollers.gmail.poller import poll
 from pollers.gmail.spam_filter import is_spam
 from pollers.gmail.thread_context import fetch_thread_messages, build_thread_context
 from pollers.gmail.todo_generator import generate_todo
+from pollers.outlook.auth import get_access_token as get_outlook_token
+from pollers.outlook.poller import poll as outlook_poll
+from pollers.outlook.spam_filter import is_spam as outlook_is_spam
 from pollers.fathom import poller as fathom_poller
 from pollers.browser import poller as browser_history_poller
 from pollers.system import poller as system_poller
 from pollers.digest import poller as digest_poller
-from db import init_db, list_active_users, save_todo
+from db import init_db, list_active_users, save_todo, save_outlook_todo
 
 DB_PATH = os.environ.get("DB_PATH", "gmail_events.db")
 POLL_INTERVAL_SECONDS = 30
-KNOWN_SOURCES = {"gmail", "fathom", "browser_history", "system", "morning_digest"}
+KNOWN_SOURCES = {"gmail", "outlook", "fathom", "browser_history", "system", "morning_digest"}
 # `browser_history` (reads Dia browser history) and `system` (snapshots
 # macOS Downloads/Desktop/Documents) are macOS-specific and opt-in.
-DEFAULT_ENABLED_SOURCES = {"gmail", "fathom", "morning_digest"}
+DEFAULT_ENABLED_SOURCES = {"gmail", "outlook", "fathom", "morning_digest"}
 
 
 def _ensure_db_parent_dir() -> None:
@@ -116,6 +119,63 @@ def _poll_gmail_for_user(conn: sqlite3.Connection, user: dict) -> None:
     print(f"[gmail] {gmail_email}: {len(inbound)} fetched → {summary}")
 
 
+def _poll_outlook_for_user(conn: sqlite3.Connection, user: dict) -> None:
+    user_id = user["user_id"]
+    try:
+        token = get_outlook_token(conn, user_id)
+    except RuntimeError as exc:
+        print(f"[outlook] {user_id[:8]}: {exc}")
+        return
+
+    events = outlook_poll(token, conn, user_id)
+    inbound = [e for e in events if e.type == "messagesAdded"]
+    if not inbound:
+        print(f"[outlook] {user_id[:8]}: idle")
+        return
+
+    counts = {"todo": 0, "dup": 0, "skip": 0, "spam": 0}
+    for e in inbound:
+        from_email = e.actors.from_.email if e.actors.from_ else "unknown"
+        prefix = f"[outlook] {user_id[:8]}   from={_truncate(from_email, 32):<32} | \"{_truncate(e.content.subject, 50)}\""
+
+        if outlook_is_spam(e):
+            counts["spam"] += 1
+            print(f"{prefix} → spam")
+            continue
+
+        # Build a minimal thread context from the single message (no conversation fetch at poll time)
+        context = (
+            f"[{e.timestamp}] {from_email}:\n"
+            f"{e.content.body_text[:1000]}"
+            "\nNote: you have not replied to the latest message."
+        )
+        result = generate_todo(context, e)
+
+        if not result["should_generate_todo"]:
+            counts["skip"] += 1
+            print(f"{prefix} → skip: {_truncate(result['reasoning'], 80)}")
+            continue
+
+        saved = save_outlook_todo(
+            conn,
+            e.content.message_id,
+            e.content.thread_id,
+            result,
+            user_id,
+        )
+        if saved:
+            counts["todo"] += 1
+            todo = result["todo"]
+            print(f"{prefix} → TODO[{todo['urgency']}] {_truncate(todo['title'], 60)}")
+        else:
+            counts["dup"] += 1
+            print(f"{prefix} → dup")
+
+    parts = [f"{v} {k}" for k, v in counts.items() if v]
+    summary = ", ".join(parts) if parts else "no actions"
+    print(f"[outlook] {user_id[:8]}: {len(inbound)} fetched → {summary}")
+
+
 def main():
     enabled_sources = _enabled_sources()
     _ensure_db_parent_dir()
@@ -137,6 +197,12 @@ def main():
                         _poll_gmail_for_user(conn, user)
                     except Exception as exc:
                         print(f"[gmail:{user_label}] error: {exc}")
+
+                if "outlook" in enabled_sources:
+                    try:
+                        _poll_outlook_for_user(conn, user)
+                    except Exception as exc:
+                        print(f"[outlook:{user_label}] error: {exc}")
 
                 if "fathom" in enabled_sources:
                     try:

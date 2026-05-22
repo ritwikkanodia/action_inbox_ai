@@ -97,7 +97,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             todo_id                TEXT PRIMARY KEY,
             user_id                TEXT,
             source                 TEXT NOT NULL
-                                       CHECK (source IN ('gmail','fathom','browser_history','system','user')),
+                                       CHECK (source IN ('gmail','outlook','fathom','browser_history','system','user')),
             dedup_key              TEXT,
             title                  TEXT,
             suggested_action       TEXT,
@@ -469,6 +469,14 @@ def set_fathom_last_polled_at(conn: sqlite3.Connection, user_id: str, ts: str) -
     set_user_state(conn, user_id, "fathom_last_polled_at", ts)
 
 
+def get_outlook_delta_link(conn: sqlite3.Connection, user_id: str) -> str | None:
+    return get_user_state(conn, user_id, "outlook_delta_link")
+
+
+def set_outlook_delta_link(conn: sqlite3.Connection, user_id: str, link: str) -> None:
+    set_user_state(conn, user_id, "outlook_delta_link", link)
+
+
 def get_browser_history_last_polled_at(
     conn: sqlite3.Connection, user_id: str
 ) -> str | None:
@@ -690,6 +698,51 @@ def save_todo(
             "message_id": message_id,
             "thread_id": thread_id,
             "raw_llm_response": result.get("_raw"),
+        },
+    )
+
+
+def save_outlook_todo(
+    conn: sqlite3.Connection,
+    message_id: str,
+    conversation_id: str,
+    result: dict,
+    user_id: str,
+    outlook_email: str = "",
+) -> bool:
+    todo = result.get("todo") or {}
+    title = (todo.get("title") or "").strip()
+    if not title:
+        return False
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    existing = conn.execute(
+        "SELECT title FROM todos "
+        "WHERE user_id = ? AND source = 'outlook' AND created_at >= ?",
+        (user_id, cutoff),
+    ).fetchall()
+    for (et,) in existing:
+        if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.80:
+            return False
+    relevant_link = todo.get("relevant_link") or (
+        f"https://outlook.office.com/mail/id/{message_id}" if message_id else None
+    )
+    return _save_todo(
+        conn,
+        user_id=user_id,
+        todo_id=f"todo_outlook_{user_id[:8]}_{message_id[:20] if message_id else uuid.uuid4().hex[:12]}",
+        source="outlook",
+        dedup_key=message_id,
+        title=title,
+        suggested_action=todo.get("suggested_action"),
+        urgency=todo.get("urgency"),
+        estimated_time_minutes=todo.get("estimated_time_minutes"),
+        due_date=todo.get("due_date"),
+        relevant_link=relevant_link,
+        reasoning=result.get("reasoning", ""),
+        source_meta={
+            "message_id": message_id,
+            "conversation_id": conversation_id,
+            "connected_email": outlook_email,
         },
     )
 

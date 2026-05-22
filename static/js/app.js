@@ -1,6 +1,6 @@
 const URGENCY_OPTIONS = ['low', 'medium', 'high'];
 const STATUS_OPTIONS  = ['open', 'ongoing', 'closed'];
-const AI_SOURCES = ['gmail', 'fathom', 'browser_history', 'system'];
+const AI_SOURCES = ['gmail', 'outlook', 'fathom', 'browser_history', 'system'];
 
 const todosById = {};
 (JSON.parse(document.getElementById('todos-data').textContent) || []).forEach(t => {
@@ -796,9 +796,10 @@ function setSourceConnected(prefix, on, hint) {
 function openSettingsModal() {
   settingsModal.classList.add('open');
   fetch('/settings').then(r => r.json()).then(data => {
-    const { fathom, gmail } = data.sources;
+    const { fathom, gmail, outlook } = data.sources;
     setSourceConnected('fathom', fathom.connected, fathom.api_key_preview);
     setSourceConnected('gmail', gmail.connected, gmail.email || 'Authorized via OAuth');
+    if (outlook) setSourceConnected('outlook', outlook.connected, outlook.email || 'Authorized via OAuth');
   });
 }
 document.getElementById('openSettingsBtn').addEventListener('click', openSettingsModal);
@@ -835,4 +836,14 @@ document.getElementById('gmail-disconnect-btn').addEventListener('click', () => 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ disconnect: true }),
   }).then(r => r.json()).then(data => { if (data.ok) setSourceConnected('gmail', false); });
+});
+document.getElementById('outlook-connect-btn').addEventListener('click', () => {
+  window.location.href = '/settings/sources/outlook/auth';
+});
+document.getElementById('outlook-disconnect-btn').addEventListener('click', () => {
+  fetch('/settings/sources/outlook', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ disconnect: true }),
+  }).then(r => r.json()).then(data => { if (data.ok) setSourceConnected('outlook', false); });
 });
