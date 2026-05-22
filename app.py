@@ -21,6 +21,7 @@ from db import (
     get_user_state,
     set_user_state,
     clear_user_state,
+    get_user_by_id,
 )
 from pollers.gmail.poller import BACKFILL_PENDING_KEY, BACKFILLED_EMAIL_KEY
 from pollers.digest import poller as digest_poller
@@ -379,11 +380,14 @@ def update_todo(todo_id):
 
 
 @app.route("/digest/preview", methods=["GET"])
-@login_required
 def digest_preview():
     db = get_db()
-    user = current_user()
-    assert user
+    user_id = request.args.get("user_id")
+    if not user_id:
+        return jsonify({"error": "user_id is required"}), 400
+    user = get_user_by_id(db, user_id)
+    if not user:
+        return jsonify({"error": "user not found"}), 404
     now_local = digest_poller._now_local()
     buckets = digest_poller._fetch_buckets(db, user["user_id"], now_local)
     subject, html, text = digest_poller._render(user, buckets, BASE_URL)
