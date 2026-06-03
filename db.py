@@ -385,6 +385,18 @@ def list_active_users(conn: sqlite3.Connection) -> list[dict]:
     ]
 
 
+def list_all_users(conn: sqlite3.Connection) -> list[dict]:
+    """Every signed-up user, regardless of connected sources. Used by the digest,
+    which goes to all users (unconnected ones get a 'connect Gmail' prompt)."""
+    rows = conn.execute(
+        "SELECT user_id, email, name, picture_url FROM users"
+    ).fetchall()
+    return [
+        {"user_id": r[0], "email": r[1], "name": r[2], "picture_url": r[3]}
+        for r in rows
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Per-user state
 # ---------------------------------------------------------------------------

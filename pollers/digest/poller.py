@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from db import get_user_state, set_user_state
+from db import get_source_connection, get_user_state, set_user_state
 
 
 log = logging.getLogger(__name__)
@@ -32,6 +32,8 @@ AGEOUT_DAYS = 7                 # suggestions sitting unacted longer than this s
 SUGGESTION_LIMIT = 15           # cap suggestions shown; urgent items are always shown in full
 TITLE_MAX_CHARS = 70
 LAST_SENT_KEY = "digest_last_sent_date"
+CONNECT_PROMPT_KEY = "digest_connect_prompts_sent"
+CONNECT_PROMPT_MAX = 3          # nudge an unconnected user this many times, then go quiet
 DEFAULT_TIMEZONE = "Asia/Kolkata"
 
 _IMPORTANCE_RANK = {"high": 0, "medium": 1, "low": 2}
@@ -174,9 +176,9 @@ def _fetch_buckets(conn: sqlite3.Connection, user_id: str, now_local: datetime) 
         suggestions.append(item)
 
     urgent.sort(key=lambda i: i["_sort"])  # soonest deadline first
+    # most important first, then freshest within a tier (newest created on top)
     suggestions.sort(
-        key=lambda i: (_IMPORTANCE_RANK.get(i["importance"], 3), i["_sort"]),
-        reverse=False,
+        key=lambda i: (_IMPORTANCE_RANK.get(i["importance"], 3), -i["_sort"].timestamp()),
     )
 
     def strip(items):
@@ -210,8 +212,50 @@ def _fetch_buckets(conn: sqlite3.Connection, user_id: str, now_local: datetime) 
     }
 
 
-def _render(user: dict, buckets: dict, base_url: str) -> tuple[str, str, str]:
+def _render_connect_prompt(user: dict, base_url: str) -> tuple[str, str, str]:
+    """Email for a signed-up user who hasn't connected Gmail yet — nudge them to."""
+    name = _first_name(user)
+    settings_url = f"{base_url}/settings"
+    subject = "Connect Gmail to start your daily digest"
+
+    html = f"""<!doctype html>
+<html><body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+                   max-width:560px;margin:0 auto;padding:32px 24px;color:#222;">
+  <p style="font-size:18px;margin:0 0 16px 0;">
+    Morning, {escape(name)}. You're signed up — one step left.
+  </p>
+  <p style="font-size:15px;line-height:1.5;margin:0 0 24px 0;color:#444;">
+    Connect your Gmail and each morning I'll surface the emails that actually need
+    action — replies you owe, deadlines, things waiting on you — with the urgent
+    ones up top. Right now I can't see your inbox, so there's nothing to send yet.
+  </p>
+  <p style="margin:24px 0;">
+    <a href="{escape(settings_url)}" style="display:inline-block;background:#1a73e8;color:#fff;
+       padding:12px 22px;border-radius:6px;text-decoration:none;font-weight:600;">
+      Connect Gmail</a>
+  </p>
+  <p style="margin:24px 0 0 0;font-size:13px;color:#888;">
+    Takes about 30 seconds. You can disconnect anytime from Settings.
+  </p>
+</body></html>"""
+
+    text = (
+        f"Morning, {name}. You're signed up — one step left.\n\n"
+        "Connect your Gmail and each morning I'll surface the emails that need "
+        "action, with the urgent ones up top. Right now I can't see your inbox, "
+        "so there's nothing to send yet.\n\n"
+        f"Connect Gmail: {settings_url}\n"
+    )
+    return subject, html, text
+
+
+def _render(
+    user: dict, buckets: dict, base_url: str, gmail_connected: bool = True
+) -> tuple[str, str, str]:
     """Return (subject, html, text)."""
+    if not gmail_connected:
+        return _render_connect_prompt(user, base_url)
+
     name = _first_name(user)
     inbox_url = f"{base_url}/"
     today_str = datetime.now().strftime("%a, %b %-d")
@@ -414,8 +458,31 @@ def poll(conn: sqlite3.Connection, user: dict) -> int:
         print(f"[digest:{label}] skipped: already sent today ({today_str})")
         return 0
 
-    buckets = _fetch_buckets(conn, user_id, now_local)
-    subject, html, text = _render(user, buckets, _base_url())
+    gmail_connected = bool(get_source_connection(conn, user_id, "gmail"))
+    prompts_sent = 0
+
+    if gmail_connected:
+        # Active user → the real digest.
+        buckets = _fetch_buckets(conn, user_id, now_local)
+        subject, html, text = _render(user, buckets, _base_url(), gmail_connected=True)
+        sent_desc = (
+            f"urgent={buckets['urgent']['count']}, "
+            f"suggestions={buckets['suggestions']['count']}, "
+            f"closed_yesterday={buckets['closed_yesterday']}"
+        )
+    else:
+        # Not connected → a *bounded* nudge to connect, then go quiet. Sending a
+        # contentless prompt daily forever would just train them to ignore us and
+        # erode sender reputation for the users who do engage.
+        prompts_sent = int(get_user_state(conn, user_id, CONNECT_PROMPT_KEY) or 0)
+        if prompts_sent >= CONNECT_PROMPT_MAX:
+            print(
+                f"[digest:{label}] skipped: gmail not connected, "
+                f"connect-prompt cap reached ({prompts_sent}/{CONNECT_PROMPT_MAX})"
+            )
+            return 0
+        subject, html, text = _render_connect_prompt(user, _base_url())
+        sent_desc = f"connect-prompt {prompts_sent + 1}/{CONNECT_PROMPT_MAX}"
 
     try:
         import resend
@@ -432,10 +499,7 @@ def poll(conn: sqlite3.Connection, user: dict) -> int:
         return 0
 
     set_user_state(conn, user_id, LAST_SENT_KEY, today_str)
-    print(
-        f"[digest:{label}] sent "
-        f"(urgent={buckets['urgent']['count']}, "
-        f"suggestions={buckets['suggestions']['count']}, "
-        f"closed_yesterday={buckets['closed_yesterday']})"
-    )
+    if not gmail_connected:
+        set_user_state(conn, user_id, CONNECT_PROMPT_KEY, str(prompts_sent + 1))
+    print(f"[digest:{label}] sent ({sent_desc})")
     return 1
