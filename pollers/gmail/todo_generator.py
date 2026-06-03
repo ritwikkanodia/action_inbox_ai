@@ -32,7 +32,7 @@ Respond with JSON only, matching this exact schema:
     "goal": the inferred goal of the action
     "title": "<action verb + specific subject, e.g. 'Reply to Sarah re: Q3 budget', 'Review contract from Acme', 'Confirm Thursday meeting with Alex'>",
     "suggested_action": "<what the user should do>",
-    "urgency": "<low|medium|high>",
+    "importance": "<low|medium|high — how much the outcome matters / the consequences of not doing it, independent of any deadline>",
     "estimated_time_minutes": <integer>,
     "due_date": "<ISO 8601 UTC timestamp if a deadline can be inferred, otherwise null>",
     "relevant_link": "<a URL from the email body the user needs to click to complete the action (e.g. doc, form, PR, invoice). null if no such link exists>"
@@ -44,7 +44,8 @@ Set "todo" to null if "should_generate_todo" is false.
 Guidelines:
 - Only generate a todo if the email genuinely requires a response or action from the user.
 - Newsletters, notifications, receipts, OTPs, sign in requests and automated messages should not generate todos.
-- If the user has already replied recently, lower the urgency or skip entirely.
+- If the user has already replied recently, lower the importance or skip entirely.
+- "importance" reflects how much the outcome matters (significance / consequences), NOT how soon it's due — time pressure is captured separately by "due_date".
 - "due_date" should only be set if a concrete deadline is mentioned or strongly implied (e.g. a meeting time, an explicit deadline).
 """
 

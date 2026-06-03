@@ -12,7 +12,7 @@ def _format_todo(todo: dict) -> str:
         ("Title", todo.get("title")),
         ("Suggested action", todo.get("suggested_action")),
         ("Why this todo exists", todo.get("reasoning")),
-        ("Urgency", todo.get("urgency")),
+        ("Importance", todo.get("importance")),
         ("Due", todo.get("due_date")),
     ]
     return "\n".join(f"{label}: {value}" for label, value in fields if value)

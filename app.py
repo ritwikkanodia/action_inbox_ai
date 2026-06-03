@@ -156,14 +156,14 @@ def index():
     user_id = current_user_id()
     rows = db.execute(
         """
-        SELECT todo_id, title, suggested_action, urgency,
+        SELECT todo_id, title, suggested_action, importance,
                estimated_time_minutes, due_date, relevant_link, reasoning, status, source, decision, created_at, source_meta,
                (ai_thread IS NOT NULL AND ai_thread != '' AND ai_thread != '[]') AS has_ai_thread
         FROM todos
         WHERE user_id = ? AND title IS NOT NULL AND title != ''
         ORDER BY
             CASE status WHEN 'closed' THEN 1 ELSE 0 END,
-            CASE urgency WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+            CASE importance WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
             created_at DESC
         """,
         (user_id,),
@@ -198,18 +198,18 @@ def create_todo():
     title = (data.get("title") or "").strip()
     if not title:
         return jsonify({"error": "title required"}), 400
-    urgency = data.get("urgency", "medium")
-    if urgency not in ("low", "medium", "high"):
-        urgency = "medium"
+    importance = data.get("importance", "medium")
+    if importance not in ("low", "medium", "high"):
+        importance = "medium"
     due_date = data.get("due_date") or None
     suggested_action = (data.get("suggested_action") or "").strip()
     db = get_db()
     user_id = current_user_id()
     assert user_id
-    todo_id = save_user_todo(db, user_id, title, urgency, due_date, suggested_action)
+    todo_id = save_user_todo(db, user_id, title, importance, due_date, suggested_action)
     row = db.execute(
         """
-        SELECT todo_id, title, suggested_action, urgency,
+        SELECT todo_id, title, suggested_action, importance,
                estimated_time_minutes, due_date, relevant_link, reasoning, status,
                source, decision, created_at,
                (ai_thread IS NOT NULL AND ai_thread != '' AND ai_thread != '[]') AS has_ai_thread
@@ -265,7 +265,7 @@ def ask_ai(todo_id):
     user_id = current_user_id()
     assert user_id
     row = db.execute(
-        "SELECT title, suggested_action, reasoning, urgency, due_date, source, ai_thread, source_meta "
+        "SELECT title, suggested_action, reasoning, importance, due_date, source, ai_thread, source_meta "
         "FROM todos WHERE todo_id = ? AND user_id = ?",
         (todo_id, user_id),
     ).fetchone()
@@ -378,7 +378,7 @@ def reset_thread(todo_id):
 @app.route("/todos/<todo_id>", methods=["PATCH"])
 @login_required
 def update_todo(todo_id):
-    ALLOWED = {"due_date", "urgency", "status", "decision", "title"}
+    ALLOWED = {"due_date", "importance", "status", "decision", "title"}
     data = request.get_json(force=True)
     updates = {k: v for k, v in data.items() if k in ALLOWED}
     if not updates:

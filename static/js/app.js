@@ -1,4 +1,4 @@
-const URGENCY_OPTIONS = ['low', 'medium', 'high'];
+const IMPORTANCE_OPTIONS = ['low', 'medium', 'high'];
 const STATUS_OPTIONS  = ['open', 'ongoing', 'closed'];
 const AI_SOURCES = ['gmail', 'fathom', 'browser_history', 'system'];
 
@@ -182,8 +182,8 @@ function applyFieldChange(t, field, newVal) {
     if (field === 'status') {
       row.classList.remove('open', 'ongoing', 'closed');
       if (newVal) row.classList.add(newVal);
-    } else if (field === 'urgency') {
-      row.dataset.urgency = newVal || 'none';
+    } else if (field === 'importance') {
+      row.dataset.importance = newVal || 'none';
     } else if (field === 'due_date') {
       let dueEl = row.querySelector('.row-due');
       if (newVal) {
@@ -213,8 +213,8 @@ function applyFieldChange(t, field, newVal) {
       dCell.dataset.value = newVal || '';
       if (field === 'status') {
         dCell.innerHTML = `<span class="status ${newVal || ''}">${newVal || '—'}</span>`;
-      } else if (field === 'urgency') {
-        dCell.className = `editable urgency ${newVal || ''}`;
+      } else if (field === 'importance') {
+        dCell.className = `editable importance ${newVal || ''}`;
         dCell.textContent = newVal || '—';
       } else if (field === 'due_date') {
         dCell.textContent = fmtDue(newVal);
@@ -239,7 +239,7 @@ function bindEditable(cell, todo) {
     }
 
     let widget;
-    if (field === 'urgency')      widget = makeSelect(URGENCY_OPTIONS, value, commit);
+    if (field === 'importance')      widget = makeSelect(IMPORTANCE_OPTIONS, value, commit);
     else if (field === 'status')  widget = makeSelect(STATUS_OPTIONS, value, commit);
     else                          widget = makeDateInput(value, commit);
 
@@ -314,8 +314,8 @@ function renderDetail(t) {
         <dt>Status</dt>
         <dd><span class="editable" data-field="status" data-value="${t.status || ''}"><span class="status ${t.status || ''}">${t.status || '—'}</span></span></dd>
 
-        <dt>Urgency</dt>
-        <dd><span class="editable urgency ${t.urgency || ''}" data-field="urgency" data-value="${t.urgency || ''}">${t.urgency || '—'}</span></dd>
+        <dt>Importance</dt>
+        <dd><span class="editable importance ${t.importance || ''}" data-field="importance" data-value="${t.importance || ''}">${t.importance || '—'}</span></dd>
 
         <dt>Due</dt>
         <dd><span class="editable" data-field="due_date" data-value="${t.due_date || ''}">${fmtDue(t.due_date)}</span></dd>
@@ -691,7 +691,7 @@ const saveBtnNew   = document.getElementById('saveNewTodo');
 
 function resetForm() {
   document.getElementById('ntTitle').value = '';
-  document.getElementById('ntUrgency').value = 'medium';
+  document.getElementById('ntImportance').value = 'medium';
   document.getElementById('ntDueDate').value = '';
   document.getElementById('ntAction').value = '';
   newTodoForm.classList.remove('open');
@@ -707,7 +707,7 @@ function buildRow(t) {
   const row = document.createElement('div');
   row.className = `todo-row ${t.status || 'open'}`;
   row.dataset.id = t.todo_id;
-  row.dataset.urgency = t.urgency || 'none';
+  row.dataset.importance = t.importance || 'none';
   if (t.relevant_link) row.dataset.link = t.relevant_link;
   row.innerHTML = `
     <div class="row-body">
@@ -724,7 +724,7 @@ function buildRow(t) {
     </div>
     <div class="row-inline-actions" data-id="${t.todo_id}">
       <span class="row-source" data-source="${t.source || 'user'}">${sourceLabel(t.source)}</span>
-      <span class="row-act editable" data-field="urgency" data-value="${t.urgency || ''}" title="Urgency">${t.urgency || '—'}</span>
+      <span class="row-act editable" data-field="importance" data-value="${t.importance || ''}" title="Importance">${t.importance || '—'}</span>
       <span class="row-act editable" data-field="status" data-value="${t.status || ''}" title="Status">${t.status || '—'}</span>
       <span class="row-act editable" data-field="due_date" data-value="${t.due_date || ''}" title="Due date">${t.due_date ? fmtDue(t.due_date) : 'set due'}</span>
     </div>
@@ -735,14 +735,14 @@ function buildRow(t) {
 saveBtnNew.addEventListener('click', () => {
   const title = document.getElementById('ntTitle').value.trim();
   if (!title) { document.getElementById('ntTitle').focus(); return; }
-  const urgency = document.getElementById('ntUrgency').value;
+  const importance = document.getElementById('ntImportance').value;
   const dueDateRaw = document.getElementById('ntDueDate').value;
   const due_date = dueDateRaw ? new Date(dueDateRaw).toISOString() : null;
   const suggested_action = document.getElementById('ntAction').value.trim();
   fetch('/todos', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ title, urgency, due_date, suggested_action }),
+    body: JSON.stringify({ title, importance, due_date, suggested_action }),
   }).then(r => r.json().then(data => ({ ok: r.ok, data }))).then(({ ok, data }) => {
     if (!ok || !data.todo) { alert('Failed to save todo'); return; }
     const t = data.todo;

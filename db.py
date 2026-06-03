@@ -101,7 +101,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             dedup_key              TEXT,
             title                  TEXT,
             suggested_action       TEXT,
-            urgency                TEXT CHECK (urgency IS NULL OR urgency IN ('low','medium','high')),
+            importance             TEXT CHECK (importance IS NULL OR importance IN ('low','medium','high')),
             estimated_time_minutes INTEGER,
             due_date               TEXT,
             relevant_link          TEXT,
@@ -117,6 +117,20 @@ def init_db(conn: sqlite3.Connection) -> None:
     """)
 
     cols = {row[1] for row in conn.execute("PRAGMA table_info(todos)").fetchall()}
+
+    # The AI-inferred low/medium/high signal is really *importance* (how much it
+    # matters), not urgency — urgency is derived from due_date at read time. Rename
+    # the legacy column in place; SQLite carries existing values and updates the
+    # CHECK constraint automatically. No data migration needed.
+    if "urgency" in cols and "importance" not in cols:
+        try:
+            conn.execute("ALTER TABLE todos RENAME COLUMN urgency TO importance")
+        except sqlite3.OperationalError:
+            # Another process (poller vs. web worker on shared volume) won the
+            # race and already renamed it — safe to ignore.
+            pass
+        cols.discard("urgency")
+        cols.add("importance")
 
     if "draft" in cols:
         conn.execute("ALTER TABLE todos DROP COLUMN draft")
@@ -503,7 +517,7 @@ def set_system_last_polled_at(conn: sqlite3.Connection, user_id: str, ts: str) -
 # Todos
 # ---------------------------------------------------------------------------
 
-_VALID_URGENCY = {"low", "medium", "high"}
+_VALID_IMPORTANCE = {"low", "medium", "high"}
 
 
 def _save_todo(
@@ -515,7 +529,7 @@ def _save_todo(
     dedup_key: str | None,
     title: str | None,
     suggested_action: str | None = None,
-    urgency: str | None = None,
+    importance: str | None = None,
     estimated_time_minutes: int | None = None,
     due_date: str | None = None,
     relevant_link: str | None = None,
@@ -523,20 +537,20 @@ def _save_todo(
     source_meta: dict | None = None,
     decision: str | None = None,
 ) -> bool:
-    if urgency not in _VALID_URGENCY:
-        urgency = None
+    if importance not in _VALID_IMPORTANCE:
+        importance = None
     now = _now()
     before = conn.total_changes
     conn.execute(
         """
         INSERT OR IGNORE INTO todos (
-            todo_id, user_id, source, dedup_key, title, suggested_action, urgency,
+            todo_id, user_id, source, dedup_key, title, suggested_action, importance,
             estimated_time_minutes, due_date, relevant_link, reasoning,
             status, decision, source_meta, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
         """,
         (
-            todo_id, user_id, source, dedup_key, title, suggested_action, urgency,
+            todo_id, user_id, source, dedup_key, title, suggested_action, importance,
             estimated_time_minutes, due_date, relevant_link, reasoning or "",
             decision,
             json.dumps(source_meta) if source_meta else None, now, now,
@@ -587,7 +601,7 @@ def save_browser_history_todo(
         dedup_key=dedup,
         title=title,
         suggested_action=todo.get("suggested_action", ""),
-        urgency=todo.get("urgency", "medium"),
+        importance=todo.get("importance", "medium"),
         relevant_link=todo.get("relevant_link", ""),
         reasoning=todo.get("reasoning", ""),
         source_meta={"normalized_url": norm, "raw_url": todo.get("relevant_link", "")},
@@ -612,7 +626,7 @@ def save_fathom_todo(
         dedup_key=dedup,
         title=item.get("description", "(no description)"),
         suggested_action=item.get("description", ""),
-        urgency="medium",
+        importance="medium",
         relevant_link=item.get("recording_playback_url") or meeting.get("url", ""),
         reasoning=reasoning,
         source_meta={
@@ -690,7 +704,7 @@ def save_todo(
         dedup_key=message_id,
         title=title,
         suggested_action=todo.get("suggested_action"),
-        urgency=todo.get("urgency"),
+        importance=todo.get("importance"),
         estimated_time_minutes=todo.get("estimated_time_minutes"),
         due_date=todo.get("due_date"),
         relevant_link=relevant_link,
@@ -708,7 +722,7 @@ ONBOARDING_TODOS = [
     {
         "dedup_key": "onboarding_email_demo",
         "title": "[Sample] Reply to Acme's contract redline before Friday",
-        "urgency": "high",
+        "importance": "high",
         "due_offset_days": 3,
         "suggested_action": (
             "Acme's legal team sent back the MSA with edits to the indemnity "
@@ -721,13 +735,13 @@ ONBOARDING_TODOS = [
             "what action items extracted from your Gmail look like. Once you "
             "connect Gmail, real emails that need a response, a decision, or "
             "a follow-up will show up here automatically — with the thread, "
-            "urgency, and suggested next step already filled in."
+            "importance, and suggested next step already filled in."
         ),
     },
     {
         "dedup_key": "onboarding_meeting_demo",
         "title": "[Sample] Send Q2 roadmap deck to the design team",
-        "urgency": "medium",
+        "importance": "medium",
         "due_offset_days": 5,
         "suggested_action": (
             "You committed to sharing the Q2 roadmap deck with design after "
@@ -760,7 +774,7 @@ def seed_onboarding_todos(conn: sqlite3.Connection, user_id: str) -> None:
             dedup_key=spec["dedup_key"],
             title=spec["title"],
             suggested_action=spec["suggested_action"],
-            urgency=spec["urgency"],
+            importance=spec["importance"],
             due_date=due.isoformat(),
             reasoning=spec["reasoning"],
             source_meta={"onboarding": True},
@@ -771,7 +785,7 @@ def save_user_todo(
     conn: sqlite3.Connection,
     user_id: str,
     title: str,
-    urgency: str = "medium",
+    importance: str = "medium",
     due_date: str | None = None,
     suggested_action: str = "",
 ) -> str:
@@ -784,7 +798,7 @@ def save_user_todo(
         dedup_key=None,
         title=title,
         suggested_action=suggested_action,
-        urgency=urgency,
+        importance=importance,
         due_date=due_date,
         reasoning="",
         decision="accepted",
@@ -826,7 +840,7 @@ def save_system_todo(conn: sqlite3.Connection, user_id: str, todo: dict) -> bool
         dedup_key=None,
         title=title,
         suggested_action=todo.get("suggested_action", ""),
-        urgency="low",
+        importance="low",
         reasoning=todo.get("reasoning", ""),
     )
 

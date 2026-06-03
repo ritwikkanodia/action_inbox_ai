@@ -106,7 +106,7 @@ def _poll_gmail_for_user(conn: sqlite3.Connection, user: dict) -> None:
         todo = result["todo"]
         if saved:
             counts["todo"] += 1
-            print(f"{prefix} → TODO[{todo['urgency']}] {_truncate(todo['title'], 60)}")
+            print(f"{prefix} → TODO[{todo.get('importance')}] {_truncate(todo['title'], 60)}")
         else:
             counts["dup"] += 1
             print(f"{prefix} → dup")

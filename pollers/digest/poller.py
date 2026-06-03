@@ -34,7 +34,7 @@ TITLE_MAX_CHARS = 70
 LAST_SENT_KEY = "digest_last_sent_date"
 DEFAULT_TIMEZONE = "Asia/Kolkata"
 
-_URGENCY_RANK = {"high": 0, "medium": 1, "low": 2}
+_IMPORTANCE_RANK = {"high": 0, "medium": 1, "low": 2}
 
 
 def _base_url() -> str:
@@ -126,7 +126,7 @@ def _fetch_buckets(conn: sqlite3.Connection, user_id: str, now_local: datetime) 
 
     rows = conn.execute(
         """
-        SELECT todo_id, title, due_date, urgency, relevant_link, created_at
+        SELECT todo_id, title, due_date, importance, relevant_link, created_at
         FROM todos
         WHERE user_id = ?
           AND status IN ('open', 'ongoing')
@@ -137,14 +137,14 @@ def _fetch_buckets(conn: sqlite3.Connection, user_id: str, now_local: datetime) 
     ).fetchall()
 
     urgent, suggestions = [], []
-    for todo_id, title, due_date, urgency, link, created_at in rows:
+    for todo_id, title, due_date, importance, link, created_at in rows:
         due_dt = _parse_dt(due_date)
         due_local = due_dt.astimezone(tz) if due_dt is not None else None
         item = {
             "id": todo_id,
             "title": _truncate(title),
             "link": link or inbox_url,
-            "urgency": urgency,
+            "importance": importance,
         }
 
         # Urgent only while the deadline is still ahead and within the window.
@@ -175,7 +175,7 @@ def _fetch_buckets(conn: sqlite3.Connection, user_id: str, now_local: datetime) 
 
     urgent.sort(key=lambda i: i["_sort"])  # soonest deadline first
     suggestions.sort(
-        key=lambda i: (_URGENCY_RANK.get(i["urgency"], 3), i["_sort"]),
+        key=lambda i: (_IMPORTANCE_RANK.get(i["importance"], 3), i["_sort"]),
         reverse=False,
     )
 
