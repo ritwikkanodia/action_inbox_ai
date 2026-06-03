@@ -135,6 +135,9 @@ def complete_login(
     # Clean up ephemeral login PKCE state and establish the user session.
     session.pop("login_oauth_state", None)
     session.pop("login_oauth_code_verifier", None)
+    # Make the session durable so users stay signed in across browser restarts;
+    # lifetime is capped by app.permanent_session_lifetime.
+    session.permanent = True
     session["user_id"] = user_id
     session["user_email"] = email
     session["user_name"] = info.get("name")

@@ -1,7 +1,7 @@
 import json
 import os
 import sqlite3
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from dotenv import load_dotenv
 
@@ -47,6 +47,9 @@ if BASE_URL.startswith("http://localhost") or BASE_URL.startswith("http://127.0.
 app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(32))
+# Keep users signed in across browser restarts. Sessions are marked permanent
+# at login (see auth.complete_login); this caps their lifetime.
+app.permanent_session_lifetime = timedelta(days=30)
 
 # Redirect URIs are computed per-request to match the hostname the browser
 # used. This avoids cookie / PKCE state mismatches when the host differs
