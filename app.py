@@ -48,8 +48,9 @@ app = Flask(__name__)
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", os.urandom(32))
 
-GMAIL_REDIRECT_URI = f"{BASE_URL}/oauth/gmail/callback"
-LOGIN_REDIRECT_URI = f"{BASE_URL}/oauth/login/callback"
+# Redirect URIs are computed per-request to match the hostname the browser
+# used. This avoids cookie / PKCE state mismatches when the host differs
+# (e.g. 127.0.0.1 vs localhost).
 
 
 @app.template_filter("fmt_dt")
@@ -82,9 +83,9 @@ def get_db():
 
 
 def public_request_url() -> str:
-    query = request.query_string.decode("utf-8")
-    suffix = f"?{query}" if query else ""
-    return f"{BASE_URL}{request.path}{suffix}"
+    # Use the actual incoming request URL so callback handling matches
+    # the hostname the browser used (avoids cookie / state mismatch).
+    return request.url
 
 
 @app.teardown_appcontext
@@ -124,12 +125,14 @@ def login_page():
 
 @app.route("/oauth/login/start")
 def login_start():
-    return start_login(LOGIN_REDIRECT_URI)
+    redirect_uri = request.url_root.rstrip("/") + "/oauth/login/callback"
+    return start_login(redirect_uri)
 
 
 @app.route("/oauth/login/callback")
 def login_callback():
-    user_id, error = complete_login(LOGIN_REDIRECT_URI, get_db(), public_request_url())
+    redirect_uri = request.url_root.rstrip("/") + "/oauth/login/callback"
+    user_id, error = complete_login(redirect_uri, get_db(), request.url)
     if error:
         return f"Login failed: {error}", 400
     return redirect(url_for("index"))
@@ -452,7 +455,8 @@ def get_settings():
 @app.route("/settings/sources/gmail/auth")
 @login_required
 def gmail_auth():
-    flow = get_auth_flow(GMAIL_REDIRECT_URI)
+    redirect_uri = request.url_root.rstrip("/") + "/oauth/gmail/callback"
+    flow = get_auth_flow(redirect_uri)
     auth_url, state = flow.authorization_url(
         access_type="offline",
         prompt="consent",
@@ -473,13 +477,14 @@ def gmail_callback():
             400,
         )
 
+    redirect_uri = request.url_root.rstrip("/") + "/oauth/gmail/callback"
     flow = get_auth_flow(
-        GMAIL_REDIRECT_URI,
+        redirect_uri,
         state=oauth_state,
         code_verifier=code_verifier,
     )
     flow.fetch_token(
-        authorization_response=public_request_url(),
+        authorization_response=request.url,
     )
     creds = flow.credentials
     db = get_db()

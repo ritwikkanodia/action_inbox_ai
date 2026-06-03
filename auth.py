@@ -1,12 +1,13 @@
 """Google Sign-In login flow + Flask helpers.
 
-This is intentionally kept separate from the per-source Gmail OAuth
-authorization (`pollers/gmail/auth.py`). Login here only requests the
-minimum scopes needed to identify the user; data-source authorization
-happens later inside the Settings modal.
+This file implements the user sign-in flow. It requests Gmail read access
+during the initial OAuth roundtrip so the app can persist Gmail credentials
+immediately when the user grants consent. The per-source Gmail reconnect
+flow in `pollers/gmail/auth.py` is still available for reconnects.
 """
 
 import os
+import json
 from functools import wraps
 from typing import Callable
 
@@ -14,13 +15,18 @@ from flask import jsonify, redirect, request, session, url_for
 from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as id_token_lib
 from google_auth_oauthlib.flow import Flow
+from googleapiclient.discovery import build as google_build
 
-from db import seed_onboarding_todos, upsert_user
+from db import seed_onboarding_todos, upsert_user, set_source_credentials
+
 
 LOGIN_SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
+    # Request Gmail read access during initial sign-in so we can persist
+    # credentials in a single roundtrip when the user grants consent.
+    "https://www.googleapis.com/auth/gmail.readonly",
 ]
 
 # Google sometimes echoes scopes back in a different order/form; the strict
@@ -67,9 +73,12 @@ def _login_flow(
 
 def start_login(redirect_uri: str):
     flow = _login_flow(redirect_uri)
+    # Request offline access and ask for consent so we have a better chance
+    # of receiving a refresh token during the initial sign-in. Users may
+    # still decline Gmail access; the callback will handle that case.
     auth_url, state = flow.authorization_url(
-        access_type="online",
-        prompt="select_account",
+        access_type="offline",
+        prompt="consent",
     )
     session["login_oauth_state"] = state
     session["login_oauth_code_verifier"] = flow.code_verifier
@@ -123,12 +132,36 @@ def complete_login(
         seed_onboarding_todos(db, user_id)
         session["fresh_signup"] = True
 
+    # Clean up ephemeral login PKCE state and establish the user session.
     session.pop("login_oauth_state", None)
     session.pop("login_oauth_code_verifier", None)
     session["user_id"] = user_id
     session["user_email"] = email
     session["user_name"] = info.get("name")
     session["user_picture"] = info.get("picture")
+
+    # If the OAuth response included Gmail scopes and tokens, persist them
+    # as a `source_connections` row for this user so the poller can run.
+    creds = getattr(flow, "credentials", None)
+    try:
+        if creds and getattr(creds, "scopes", None):
+            scopes = set(creds.scopes or [])
+            if "https://www.googleapis.com/auth/gmail.readonly" in scopes:
+                creds_dict = json.loads(creds.to_json())
+                try:
+                    gmail_svc = google_build("gmail", "v1", credentials=creds)
+                    profile = gmail_svc.users().getProfile(userId="me").execute()
+                    creds_dict["connected_email"] = profile.get("emailAddress")
+                except Exception:
+                    # If the profile call fails, still save whatever tokens we
+                    # received; connected_email is optional and will be filled
+                    # by a later reconnect or by the poller.
+                    pass
+                set_source_credentials(db, user_id, "gmail", "oauth2", creds_dict)
+    except Exception:
+        # Non-fatal: ensure login completes even if saving creds fails.
+        pass
+
     return user_id, None
 
 
