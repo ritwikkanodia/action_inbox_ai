@@ -17,7 +17,7 @@
       --accent-soft: #f0e5e2;
       --accent-deep: #5a201d;
 
-      /* Urgency tones, dialed back to fit paper palette */
+      /* Importance tones, dialed back to fit paper palette */
       --u-high:   #7a2e2a;
       --u-medium: #a8753a;
       --u-low:    #5b6f4a;
@@ -201,7 +201,7 @@
     }
     #app.list-only .row-meta { display: none; }
 
-    /* In list-only mode: no left urgency edge bar, no persistent "selected" highlight */
+    /* In list-only mode: no left importance edge bar, no persistent "selected" highlight */
     #app.list-only .todo-row::before { display: none; }
     #app.list-only .todo-row.selected { background: transparent; }
     #app.list-only .todo-row.selected:hover { background: rgba(216, 209, 191, 0.25); }
@@ -210,7 +210,7 @@
     /* Column widths shared by header + each row's action strip */
     :root {
       --col-source:   84px;
-      --col-urgency:  72px;
+      --col-importance:  72px;
       --col-status:   80px;
       --col-due:      150px;
       --col-gap:      8px;
@@ -279,7 +279,7 @@
     .row-act.reject { color: var(--u-high); border-color: var(--u-high); }
     .row-act.reject:hover { background: rgba(122,46,42,0.10); color: var(--u-high); border-color: var(--u-high); }
 
-    .row-act.editable[data-field="urgency"]  { width: var(--col-urgency); text-transform: capitalize; }
+    .row-act.editable[data-field="importance"]  { width: var(--col-importance); text-transform: capitalize; }
     .row-act.editable[data-field="status"]   { width: var(--col-status); text-transform: capitalize; }
     .row-act.editable[data-field="due_date"] { width: var(--col-due); }
 
@@ -309,10 +309,10 @@
     .row-source[data-source="browser_history"] { color: var(--pill-green-fg); }
     .row-source[data-source="system"]          { color: var(--pill-amber-fg); }
 
-    /* Color coding for urgency pill */
-    .row-act.editable[data-field="urgency"][data-value="high"]   { color: var(--u-high);   border-color: var(--u-high);   background: rgba(122,46,42,0.06); }
-    .row-act.editable[data-field="urgency"][data-value="medium"] { color: var(--u-medium); border-color: var(--u-medium); background: rgba(168,117,58,0.07); }
-    .row-act.editable[data-field="urgency"][data-value="low"]    { color: var(--u-low);    border-color: var(--u-low);    background: rgba(91,111,74,0.07); }
+    /* Color coding for importance pill */
+    .row-act.editable[data-field="importance"][data-value="high"]   { color: var(--u-high);   border-color: var(--u-high);   background: rgba(122,46,42,0.06); }
+    .row-act.editable[data-field="importance"][data-value="medium"] { color: var(--u-medium); border-color: var(--u-medium); background: rgba(168,117,58,0.07); }
+    .row-act.editable[data-field="importance"][data-value="low"]    { color: var(--u-low);    border-color: var(--u-low);    background: rgba(91,111,74,0.07); }
 
     /* Color coding for status pill */
     .row-act.editable[data-field="status"][data-value="open"]    { background: var(--pill-blue-bg);  color: var(--pill-blue-fg);  border-color: transparent; }
@@ -362,7 +362,7 @@
     }
     .list-header .lh-cell + .lh-cell { margin-left: var(--col-gap); }
     .list-header .lh-source   { width: var(--col-source); margin-left: 16px; text-align: left; }
-    .list-header .lh-urgency  { width: var(--col-urgency); }
+    .list-header .lh-importance  { width: var(--col-importance); }
     .list-header .lh-status   { width: var(--col-status); }
     .list-header .lh-due      { width: var(--col-due); }
     .list-header .lh-decision { width: 0; }
@@ -397,7 +397,7 @@
       background: var(--paper-deep);
     }
 
-    /* Urgency now shown as a thin left edge-bar, not a dot */
+    /* Importance now shown as a thin left edge-bar, not a dot */
     .todo-row::before {
       content: '';
       position: absolute;
@@ -410,10 +410,10 @@
       background: var(--accent);
       width: 3px;
     }
-    .todo-row[data-urgency="high"]::before   { background: var(--u-high); }
-    .todo-row[data-urgency="medium"]::before { background: var(--u-medium); }
-    .todo-row[data-urgency="low"]::before    { background: var(--u-low); }
-    .todo-row.selected[data-urgency]::before { background: var(--accent); }
+    .todo-row[data-importance="high"]::before   { background: var(--u-high); }
+    .todo-row[data-importance="medium"]::before { background: var(--u-medium); }
+    .todo-row[data-importance="low"]::before    { background: var(--u-low); }
+    .todo-row.selected[data-importance]::before { background: var(--accent); }
 
     .row-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
     .row-title {
@@ -605,14 +605,14 @@
     .status.ongoing { background: var(--pill-amber-bg); color: var(--pill-amber-fg); }
     .status.closed  { background: var(--pill-green-bg); color: var(--pill-green-fg); }
 
-    .urgency {
+    .importance {
       font-family: var(--mono);
       font-size: 11px;
       letter-spacing: 0.04em;
     }
-    .urgency.high   { color: var(--u-high); }
-    .urgency.medium { color: var(--u-medium); }
-    .urgency.low    { color: var(--u-low); }
+    .importance.high   { color: var(--u-high); }
+    .importance.medium { color: var(--u-medium); }
+    .importance.low    { color: var(--u-low); }
 
     .editable { cursor: pointer; transition: color 0.15s; }
     .editable:hover {

@@ -51,7 +51,7 @@
     <div class="new-todo-form" id="newTodoForm">
       <div class="form-row">
         <input type="text" id="ntTitle" placeholder="What needs to be done?" autocomplete="off">
-        <select id="ntUrgency">
+        <select id="ntImportance">
           <option value="low">Low</option>
           <option value="medium" selected>Medium</option>
           <option value="high">High</option>
@@ -72,7 +72,7 @@
         <span class="lh-task">Task</span>
       </div>
       <div class="lh-cell lh-source">Source</div>
-      <div class="lh-cell lh-urgency">Urgency</div>
+      <div class="lh-cell lh-importance">Importance</div>
       <div class="lh-cell lh-status">Status</div>
       <div class="lh-cell lh-due">Due</div>
       <div class="lh-cell lh-decision"></div>
@@ -88,7 +88,7 @@
         {% set src_label = 'browser' if t.source == 'browser_history' else ('system' if t.source == 'system' else (t.source or 'gmail')) %}
         <div class="todo-row {{ t.status }}{% if t.decision == 'rejected' %} rejected-todo{% endif %}{% if pending %} pending-decision{% endif %}"
              data-id="{{ t.todo_id }}"
-             data-urgency="{{ t.urgency or 'none' }}"
+             data-importance="{{ t.importance or 'none' }}"
              {% if t.relevant_link %}data-link="{{ t.relevant_link }}"{% endif %}>
           <div class="row-body">
             <div class="row-title">
@@ -105,7 +105,7 @@
           </div>
           <div class="row-inline-actions" data-id="{{ t.todo_id }}">
             <span class="row-source" data-source="{{ t.source or 'gmail' }}">{{ src_label }}</span>
-            <span class="row-act editable" data-field="urgency"  data-value="{{ t.urgency or '' }}"  title="Urgency">{{ t.urgency or '—' }}</span>
+            <span class="row-act editable" data-field="importance"  data-value="{{ t.importance or '' }}"  title="Importance">{{ t.importance or '—' }}</span>
             <span class="row-act editable" data-field="status"   data-value="{{ t.status or '' }}"   title="Status">{{ t.status or '—' }}</span>
             <span class="row-act editable" data-field="due_date" data-value="{{ t.due_date or '' }}" title="Due date">{% if t.due_date %}{{ t.due_date | fmt_dt }}{% else %}set due{% endif %}</span>
             {% if pending %}

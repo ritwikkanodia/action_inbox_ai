@@ -22,7 +22,7 @@ from pollers.fathom import poller as fathom_poller
 from pollers.browser import poller as browser_history_poller
 from pollers.system import poller as system_poller
 from pollers.digest import poller as digest_poller
-from db import init_db, list_active_users, save_todo
+from db import init_db, list_active_users, list_all_users, save_todo
 
 DB_PATH = os.environ.get("DB_PATH", "gmail_events.db")
 POLL_INTERVAL_SECONDS = 30
@@ -106,7 +106,7 @@ def _poll_gmail_for_user(conn: sqlite3.Connection, user: dict) -> None:
         todo = result["todo"]
         if saved:
             counts["todo"] += 1
-            print(f"{prefix} → TODO[{todo['urgency']}] {_truncate(todo['title'], 60)}")
+            print(f"{prefix} → TODO[{todo.get('importance')}] {_truncate(todo['title'], 60)}")
         else:
             counts["dup"] += 1
             print(f"{prefix} → dup")
@@ -164,7 +164,11 @@ def main():
                     except Exception as exc:
                         print(f"[system:{user_label}] error: {exc}")
 
-                if "morning_digest" in enabled_sources:
+            # The digest goes to *every* signed-up user, not just those with a
+            # connected source — unconnected users get a "connect Gmail" prompt.
+            if "morning_digest" in enabled_sources:
+                for user in list_all_users(conn):
+                    user_label = user.get("email") or user["user_id"][:8]
                     try:
                         digest_poller.poll(conn, user)
                     except Exception as exc:
