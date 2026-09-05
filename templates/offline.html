@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Offline — Inbox Todos</title>
+  <meta name="theme-color" content="#7a2e2a">
+  <link rel="icon" href="{{ url_for('static', filename='icons/favicon-32.png') }}" sizes="32x32">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: #f5f0e4;
+      color: #1d1a14;
+      font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .card {
+      background: #fff;
+      border: 1px solid #d8d1bf;
+      border-radius: 12px;
+      padding: 40px 36px;
+      width: min(380px, 92vw);
+      text-align: center;
+    }
+
+    .card img { width: 56px; height: 56px; border-radius: 12px; }
+    .card h1 { font-size: 18px; font-weight: 500; margin: 18px 0 8px; }
+    .card p { color: #8a8576; line-height: 1.5; }
+
+    .retry {
+      margin-top: 24px;
+      background: #7a2e2a;
+      color: #f5f0e4;
+      border: 0;
+      border-radius: 8px;
+      padding: 10px 20px;
+      font: inherit;
+      cursor: pointer;
+    }
+    .retry:hover { background: #5a201d; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <img src="{{ url_for('static', filename='icons/icon-192.png') }}" alt="">
+    <h1>You're offline</h1>
+    <p>Inbox Todos needs a connection to load your list. Reconnect and try again.</p>
+    <button class="retry" onclick="location.reload()">Try again</button>
+  </div>
+</body>
+</html>

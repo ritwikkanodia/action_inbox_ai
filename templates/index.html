@@ -4,6 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Inbox Todos</title>
+  <meta name="theme-color" content="#7a2e2a">
+  <meta name="description" content="Your inbox, meetings and notes turned into a single list of things to actually do.">
+  <link rel="manifest" href="{{ url_for('manifest') }}">
+  <link rel="icon" href="{{ url_for('static', filename='icons/favicon-32.png') }}" sizes="32x32">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Inbox">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -28,6 +37,7 @@
   <div class="header-right">
     <span class="count" id="todoCount">{{ todos|length }}</span>
     <button class="view-toggle-btn" id="viewToggleBtn" title="Toggle view" aria-label="Toggle view">List</button>
+    <button class="new-todo-btn" id="installAppBtn" hidden>Install app</button>
     <button class="new-todo-btn" id="openSettingsBtn">Settings</button>
     <button class="new-todo-btn" id="openFormBtn">+ New</button>
     {% if user %}
@@ -178,5 +188,6 @@
 <script id="todos-data" type="application/json">{{ todos_json | safe }}</script>
 <script>window.__FRESH_SIGNUP = {{ 'true' if fresh_signup else 'false' }};</script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
+<script src="{{ url_for('static', filename='js/pwa.js') }}" defer></script>
 </body>
 </html>

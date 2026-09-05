@@ -9,7 +9,17 @@ load_dotenv(override=True)
 
 from agent import resolve_todo
 
-from flask import Flask, g, render_template, request, jsonify, redirect, session, url_for
+from flask import (
+    Flask,
+    g,
+    render_template,
+    request,
+    jsonify,
+    redirect,
+    send_from_directory,
+    session,
+    url_for,
+)
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from db import (
@@ -112,6 +122,43 @@ def track_page_view():
         record_page_view(get_db(), user_id, request.path)
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# PWA (installable web app)
+# ---------------------------------------------------------------------------
+#
+# The manifest and service worker are public — no @login_required. Chrome
+# fetches both before the user has a session, and a redirect to /login would
+# make the app non-installable.
+
+
+@app.route("/manifest.webmanifest")
+def manifest():
+    return send_from_directory(
+        app.static_folder,
+        "manifest.webmanifest",
+        mimetype="application/manifest+json",
+    )
+
+
+@app.route("/sw.js")
+def service_worker():
+    # Served from the root so the worker's scope covers the whole app; a
+    # worker under /static/ could only control /static/.
+    response = send_from_directory(
+        os.path.join(app.static_folder, "js"),
+        "sw.js",
+        mimetype="text/javascript",
+    )
+    response.headers["Cache-Control"] = "no-cache"
+    response.headers["Service-Worker-Allowed"] = "/"
+    return response
+
+
+@app.route("/offline")
+def offline():
+    return render_template("offline.html")
 
 
 # ---------------------------------------------------------------------------
