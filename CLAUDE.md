@@ -103,7 +103,9 @@ Responses API:
 
 - `resolver.py` builds an `Agent` with `WebSearchTool` plus Gmail tools
   (`search_email_threads`, `fetch_email_thread`) and runs it via `Runner.run_sync`.
-  `local_file_tools` exists in `agent/tools/local_files.py` but is currently commented out.
+  `local_file_tools` (`agent/tools/local_files.py`, Spotlight-backed `search_local_files` /
+  `read_local_file`, with GPT-vision OCR fallback for scanned PDFs) is always wired in but
+  self-gates on `LOCAL_SEARCH_ROOT` — it returns no tools at all when that env var is unset.
   A `use_browser` tool (`agent/tools/browser/`, Playwright-driven, persistent Chromium profile
   at `~/.action_inbox_ai/chrome-profile`) is wired in only when `ENABLE_BROWSER_AGENT` is set —
   off by default since a real Chromium window isn't safe to assume in the deployed container.

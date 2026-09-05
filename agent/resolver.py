@@ -6,7 +6,7 @@ from agents import Agent, Runner, WebSearchTool
 from agent.input_builder import build_initial_inputs
 from agent.prompt import INSTRUCTIONS
 from agent.tools.email import gmail_tools
-# from agent.tools.local_files import local_file_tools
+from agent.tools.local_files import local_file_tools
 
 # Playwright needs a real display/profile to drive Chromium, which isn't safe to
 # assume in the deployed container — opt in locally via .env.
@@ -16,7 +16,7 @@ ENABLE_BROWSER_AGENT = os.environ.get("ENABLE_BROWSER_AGENT", "").strip().lower(
 def _build_agent(user_id: str) -> Agent:
     tools: list[Any] = [WebSearchTool()]
     tools.extend(gmail_tools(user_id))
-    # tools.extend(local_file_tools())
+    tools.extend(local_file_tools())
     if ENABLE_BROWSER_AGENT:
         from agent.tools.browser import use_browser
         tools.append(use_browser)
