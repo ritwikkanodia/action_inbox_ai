@@ -38,7 +38,8 @@ just connected ones, so unconnected users get a "connect Gmail" nudge instead of
 (`/manifest.webmanifest`, `/sw.js`, `/offline`) — Chrome fetches those before a session
 exists, and a redirect to `/login` would make the app non-installable. Key routes:
 
-- `GET /` — todos for the current user, ordered closed-last, then importance, then recency
+- `GET /` — todos for the current user, ordered closed/archived-last, then importance, then
+  recency
 - `POST /todos` — user-entered todo (`source='user'`)
 - `PATCH /todos/<id>` — `due_date`, `importance`, `status`, `decision`
 - `POST /todos/<id>/ask-ai` — one agent turn; posting with no message returns the existing
@@ -71,12 +72,19 @@ and prompts re-auth. Don't swallow that — the clear-and-reprompt is the intend
   bookkeeping, backfill flags. (`state` is the legacy single-user table, migrated away from.)
 - `source_connections` — per-user, per-source credentials
 - `events` — raw `GmailEvent` payloads as JSON, append-only
-- `todos` — the unified list. `source` ∈ `gmail|fathom|browser_history|system|user`.
+- `todos` — the unified list. `source` ∈ `gmail|fathom|browser_history|system|user`;
+  `status` ∈ `open|ongoing|closed|archived`.
 - `page_views` — lightweight analytics behind `/stats`
 
 **Dedup** is a unique partial index on `(user_id, source, dedup_key)` where `dedup_key IS NOT NULL`,
 and the `save_*_todo` helpers use `INSERT OR IGNORE`. Re-polling the same message or meeting is
 always safe. Any new source must set a stable `dedup_key`.
+
+**`archived` is not `closed`.** `closed` means the work is done; `archived` means the user
+never wants to process it. Both drop out of the Open tab and out of the digest (which selects
+`status IN ('open','ongoing')`), but only `closed` counts towards the digest's "done
+yesterday" tally. Archiving is a plain `status` write — there is no separate column. It is
+distinct from `decision = 'rejected'`, which only applies to AI suggestions.
 
 **`importance` is not urgency.** `importance` (`low|medium|high`) is how much the outcome
 matters, independent of timing; urgency is derived from `due_date` at read time. The column was
@@ -85,7 +93,9 @@ renamed from `urgency`, so treat old references as stale.
 **Migrations** run inside `init_db` as idempotent `ALTER TABLE` steps guarded by `PRAGMA
 table_info` checks. Fresh databases get the full schema with `CHECK` constraints; migrated ones
 can't gain constraints without a table rebuild, so the enums are *also* enforced in Python in
-the `save_*` helpers. Keep both in sync when adding an enum value.
+the `save_*` helpers and in the `PATCH /todos/<id>` route. Keep both in sync when adding an
+enum value. Widening an existing `CHECK` needs the table-rebuild step (see the `archived`
+status migration), because SQLite cannot alter a constraint in place.
 
 ## LLM usage
 

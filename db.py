@@ -107,7 +107,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             relevant_link          TEXT,
             reasoning              TEXT,
             status                 TEXT NOT NULL DEFAULT 'open'
-                                       CHECK (status IN ('open','ongoing','closed')),
+                                       CHECK (status IN ('open','ongoing','closed','archived')),
             decision               TEXT CHECK (decision IS NULL OR decision IN ('accepted','rejected')),
             ai_thread              TEXT,
             source_meta            TEXT,
@@ -242,6 +242,67 @@ def init_db(conn: sqlite3.Connection) -> None:
             "UPDATE todos SET user_id = ? WHERE user_id IS NULL",
             (legacy_user_id,),
         )
+
+    # ---- Archived status ---------------------------------------------------
+    # 'archived' is a fourth status, for todos the user never wants to process.
+    # SQLite can't widen a CHECK constraint in place, so databases created with
+    # the three-value constraint need a table rebuild or every archive write
+    # fails. Databases with no CHECK at all (older ALTER TABLE migrations) take
+    # the Python-side enum in the write paths instead.
+    todos_ddl_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'todos'"
+    ).fetchone()
+    todos_ddl = (todos_ddl_row[0] or "") if todos_ddl_row else ""
+    if "CHECK (status IN" in todos_ddl and "'archived'" not in todos_ddl:
+        rebuild_cols = {row[1] for row in conn.execute("PRAGMA table_info(todos)").fetchall()}
+
+        def _carry(col: str) -> str:
+            # NOT NULL columns need a fallback; the rest tolerate a NULL when an
+            # older schema never had them.
+            if col == "updated_at":
+                return "COALESCE(updated_at, created_at)" if col in rebuild_cols else "created_at"
+            if col == "status":
+                return "COALESCE(status, 'open')" if col in rebuild_cols else "'open'"
+            return col if col in rebuild_cols else "NULL"
+
+        carried = (
+            "todo_id", "user_id", "source", "dedup_key", "title", "suggested_action",
+            "importance", "estimated_time_minutes", "due_date", "relevant_link",
+            "reasoning", "status", "decision", "ai_thread", "source_meta",
+            "created_at", "updated_at",
+        )
+        conn.execute("""
+            CREATE TABLE todos_new (
+                todo_id                TEXT PRIMARY KEY,
+                user_id                TEXT,
+                source                 TEXT NOT NULL
+                                           CHECK (source IN ('gmail','fathom','browser_history','system','user')),
+                dedup_key              TEXT,
+                title                  TEXT,
+                suggested_action       TEXT,
+                importance             TEXT CHECK (importance IS NULL OR importance IN ('low','medium','high')),
+                estimated_time_minutes INTEGER,
+                due_date               TEXT,
+                relevant_link          TEXT,
+                reasoning              TEXT,
+                status                 TEXT NOT NULL DEFAULT 'open'
+                                           CHECK (status IN ('open','ongoing','closed','archived')),
+                decision               TEXT CHECK (decision IS NULL OR decision IN ('accepted','rejected')),
+                ai_thread              TEXT,
+                source_meta            TEXT,
+                created_at             TEXT NOT NULL,
+                updated_at             TEXT NOT NULL
+            )
+        """)
+        conn.execute(
+            f"INSERT INTO todos_new ({', '.join(carried)}) SELECT "
+            + ", ".join(_carry(c) for c in carried)
+            + " FROM todos"
+        )
+        conn.execute("DROP TABLE todos")
+        conn.execute("ALTER TABLE todos_new RENAME TO todos")
+        # The dropped table took its indexes with it; the CREATE INDEX block
+        # below rebuilds them.
 
     if has_legacy_state and legacy_user_id:
         for key in _LEGACY_USER_STATE_KEYS:
@@ -530,6 +591,8 @@ def set_system_last_polled_at(conn: sqlite3.Connection, user_id: str, ts: str) -
 # ---------------------------------------------------------------------------
 
 _VALID_IMPORTANCE = {"low", "medium", "high"}
+_VALID_STATUS = {"open", "ongoing", "closed", "archived"}
+_VALID_DECISION = {"accepted", "rejected"}
 
 
 def _save_todo(

@@ -1,5 +1,5 @@
 const IMPORTANCE_OPTIONS = ['low', 'medium', 'high'];
-const STATUS_OPTIONS  = ['open', 'ongoing', 'closed'];
+const STATUS_OPTIONS  = ['open', 'ongoing', 'closed', 'archived'];
 const AI_SOURCES = ['gmail', 'fathom', 'browser_history', 'system'];
 
 const todosById = {};
@@ -41,13 +41,15 @@ function sourceLabel(source) {
 }
 
 function isPending(t) {
-  return AI_SOURCES.includes(t.source) && !t.decision && t.status !== 'closed';
+  return AI_SOURCES.includes(t.source) && !t.decision
+    && t.status !== 'closed' && t.status !== 'archived';
 }
 
 // ---------------- Sidebar state ----------------
 const todoList = document.getElementById('todo-list');
 const tabOpen     = document.getElementById('tabOpen');
 const tabClosed   = document.getElementById('tabClosed');
+const tabArchived = document.getElementById('tabArchived');
 const tabRejected = document.getElementById('tabRejected');
 const countEl     = document.getElementById('todoCount');
 const appEl = document.getElementById('app');
@@ -62,9 +64,10 @@ const threadCache  = {};
 function refreshCount() {
   const rows = Array.from(document.querySelectorAll('#todo-list .todo-row'));
   const n = rows.filter(r => {
-    if (currentFilter === 'open')     return !r.classList.contains('closed') && !r.classList.contains('rejected-todo');
+    if (currentFilter === 'open')     return !r.classList.contains('closed') && !r.classList.contains('archived') && !r.classList.contains('rejected-todo');
     if (currentFilter === 'closed')   return r.classList.contains('closed');
-    if (currentFilter === 'rejected') return r.classList.contains('rejected-todo');
+    if (currentFilter === 'archived') return r.classList.contains('archived');
+    if (currentFilter === 'rejected') return r.classList.contains('rejected-todo') && !r.classList.contains('archived');
     return false;
   }).length;
   countEl.textContent = n;
@@ -72,9 +75,9 @@ function refreshCount() {
 
 function switchTab(tab) {
   currentFilter = tab;
-  [tabOpen, tabClosed, tabRejected].forEach(b => b.classList.remove('active'));
+  [tabOpen, tabClosed, tabArchived, tabRejected].forEach(b => b.classList.remove('active'));
   todoList.className = `show-${tab}`;
-  ({ open: tabOpen, closed: tabClosed, rejected: tabRejected })[tab].classList.add('active');
+  ({ open: tabOpen, closed: tabClosed, archived: tabArchived, rejected: tabRejected })[tab].classList.add('active');
   refreshCount();
 
   if (selectedId) {
@@ -85,6 +88,7 @@ function switchTab(tab) {
 
 tabOpen.addEventListener('click',     () => switchTab('open'));
 tabClosed.addEventListener('click',   () => switchTab('closed'));
+tabArchived.addEventListener('click', () => switchTab('archived'));
 tabRejected.addEventListener('click', () => switchTab('rejected'));
 
 // ---------------- Selection / detail rendering ----------------
@@ -180,7 +184,7 @@ function applyFieldChange(t, field, newVal) {
   const row = document.querySelector(`.todo-row[data-id="${t.todo_id}"]`);
   if (row) {
     if (field === 'status') {
-      row.classList.remove('open', 'ongoing', 'closed');
+      row.classList.remove('open', 'ongoing', 'closed', 'archived');
       if (newVal) row.classList.add(newVal);
     } else if (field === 'importance') {
       row.dataset.importance = newVal || 'none';
@@ -263,6 +267,19 @@ function applyDecision(t, decision) {
   refreshCount();
 }
 
+// Archiving is a status change, but it restructures the row (a suggestion stops
+// being pending) and flips the detail-pane button, so it re-renders like a
+// decision does.
+function sendStatus(t, status) {
+  patch(t.todo_id, 'status', status).then(r => {
+    if (!r.ok) { alert('Save failed'); return; }
+    applyFieldChange(t, 'status', status);
+    const row = document.querySelector(`.todo-row[data-id="${t.todo_id}"]`);
+    if (row && getComputedStyle(row).display === 'none') clearSelection();
+    else if (selectedId === t.todo_id) renderDetail(t);
+  });
+}
+
 function sendDecision(t, decision) {
   fetch(`/todos/${t.todo_id}`, {
     method: 'PATCH',
@@ -290,6 +307,7 @@ document.querySelectorAll('.row-inline-actions').forEach(bindInlineActions);
 function renderDetail(t) {
   const pending = isPending(t);
   const rejected = t.decision === 'rejected';
+  const archived = t.status === 'archived';
 
   let decisionHtml = '';
   if (pending) {
@@ -327,7 +345,10 @@ function renderDetail(t) {
         ${t.relevant_link ? `<dt>Link</dt><dd><a href="${escapeHtml(t.relevant_link)}" target="_blank" class="context-link">Open ↗</a></dd>` : ''}
       </dl>
 
-      ${decisionHtml ? `<div class="detail-actions">${decisionHtml}</div>` : ''}
+      <div class="detail-actions">
+        ${decisionHtml}
+        <button class="archive-btn" data-status="${archived ? 'open' : 'archived'}">${archived ? 'Unarchive' : 'Archive'}</button>
+      </div>
     </div>
 
     ${t.suggested_action ? `<div class="detail-section"><h3>Suggested action</h3><div class="body-text">${escapeHtml(t.suggested_action)}</div></div>` : ''}
@@ -361,6 +382,10 @@ function wireDetailHandlers(t) {
     btn.addEventListener('click', () => {
       sendDecision(t, btn.dataset.action === 'accept' ? 'accepted' : 'rejected');
     });
+  });
+
+  detailContent.querySelectorAll('[data-status]').forEach(btn => {
+    btn.addEventListener('click', () => sendStatus(t, btn.dataset.status));
   });
 
   detailContent.querySelectorAll('.editable').forEach(cell => bindEditable(cell, t));
@@ -769,7 +794,7 @@ switchTab('open');
 (function initSelection() {
   const m = location.hash.match(/^#todo\/([^/]+)$/);
   if (m && todosById[m[1]]) { selectTodo(m[1]); return; }
-  const first = document.querySelector('#todo-list .todo-row:not(.closed):not(.rejected-todo)');
+  const first = document.querySelector('#todo-list .todo-row:not(.closed):not(.archived):not(.rejected-todo)');
   if (first) selectTodo(first.dataset.id);
 })();
 
