@@ -3,6 +3,9 @@ import os
 import sqlite3
 import time
 
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
@@ -18,14 +21,15 @@ from pollers.gmail.todo_generator import generate_todo
 from pollers.fathom import poller as fathom_poller
 from pollers.browser import poller as browser_history_poller
 from pollers.system import poller as system_poller
-from db import init_db, list_active_users, save_todo
+from pollers.digest import poller as digest_poller
+from db import init_db, list_active_users, list_all_users, save_todo
 
 DB_PATH = os.environ.get("DB_PATH", "gmail_events.db")
 POLL_INTERVAL_SECONDS = 30
-KNOWN_SOURCES = {"gmail", "fathom", "browser_history", "system"}
+KNOWN_SOURCES = {"gmail", "fathom", "browser_history", "system", "morning_digest"}
 # `browser_history` (reads Dia browser history) and `system` (snapshots
 # macOS Downloads/Desktop/Documents) are macOS-specific and opt-in.
-DEFAULT_ENABLED_SOURCES = {"gmail", "fathom"}
+DEFAULT_ENABLED_SOURCES = {"gmail", "fathom", "morning_digest"}
 
 
 def _ensure_db_parent_dir() -> None:
@@ -102,7 +106,7 @@ def _poll_gmail_for_user(conn: sqlite3.Connection, user: dict) -> None:
         todo = result["todo"]
         if saved:
             counts["todo"] += 1
-            print(f"{prefix} → TODO[{todo['urgency']}] {_truncate(todo['title'], 60)}")
+            print(f"{prefix} → TODO[{todo.get('importance')}] {_truncate(todo['title'], 60)}")
         else:
             counts["dup"] += 1
             print(f"{prefix} → dup")
@@ -159,6 +163,16 @@ def main():
                             print(f"[system:{user_label}] No new todos generated.")
                     except Exception as exc:
                         print(f"[system:{user_label}] error: {exc}")
+
+            # The digest goes to *every* signed-up user, not just those with a
+            # connected source — unconnected users get a "connect Gmail" prompt.
+            if "morning_digest" in enabled_sources:
+                for user in list_all_users(conn):
+                    user_label = user.get("email") or user["user_id"][:8]
+                    try:
+                        digest_poller.poll(conn, user)
+                    except Exception as exc:
+                        print(f"[digest:{user_label}] error: {exc}")
 
         except Exception as exc:
             print(f"[error] {exc}")

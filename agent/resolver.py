@@ -1,22 +1,29 @@
+import os
 from typing import Any
 
 from agents import Agent, Runner, WebSearchTool
 
-from agent.input_builder import build_initial_input
-from agent.prompt import INSTRUCTIONS, INSTRUCTIONS_PROD
-# from agent.tools.browser import use_browser
+from agent.input_builder import build_initial_inputs
+from agent.prompt import INSTRUCTIONS
 from agent.tools.email import gmail_tools
 # from agent.tools.local_files import local_file_tools
 
+# Playwright needs a real display/profile to drive Chromium, which isn't safe to
+# assume in the deployed container — opt in locally via .env.
+ENABLE_BROWSER_AGENT = os.environ.get("ENABLE_BROWSER_AGENT", "").strip().lower() in {"1", "true", "yes"}
+
 
 def _build_agent(user_id: str) -> Agent:
-    tools: list[Any] = []
+    tools: list[Any] = [WebSearchTool()]
     tools.extend(gmail_tools(user_id))
     # tools.extend(local_file_tools())
+    if ENABLE_BROWSER_AGENT:
+        from agent.tools.browser import use_browser
+        tools.append(use_browser)
     return Agent(
         name="Resolver",
-        model="gpt-5.2",
-        instructions=INSTRUCTIONS_PROD,
+        model="gpt-5.4-mini",
+        instructions=INSTRUCTIONS,
         tools=tools,
     )
 
@@ -33,9 +40,7 @@ def resolve_todo(
         if user_message:
             input_items.append({"role": "user", "content": user_message})
     else:
-        input_items = [
-            {"role": "user", "content": build_initial_input(todo, user_message, user_id)}
-        ]
+        input_items = build_initial_inputs(todo, user_message, user_id)
 
     result = Runner.run_sync(agent, input_items, max_turns=40)
     return list(result.to_input_list())

@@ -4,6 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Sign in — Inbox Todos</title>
+  <meta name="theme-color" content="#7a2e2a">
+  <meta name="description" content="Your inbox, meetings and notes turned into a single list of things to actually do.">
+  <link rel="manifest" href="{{ url_for('manifest') }}">
+  <link rel="icon" href="{{ url_for('static', filename='icons/favicon-32.png') }}" sizes="32x32">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Inbox">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -86,11 +95,12 @@
 <body>
   <div class="card">
     <h1>Inbox Todos</h1>
-    <p>Sign in with your Google account to view your todos and connect data sources.</p>
+    <p>Sign in with your Google account. We may request Gmail access to import emails (optional).</p>
     <a class="google-btn" href="{{ url_for('login_start') }}">
       <span class="google-icon">G</span>
       Sign in with Google
     </a>
   </div>
+  <script src="{{ url_for('static', filename='js/pwa.js') }}" defer></script>
 </body>
 </html>

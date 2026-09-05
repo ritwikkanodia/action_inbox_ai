@@ -101,7 +101,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             dedup_key              TEXT,
             title                  TEXT,
             suggested_action       TEXT,
-            urgency                TEXT CHECK (urgency IS NULL OR urgency IN ('low','medium','high')),
+            importance             TEXT CHECK (importance IS NULL OR importance IN ('low','medium','high')),
             estimated_time_minutes INTEGER,
             due_date               TEXT,
             relevant_link          TEXT,
@@ -117,6 +117,20 @@ def init_db(conn: sqlite3.Connection) -> None:
     """)
 
     cols = {row[1] for row in conn.execute("PRAGMA table_info(todos)").fetchall()}
+
+    # The AI-inferred low/medium/high signal is really *importance* (how much it
+    # matters), not urgency — urgency is derived from due_date at read time. Rename
+    # the legacy column in place; SQLite carries existing values and updates the
+    # CHECK constraint automatically. No data migration needed.
+    if "urgency" in cols and "importance" not in cols:
+        try:
+            conn.execute("ALTER TABLE todos RENAME COLUMN urgency TO importance")
+        except sqlite3.OperationalError:
+            # Another process (poller vs. web worker on shared volume) won the
+            # race and already renamed it — safe to ignore.
+            pass
+        cols.discard("urgency")
+        cols.add("importance")
 
     if "draft" in cols:
         conn.execute("ALTER TABLE todos DROP COLUMN draft")
@@ -197,7 +211,7 @@ def init_db(conn: sqlite3.Connection) -> None:
 
     legacy_user_id = None
     if needs_backfill:
-        legacy_user_id = upsert_user(conn, _legacy_user_email())
+        legacy_user_id, _ = upsert_user(conn, _legacy_user_email())
 
     if needs_sc_rebuild:
         conn.execute("""
@@ -242,6 +256,16 @@ def init_db(conn: sqlite3.Connection) -> None:
             conn.execute("DELETE FROM state WHERE key = ?", (key,))
 
     conn.executescript("""
+        CREATE TABLE IF NOT EXISTS page_views (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id   TEXT,
+            path      TEXT NOT NULL,
+            timestamp TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_page_views_timestamp
+            ON page_views(timestamp DESC);
+
         CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_dedup
             ON todos(user_id, source, dedup_key) WHERE dedup_key IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_todos_user_status_created
@@ -277,8 +301,8 @@ def upsert_user(
     email: str,
     name: str | None = None,
     picture_url: str | None = None,
-) -> str:
-    """Insert or update a user by email. Returns the user's UUID.
+) -> tuple[str, bool]:
+    """Insert or update a user by email. Returns (user_id, is_new).
 
     Existing users get name/picture/last_login_at refreshed if values are
     provided; passing None for those fields leaves the existing value alone.
@@ -300,7 +324,7 @@ def upsert_user(
         vals.append(user_id)
         conn.execute(f"UPDATE users SET {', '.join(sets)} WHERE user_id = ?", vals)
         conn.commit()
-        return user_id
+        return user_id, False
 
     user_id = uuid.uuid4().hex
     conn.execute(
@@ -309,7 +333,7 @@ def upsert_user(
         (user_id, email, name, picture_url, now, now),
     )
     conn.commit()
-    return user_id
+    return user_id, True
 
 
 def get_user_by_id(conn: sqlite3.Connection, user_id: str) -> dict | None:
@@ -354,6 +378,18 @@ def list_active_users(conn: sqlite3.Connection) -> list[dict]:
         "SELECT u.user_id, u.email, u.name, u.picture_url "
         "FROM users u "
         "WHERE EXISTS (SELECT 1 FROM source_connections sc WHERE sc.user_id = u.user_id)"
+    ).fetchall()
+    return [
+        {"user_id": r[0], "email": r[1], "name": r[2], "picture_url": r[3]}
+        for r in rows
+    ]
+
+
+def list_all_users(conn: sqlite3.Connection) -> list[dict]:
+    """Every signed-up user, regardless of connected sources. Used by the digest,
+    which goes to all users (unconnected ones get a 'connect Gmail' prompt)."""
+    rows = conn.execute(
+        "SELECT user_id, email, name, picture_url FROM users"
     ).fetchall()
     return [
         {"user_id": r[0], "email": r[1], "name": r[2], "picture_url": r[3]}
@@ -493,7 +529,7 @@ def set_system_last_polled_at(conn: sqlite3.Connection, user_id: str, ts: str) -
 # Todos
 # ---------------------------------------------------------------------------
 
-_VALID_URGENCY = {"low", "medium", "high"}
+_VALID_IMPORTANCE = {"low", "medium", "high"}
 
 
 def _save_todo(
@@ -505,28 +541,30 @@ def _save_todo(
     dedup_key: str | None,
     title: str | None,
     suggested_action: str | None = None,
-    urgency: str | None = None,
+    importance: str | None = None,
     estimated_time_minutes: int | None = None,
     due_date: str | None = None,
     relevant_link: str | None = None,
     reasoning: str | None = "",
     source_meta: dict | None = None,
+    decision: str | None = None,
 ) -> bool:
-    if urgency not in _VALID_URGENCY:
-        urgency = None
+    if importance not in _VALID_IMPORTANCE:
+        importance = None
     now = _now()
     before = conn.total_changes
     conn.execute(
         """
         INSERT OR IGNORE INTO todos (
-            todo_id, user_id, source, dedup_key, title, suggested_action, urgency,
+            todo_id, user_id, source, dedup_key, title, suggested_action, importance,
             estimated_time_minutes, due_date, relevant_link, reasoning,
-            status, source_meta, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?)
+            status, decision, source_meta, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
         """,
         (
-            todo_id, user_id, source, dedup_key, title, suggested_action, urgency,
+            todo_id, user_id, source, dedup_key, title, suggested_action, importance,
             estimated_time_minutes, due_date, relevant_link, reasoning or "",
+            decision,
             json.dumps(source_meta) if source_meta else None, now, now,
         ),
     )
@@ -575,7 +613,7 @@ def save_browser_history_todo(
         dedup_key=dedup,
         title=title,
         suggested_action=todo.get("suggested_action", ""),
-        urgency=todo.get("urgency", "medium"),
+        importance=todo.get("importance", "medium"),
         relevant_link=todo.get("relevant_link", ""),
         reasoning=todo.get("reasoning", ""),
         source_meta={"normalized_url": norm, "raw_url": todo.get("relevant_link", "")},
@@ -600,7 +638,7 @@ def save_fathom_todo(
         dedup_key=dedup,
         title=item.get("description", "(no description)"),
         suggested_action=item.get("description", ""),
-        urgency="medium",
+        importance="medium",
         relevant_link=item.get("recording_playback_url") or meeting.get("url", ""),
         reasoning=reasoning,
         source_meta={
@@ -678,7 +716,7 @@ def save_todo(
         dedup_key=message_id,
         title=title,
         suggested_action=todo.get("suggested_action"),
-        urgency=todo.get("urgency"),
+        importance=todo.get("importance"),
         estimated_time_minutes=todo.get("estimated_time_minutes"),
         due_date=todo.get("due_date"),
         relevant_link=relevant_link,
@@ -692,11 +730,74 @@ def save_todo(
     )
 
 
+ONBOARDING_TODOS = [
+    {
+        "dedup_key": "onboarding_email_demo",
+        "title": "[Sample] Reply to Acme's contract redline before Friday",
+        "importance": "high",
+        "due_offset_days": 3,
+        "suggested_action": (
+            "Acme's legal team sent back the MSA with edits to the indemnity "
+            "and payment terms clauses. Review the redlines, loop in legal if "
+            "anything looks off, and send a reply by EOD Friday so the deal "
+            "stays on track."
+        ),
+        "reasoning": (
+            "👋 Welcome to Action Inbox! This is a sample todo to show you "
+            "what action items extracted from your Gmail look like. Once you "
+            "connect Gmail, real emails that need a response, a decision, or "
+            "a follow-up will show up here automatically — with the thread, "
+            "importance, and suggested next step already filled in."
+        ),
+    },
+    {
+        "dedup_key": "onboarding_meeting_demo",
+        "title": "[Sample] Send Q2 roadmap deck to the design team",
+        "importance": "medium",
+        "due_offset_days": 5,
+        "suggested_action": (
+            "You committed to sharing the Q2 roadmap deck with design after "
+            "the planning sync. Polish the deck, drop it in the shared drive, "
+            "and ping the team in #design-leads with a short note on what to "
+            "review first."
+        ),
+        "reasoning": (
+            "📞 This is a sample of how Action Inbox surfaces commitments "
+            "from your meetings. Connect Fathom in Settings and any action "
+            "items you agree to during a call will appear here — linked back "
+            "to the recording so you can replay the moment for context."
+        ),
+    },
+]
+
+
+def seed_onboarding_todos(conn: sqlite3.Connection, user_id: str) -> None:
+    """Insert two welcome/demo todos for a brand-new user."""
+    now = datetime.now(timezone.utc)
+    for spec in ONBOARDING_TODOS:
+        due = (now + timedelta(days=spec["due_offset_days"])).replace(
+            hour=17, minute=0, second=0, microsecond=0
+        )
+        _save_todo(
+            conn,
+            user_id=user_id,
+            todo_id=f"todo_onboarding_{user_id[:8]}_{spec['dedup_key']}",
+            source="user",
+            dedup_key=spec["dedup_key"],
+            title=spec["title"],
+            suggested_action=spec["suggested_action"],
+            importance=spec["importance"],
+            due_date=due.isoformat(),
+            reasoning=spec["reasoning"],
+            source_meta={"onboarding": True},
+        )
+
+
 def save_user_todo(
     conn: sqlite3.Connection,
     user_id: str,
     title: str,
-    urgency: str = "medium",
+    importance: str = "medium",
     due_date: str | None = None,
     suggested_action: str = "",
 ) -> str:
@@ -709,9 +810,10 @@ def save_user_todo(
         dedup_key=None,
         title=title,
         suggested_action=suggested_action,
-        urgency=urgency,
+        importance=importance,
         due_date=due_date,
         reasoning="",
+        decision="accepted",
     )
     return todo_id
 
@@ -750,9 +852,48 @@ def save_system_todo(conn: sqlite3.Connection, user_id: str, todo: dict) -> bool
         dedup_key=None,
         title=title,
         suggested_action=todo.get("suggested_action", ""),
-        urgency="low",
+        importance="low",
         reasoning=todo.get("reasoning", ""),
     )
+
+
+def get_user_view_summary(conn: sqlite3.Connection, user_id: str | None = None) -> list[dict]:
+    filter_clause = "AND pv.user_id = ?" if user_id else ""
+    filter_args = (user_id,) if user_id else ()
+    users = conn.execute(
+        f"""
+        SELECT pv.user_id, u.email, u.name, COUNT(*) AS total_views
+        FROM page_views pv
+        LEFT JOIN users u ON u.user_id = pv.user_id
+        WHERE pv.user_id IS NOT NULL {filter_clause}
+        GROUP BY pv.user_id
+        ORDER BY total_views DESC
+        """,
+        filter_args,
+    ).fetchall()
+    result = []
+    for user_id, email, name, total_views in users:
+        timestamps = conn.execute(
+            "SELECT timestamp, path FROM page_views WHERE user_id = ? ORDER BY timestamp DESC",
+            (user_id,),
+        ).fetchall()
+        result.append({
+            "user_id": user_id,
+            "email": email,
+            "name": name,
+            "total_views": total_views,
+            "views": [{"timestamp": r[0], "path": r[1]} for r in timestamps],
+        })
+    return result
+
+
+def record_page_view(conn: sqlite3.Connection, user_id: str | None, path: str) -> None:
+    conn.execute(
+        "INSERT INTO page_views (user_id, path, timestamp) VALUES (?, ?, ?)",
+        (user_id, path, _now()),
+    )
+    conn.commit()
+
 
 
 def save_event(conn: sqlite3.Connection, event: GmailEvent) -> None:

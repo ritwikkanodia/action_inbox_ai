@@ -29,7 +29,7 @@ Respond with raw JSON only — no markdown fences, no prose — matching this ex
       "should_generate_todo": <boolean>,
       "title": "<action verb + concrete specific subject>",
       "suggested_action": "<what the user should do next>",
-      "urgency": "<low|medium|high>",
+      "importance": "<low|medium|high — how much the outcome matters, independent of any deadline>",
       "relevant_link": "<a URL copied verbatim from the digest>",
       "reasoning": "<one sentence — quote the specific URL path fragment or title phrase that signals an incomplete transaction>"
     }
@@ -97,7 +97,7 @@ def generate_todos(
     user_content = "\n\n".join(blocks)
     try:
         response = _get_client().chat.completions.create(
-            model="gpt-4o",
+            model="gpt-5.4-mini",
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},
