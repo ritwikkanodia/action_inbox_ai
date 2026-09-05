@@ -16,8 +16,17 @@ from google.auth.transport import requests as google_requests
 from google.oauth2 import id_token as id_token_lib
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build as google_build
+from posthog import Posthog
 
 from db import seed_onboarding_todos, upsert_user, set_source_credentials
+
+_POSTHOG_TOKEN = os.environ.get("POSTHOG_PROJECT_TOKEN", "")
+_POSTHOG_HOST = os.environ.get("POSTHOG_HOST", "")
+_posthog: Posthog | None = (
+    Posthog(project_api_key=_POSTHOG_TOKEN, host=_POSTHOG_HOST)
+    if _POSTHOG_TOKEN and _POSTHOG_HOST
+    else None
+)
 
 
 LOGIN_SCOPES = [
@@ -131,6 +140,24 @@ def complete_login(
     if is_new:
         seed_onboarding_todos(db, user_id)
         session["fresh_signup"] = True
+
+    # PostHog: identify user and capture login/signup event
+    if _posthog is not None:
+        # PII goes on the person, not in the event properties
+        _posthog.set(
+            distinct_id=user_id,
+            properties={
+                "$name": info.get("name"),
+                "$email": email,
+                "has_picture": bool(info.get("picture")),
+            },
+        )
+        event_name = "user_signed_up" if is_new else "user_logged_in"
+        _posthog.capture(
+            distinct_id=user_id,
+            event=event_name,
+            properties={"login_method": "google_oauth"},
+        )
 
     # Clean up ephemeral login PKCE state and establish the user session.
     session.pop("login_oauth_state", None)

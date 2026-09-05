@@ -8,3 +8,4 @@ python-dotenv>=1.0
 flask>=3.0
 gunicorn>=21.0
 resend>=2.0
+posthog>=3.0

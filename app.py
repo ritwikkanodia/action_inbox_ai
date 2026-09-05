@@ -1,3 +1,4 @@
+import atexit
 import json
 import os
 import sqlite3
@@ -6,6 +7,36 @@ from datetime import datetime, timedelta, timezone
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
+
+from posthog import Posthog
+
+_POSTHOG_TOKEN = os.environ.get("POSTHOG_PROJECT_TOKEN", "")
+_POSTHOG_HOST = os.environ.get("POSTHOG_HOST", "")
+
+if _POSTHOG_TOKEN and _POSTHOG_HOST:
+    posthog_client = Posthog(
+        project_api_key=_POSTHOG_TOKEN,
+        host=_POSTHOG_HOST,
+        enable_exception_autocapture=True,
+    )
+    atexit.register(posthog_client.shutdown)
+else:
+    posthog_client = None
+    import sys
+    if os.environ.get("FLASK_DEBUG", "true").lower() not in ("0", "false", "no"):
+        print(
+            "POSTHOG_PROJECT_TOKEN or POSTHOG_HOST variable required by PostHog is missing or "
+            "un-configured, this causes events to be silently missed. "
+            "This error stops appearing once POSTHOG_PROJECT_TOKEN and POSTHOG_HOST are configured.",
+            file=sys.stderr,
+        )
+
+
+def _ph_capture(distinct_id: str, event: str, properties: dict | None = None) -> None:
+    """Capture a PostHog event, silently no-ops when client is not configured."""
+    if posthog_client is None:
+        return
+    posthog_client.capture(distinct_id=distinct_id, event=event, properties=properties or {})
 
 from agent import resolve_todo
 
@@ -190,6 +221,9 @@ def login_callback():
 
 @app.route("/logout", methods=["POST", "GET"])
 def logout():
+    user_id = current_user_id()
+    if user_id:
+        _ph_capture(user_id, "user_logged_out")
     session.clear()
     return redirect(url_for("login_page"))
 
@@ -230,6 +264,15 @@ def index():
             t["source_meta"] = {}
     gmail_connected = bool(get_source_connection(db, user_id, "gmail"))
     fresh_signup = bool(session.pop("fresh_signup", False))
+    _ph_capture(
+        user_id,
+        "index_viewed",
+        {
+            "todo_count": len(todos),
+            "gmail_connected": gmail_connected,
+            "fresh_signup": fresh_signup,
+        },
+    )
     return render_template(
         "index.html",
         todos=todos,
@@ -257,6 +300,15 @@ def create_todo():
     user_id = current_user_id()
     assert user_id
     todo_id = save_user_todo(db, user_id, title, importance, due_date, suggested_action)
+    _ph_capture(
+        user_id,
+        "todo_created",
+        {
+            "importance": importance,
+            "has_due_date": bool(due_date),
+            "has_suggested_action": bool(suggested_action),
+        },
+    )
     row = db.execute(
         """
         SELECT todo_id, title, suggested_action, importance,
@@ -337,6 +389,16 @@ def ask_ai(todo_id):
     if thread and not user_message:
         return jsonify({"thread": _thread_for_client(thread)})
 
+    is_new_thread = len(thread) == 0
+    _ph_capture(
+        user_id,
+        "ai_chat_started" if is_new_thread else "ai_chat_continued",
+        {
+            "todo_source": row["source"],
+            "todo_importance": row["importance"],
+            "message_length": len(user_message),
+        },
+    )
     thread = resolve_todo(dict(row), thread, user_message, user_id)
 
     db.execute(
@@ -422,6 +484,7 @@ def reset_thread(todo_id):
         (datetime.now(timezone.utc).isoformat(), todo_id, user_id),
     )
     db.commit()
+    _ph_capture(user_id, "ai_thread_reset")
     return jsonify({"ok": True})
 
 
@@ -442,6 +505,15 @@ def update_todo(todo_id):
         (*updates.values(), datetime.now(timezone.utc).isoformat(), todo_id, user_id),
     )
     db.commit()
+    _ph_capture(
+        user_id,
+        "todo_updated",
+        {
+            "updated_fields": sorted(updates.keys()),
+            "new_status": updates.get("status"),
+            "new_importance": updates.get("importance"),
+        },
+    )
     return jsonify({"ok": True})
 
 
@@ -563,6 +635,7 @@ def gmail_callback():
 
     session.pop("gmail_oauth_state", None)
     session.pop("gmail_oauth_code_verifier", None)
+    _ph_capture(user_id, "gmail_connected")
     return redirect(url_for("index"))
 
 
@@ -579,15 +652,18 @@ def update_source_settings(source: str):
     if source == "fathom":
         if data.get("disconnect"):
             clear_source_connection(db, user_id, "fathom")
+            _ph_capture(user_id, "source_disconnected", {"source": "fathom"})
             return jsonify({"ok": True, "connected": False})
         api_key = (data.get("api_key") or "").strip()
         if not api_key:
             return jsonify({"error": "api_key required"}), 400
         set_source_credentials(db, user_id, "fathom", "api_key", {"api_key": api_key})
+        _ph_capture(user_id, "fathom_api_key_saved")
         return jsonify({"ok": True, "connected": True, "api_key_preview": f"...{api_key[-6:]}"})
     if source == "gmail":
         if data.get("disconnect"):
             clear_source_connection(db, user_id, "gmail")
+            _ph_capture(user_id, "source_disconnected", {"source": "gmail"})
             return jsonify({"ok": True, "connected": False})
         return jsonify({"error": "use /settings/sources/gmail/auth to connect"}), 400
     return jsonify({"error": "unhandled"}), 500
