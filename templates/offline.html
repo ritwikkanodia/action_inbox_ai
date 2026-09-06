@@ -3,15 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Offline — Inbox Todos</title>
-  <meta name="theme-color" content="#7a2e2a">
+  <title>Offline — Self-driving Inbox</title>
+  <meta name="theme-color" content="#0b0b0c">
   <link rel="icon" href="{{ url_for('static', filename='icons/favicon-32.png') }}" sizes="32x32">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      background: #f5f0e4;
-      color: #1d1a14;
+      color-scheme: dark;
+      background: #0b0b0c;
+      color: #ededed;
       font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
       font-size: 14px;
       min-height: 100vh;
@@ -22,9 +23,9 @@
     }
 
     .card {
-      background: #fff;
-      border: 1px solid #d8d1bf;
-      border-radius: 12px;
+      background: #141417;
+      border: 1px solid #232327;
+      border-radius: 14px;
       padding: 40px 36px;
       width: min(380px, 92vw);
       text-align: center;
@@ -32,26 +33,26 @@
 
     .card img { width: 56px; height: 56px; border-radius: 12px; }
     .card h1 { font-size: 18px; font-weight: 500; margin: 18px 0 8px; }
-    .card p { color: #8a8576; line-height: 1.5; }
+    .card p { color: #74747d; line-height: 1.5; }
 
     .retry {
       margin-top: 24px;
-      background: #7a2e2a;
-      color: #f5f0e4;
+      background: #f0b429;
+      color: #17130a;
       border: 0;
       border-radius: 8px;
       padding: 10px 20px;
       font: inherit;
       cursor: pointer;
     }
-    .retry:hover { background: #5a201d; }
+    .retry:hover { background: #ffc94d; }
   </style>
 </head>
 <body>
   <div class="card">
     <img src="{{ url_for('static', filename='icons/icon-192.png') }}" alt="">
     <h1>You're offline</h1>
-    <p>Inbox Todos needs a connection to load your list. Reconnect and try again.</p>
+    <p>Self-driving Inbox needs a connection to load your list. Reconnect and try again.</p>
     <button class="retry" onclick="location.reload()">Try again</button>
   </div>
 </body>

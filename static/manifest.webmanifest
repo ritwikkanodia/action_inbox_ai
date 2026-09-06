@@ -1,14 +1,14 @@
 {
   "id": "/",
-  "name": "Inbox Todos",
-  "short_name": "Inbox",
+  "name": "Self-driving Inbox",
+  "short_name": "Self-driving",
   "description": "Your inbox, meetings and notes turned into a single list of things to actually do.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#f5f0e4",
-  "theme_color": "#7a2e2a",
+  "background_color": "#0b0b0c",
+  "theme_color": "#0b0b0c",
   "icons": [
     {
       "src": "/static/icons/icon-192.png",

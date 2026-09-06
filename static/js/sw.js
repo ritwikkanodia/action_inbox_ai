@@ -1,12 +1,12 @@
-// Service worker for the Inbox Todos PWA.
+// Service worker for the Self-driving Inbox PWA.
 //
 // Deliberately conservative: only same-origin /static/ assets and the offline
 // page are cached. Todo HTML and every API response are user-specific and
 // auth-gated, so they always go to the network — a cached copy could be shown
 // to the wrong session or long after it went stale.
 
-const VERSION = 'v1';
-const CACHE = `inbox-todos-${VERSION}`;
+const VERSION = 'v2';
+const CACHE = `self-driving-inbox-${VERSION}`;
 const OFFLINE_URL = '/offline';
 
 const PRECACHE = [
