@@ -22,7 +22,7 @@ from pollers.fathom import poller as fathom_poller
 from pollers.browser import poller as browser_history_poller
 from pollers.system import poller as system_poller
 from pollers.digest import poller as digest_poller
-from db import init_db, list_active_users, list_all_users, save_todo
+from db import init_db, list_active_users, list_all_users, list_gmail_accounts, save_todo
 
 DB_PATH = os.environ.get("DB_PATH", "gmail_events.db")
 POLL_INTERVAL_SECONDS = 30
@@ -49,36 +49,29 @@ def _enabled_sources() -> set[str]:
     return enabled & KNOWN_SOURCES
 
 
-def get_gmail_email(service) -> str:
-    profile = service.users().getProfile(userId="me").execute()
-    return profile["emailAddress"]
-
-
 def _truncate(s: str, n: int) -> str:
     s = s or ""
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
-def _poll_gmail_for_user(conn: sqlite3.Connection, user: dict) -> None:
-    user_id = user["user_id"]
+def _poll_gmail_account(conn: sqlite3.Connection, user_id: str, account_id: str) -> None:
     try:
-        service = get_gmail_service(conn, user_id)
+        service = get_gmail_service(conn, user_id, account_id)
     except RuntimeError as exc:
-        print(f"[gmail] {user_id[:8]}: {exc}")
+        print(f"[gmail] {account_id}: {exc}")
         return
 
-    gmail_email = get_gmail_email(service)
-    events = poll(service, conn, user_id)
+    events = poll(service, conn, user_id, account_id)
 
     inbound = [e for e in events if e.type == "messagesAdded"]
     if not inbound:
-        print(f"[gmail] {gmail_email}: idle")
+        print(f"[gmail] {account_id}: idle")
         return
 
     counts = {"todo": 0, "dup": 0, "skip": 0, "spam": 0}
     for e in inbound:
         from_email = e.actors.from_.email if e.actors.from_ else "unknown"
-        prefix = f"[gmail] {gmail_email}   from={_truncate(from_email, 32):<32} | \"{_truncate(e.content.subject, 50)}\""
+        prefix = f"[gmail] {account_id}   from={_truncate(from_email, 32):<32} | \"{_truncate(e.content.subject, 50)}\""
 
         if is_spam(e):
             counts["spam"] += 1
@@ -86,7 +79,7 @@ def _poll_gmail_for_user(conn: sqlite3.Connection, user: dict) -> None:
             continue
 
         thread_msgs = fetch_thread_messages(service, e.content.thread_id)
-        context = build_thread_context(thread_msgs, gmail_email)
+        context = build_thread_context(thread_msgs, account_id)
         result = generate_todo(context, e)
 
         if not result["should_generate_todo"]:
@@ -101,7 +94,7 @@ def _poll_gmail_for_user(conn: sqlite3.Connection, user: dict) -> None:
             e.content.thread_id,
             result,
             user_id,
-            gmail_email,
+            account_id,
         )
         todo = result["todo"]
         if saved:
@@ -113,7 +106,22 @@ def _poll_gmail_for_user(conn: sqlite3.Connection, user: dict) -> None:
 
     parts = [f"{v} {k}" for k, v in counts.items() if v]
     summary = ", ".join(parts) if parts else "no actions"
-    print(f"[gmail] {gmail_email}: {len(inbound)} fetched → {summary}")
+    print(f"[gmail] {account_id}: {len(inbound)} fetched → {summary}")
+
+
+def _poll_gmail_for_user(conn: sqlite3.Connection, user: dict) -> None:
+    user_id = user["user_id"]
+    accounts = list_gmail_accounts(conn, user_id)
+    if not accounts:
+        print(f"[gmail] {user_id[:8]}: no accounts connected")
+        return
+    # Each account is isolated so a revoked or rate-limited mailbox never stops
+    # the others polling — the same pattern main() uses per source.
+    for account in accounts:
+        try:
+            _poll_gmail_account(conn, user_id, account["account_id"])
+        except Exception as exc:
+            print(f"[gmail] {account['account_id']}: error: {exc}")
 
 
 def main():
