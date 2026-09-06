@@ -30,6 +30,7 @@ python scripts/verify/verify_connections.py
 python scripts/verify/verify_links.py
 python scripts/verify/verify_cursors.py
 python scripts/verify/verify_web.py
+python scripts/verify/verify_executor.py    # stubs the Hermes CLI; no API spend
 ```
 
 ## Architecture
@@ -118,8 +119,55 @@ three generators use Chat Completions with `response_format={"type": "json_objec
 outcome, not an error — newsletters, receipts, OTPs, and sign-in requests should be skipped
 there, and the poller logs the reasoning.
 
-**The per-todo agent** (`agent/`) uses the **OpenAI Agents SDK** (`openai-agents`), not the raw
-Responses API:
+**Discovery and execution are decoupled.** The pollers generate todos; resolution runs on a
+*selectable executor* behind `agent/executor.py`. `app.py` calls `executor.resolve` and knows
+nothing about which one is configured. The contract:
+
+```
+resolve(todo, thread, user_message, user_id, state) -> (thread, state)
+```
+
+`thread` is the display log (`{role, content}` bubbles — also a valid Agents-SDK input list, so
+executors can read each other's threads). `state` is an opaque per-executor string persisted in
+`todos.executor_state`; nothing outside the executor interprets it. Implementations are imported
+lazily, so picking one never pays for the other's dependencies.
+
+`TODO_EXECUTOR` picks one, defaulting to `hermes`:
+
+- **`hermes`** — shells out to the locally installed Hermes Agent CLI, which brings its own
+  browser, terminal, file, and desktop tools. Needs the binary on the host, so it does **not**
+  work in the deployed container.
+- **`agents_sdk`** (`agent/sdk_executor.py` → `agent/resolver.py`) — the original in-process
+  OpenAI Agents SDK agent. The only executor that runs without a local CLI, so **the deployed
+  container must set this**. Keeps no out-of-band state; leaves `executor_state` NULL.
+
+Adding an executor means one module implementing `resolve` plus a branch in `executor._load`.
+
+- `agent/hermes_runner.py` is the *only* file that knows about Hermes. It runs
+  `hermes -z <prompt> --yolo [--resume <id>] --usage-file <tmp>`. `-z` prints only the final
+  reply on stdout, so the session id has to come back out of band via `--usage-file` — that
+  is the only way to get it in one-shot mode. Set `HERMES_BIN` if the binary isn't on `PATH`,
+  `HERMES_TIMEOUT_SECONDS` (default 600) to bound a wedged run, and `HERMES_YOLO=0` to fall
+  back to Hermes' approval rules (expect blocked runs — there is no TTY to approve at).
+- **`--yolo` is deliberate and load-bearing.** A run with no TTY that stops for an approval
+  prompt blocks until the timeout. It also means a full-access agent acts on prompts built
+  from email content, which is attacker-controlled text; this is an accepted risk of the
+  local POC, not an oversight.
+- **Sessions are the conversation.** Hermes stores its session id in `todos.executor_state`;
+  `todos.ai_thread` is now just a display log of `{role, content}` bubbles, not agent state.
+  Hermes issues a *new* id per turn (lineage children), so the column is rewritten each run.
+  `/reset-thread` clears both — clearing only the log would leave the agent still remembering.
+- Each one-shot invocation gets a fresh system prompt, so a resumed turn must restate the task
+  framing (`build_followup_prompt`). Sending a bare user message makes the agent forget it is a
+  resolution agent and start asking clarifying questions.
+- A failed run is **not** retried: by the time it fails the agent may already have sent mail or
+  submitted a form. Failures render as a bubble in the thread, because `static/js/app.js` reads
+  `data.thread` without checking the status code — a non-200 would vanish silently.
+
+`agent/resolver.py` and its tools (`tools/browser/`, `tools/local_files.py`, `tools/email.py`)
+are the **`agents_sdk`** executor, built on the **OpenAI Agents SDK** (`openai-agents`).
+`tools/email.py` is also used by the Hermes path, via `hermes_prompt.py`, to inline the Gmail
+thread. For that executor:
 
 - `resolver.py` builds an `Agent` with `WebSearchTool` plus Gmail tools
   (`search_email_threads`, `fetch_email_thread`) and runs it via `Runner.run_sync`.

@@ -112,6 +112,7 @@ def init_db(conn: sqlite3.Connection) -> None:
                                        CHECK (status IN ('open','ongoing','closed')),
             decision               TEXT CHECK (decision IS NULL OR decision IN ('accepted','rejected')),
             ai_thread              TEXT,
+            executor_state         TEXT,
             source_meta            TEXT,
             created_at             TEXT NOT NULL,
             updated_at             TEXT NOT NULL
@@ -195,6 +196,18 @@ def init_db(conn: sqlite3.Connection) -> None:
 
     if "account_id" not in todo_cols:
         conn.execute("ALTER TABLE todos ADD COLUMN account_id TEXT")
+
+    # Opaque per-executor state; see agent/executor.py. Hermes keeps its session
+    # id here (ai_thread is only a display log, not agent state); the Agents-SDK
+    # executor leaves it NULL. Briefly shipped as hermes_session_id on an
+    # unmerged branch, so local databases may still carry the old name.
+    if "executor_state" not in todo_cols:
+        if "hermes_session_id" in todo_cols:
+            conn.execute(
+                "ALTER TABLE todos RENAME COLUMN hermes_session_id TO executor_state"
+            )
+        else:
+            conn.execute("ALTER TABLE todos ADD COLUMN executor_state TEXT")
 
     sc_cols = {row[1] for row in conn.execute("PRAGMA table_info(source_connections)").fetchall()}
     # Pre-multi-user databases: source_connections has no user_id at all.

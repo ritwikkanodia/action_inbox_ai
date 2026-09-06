@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-from agent import resolve_todo
+from agent.executor import ExecutorError, resolve
 
 from flask import (
     Flask,
@@ -320,7 +320,7 @@ def ask_ai(todo_id):
     assert user_id
     row = db.execute(
         "SELECT title, suggested_action, reasoning, importance, due_date, source, "
-        "account_id, ai_thread, source_meta "
+        "account_id, ai_thread, executor_state, source_meta "
         "FROM todos WHERE todo_id = ? AND user_id = ?",
         (todo_id, user_id),
     ).fetchone()
@@ -342,11 +342,31 @@ def ask_ai(todo_id):
     if thread and not user_message:
         return jsonify({"thread": _thread_for_client(thread)})
 
-    thread = resolve_todo(dict(row), thread, user_message, user_id)
+    try:
+        thread, state = resolve(
+            dict(row), thread, user_message, user_id, row["executor_state"]
+        )
+    except ExecutorError as exc:
+        # Show the failure in the thread pane instead of erroring the request:
+        # the frontend reads data.thread without checking the status code, so a
+        # non-200 would just vanish. Deliberately not persisted — the run failed,
+        # so neither the log nor the session id should advance.
+        failed = list(thread)
+        if user_message:
+            failed.append({"role": "user", "content": user_message})
+        failed.append({"role": "assistant", "content": f"⚠️ Resolution failed: {exc}"})
+        return jsonify({"thread": _thread_for_client(failed)})
 
     db.execute(
-        "UPDATE todos SET ai_thread = ?, updated_at = ? WHERE todo_id = ? AND user_id = ?",
-        (json.dumps(thread), datetime.now(timezone.utc).isoformat(), todo_id, user_id),
+        "UPDATE todos SET ai_thread = ?, executor_state = ?, updated_at = ? "
+        "WHERE todo_id = ? AND user_id = ?",
+        (
+            json.dumps(thread),
+            state,
+            datetime.now(timezone.utc).isoformat(),
+            todo_id,
+            user_id,
+        ),
     )
     db.commit()
 
@@ -426,8 +446,11 @@ def reset_thread(todo_id):
     db = get_db()
     user_id = current_user_id()
     assert user_id
+    # Drop the executor's own state too: clearing only the display log would
+    # leave an executor like Hermes still remembering the old conversation.
     db.execute(
-        "UPDATE todos SET ai_thread = NULL, updated_at = ? WHERE todo_id = ? AND user_id = ?",
+        "UPDATE todos SET ai_thread = NULL, executor_state = NULL, updated_at = ? "
+        "WHERE todo_id = ? AND user_id = ?",
         (datetime.now(timezone.utc).isoformat(), todo_id, user_id),
     )
     db.commit()
