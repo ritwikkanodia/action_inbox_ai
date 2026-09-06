@@ -596,6 +596,7 @@ def _save_todo(
     user_id: str,
     todo_id: str,
     source: str,
+    account_id: str | None = None,
     dedup_key: str | None,
     title: str | None,
     suggested_action: str | None = None,
@@ -614,15 +615,15 @@ def _save_todo(
     conn.execute(
         """
         INSERT OR IGNORE INTO todos (
-            todo_id, user_id, source, dedup_key, title, suggested_action, importance,
-            estimated_time_minutes, due_date, relevant_link, reasoning,
+            todo_id, user_id, account_id, source, dedup_key, title, suggested_action,
+            importance, estimated_time_minutes, due_date, relevant_link, reasoning,
             status, decision, source_meta, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
         """,
         (
-            todo_id, user_id, source, dedup_key, title, suggested_action, importance,
-            estimated_time_minutes, due_date, relevant_link, reasoning or "",
-            decision,
+            todo_id, user_id, account_id or None, source, dedup_key, title,
+            suggested_action, importance, estimated_time_minutes, due_date,
+            relevant_link, reasoning or "", decision,
             json.dumps(source_meta) if source_meta else None, now, now,
         ),
     )
@@ -739,6 +740,19 @@ def _event_to_dict(event: GmailEvent) -> dict:
     }
 
 
+def gmail_thread_url(thread_id: str, account_id: str | None) -> str:
+    """Deep link to a thread in a specific mailbox.
+
+    Gmail resolves an email address in the `/u/` slot to the right profile.
+    The older `/u/0/?authuser=<email>` form does not work: `/u/0/` pins profile
+    index 0 and overrides the authuser hint, so links opened whichever account
+    happened to be first in the browser.
+    """
+    if not account_id:
+        return f"https://mail.google.com/mail/u/0/#all/{thread_id}"
+    return f"https://mail.google.com/mail/u/{account_id}/#all/{thread_id}"
+
+
 def save_todo(
     conn: sqlite3.Connection,
     event_id: str,
@@ -746,7 +760,7 @@ def save_todo(
     thread_id: str,
     result: dict,
     user_id: str,
-    gmail_email: str = "",
+    account_id: str = "",
 ) -> bool:
     todo = result.get("todo") or {}
     title = (todo.get("title") or "").strip()
@@ -761,16 +775,13 @@ def save_todo(
     for (et,) in existing:
         if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.80:
             return False
-    authuser = f"?authuser={gmail_email}" if gmail_email else ""
-    relevant_link = (
-        todo.get("relevant_link")
-        or f"https://mail.google.com/mail/u/0/{authuser}#all/{thread_id}"
-    )
+    relevant_link = todo.get("relevant_link") or gmail_thread_url(thread_id, account_id)
     return _save_todo(
         conn,
         user_id=user_id,
         todo_id=f"todo_{user_id[:8]}_{message_id}",
         source="gmail",
+        account_id=account_id or None,
         dedup_key=message_id,
         title=title,
         suggested_action=todo.get("suggested_action"),
