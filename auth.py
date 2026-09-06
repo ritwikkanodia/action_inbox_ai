@@ -151,16 +151,18 @@ def complete_login(
             scopes = set(creds.scopes or [])
             if "https://www.googleapis.com/auth/gmail.readonly" in scopes:
                 creds_dict = json.loads(creds.to_json())
-                try:
-                    gmail_svc = google_build("gmail", "v1", credentials=creds)
-                    profile = gmail_svc.users().getProfile(userId="me").execute()
-                    creds_dict["connected_email"] = profile.get("emailAddress")
-                except Exception:
-                    # If the profile call fails, still save whatever tokens we
-                    # received; connected_email is optional and will be filled
-                    # by a later reconnect or by the poller.
-                    pass
-                set_source_credentials(db, user_id, "gmail", "oauth2", creds_dict)
+                gmail_svc = google_build("gmail", "v1", credentials=creds)
+                profile = gmail_svc.users().getProfile(userId="me").execute()
+                connected_email = (profile.get("emailAddress") or "").strip().lower()
+                # Skip rather than store an unkeyable row: account_id is the
+                # primary key, and a blank one would collide across accounts.
+                # The user can still connect Gmail from Settings.
+                if connected_email:
+                    creds_dict["connected_email"] = connected_email
+                    set_source_credentials(
+                        db, user_id, "gmail", "oauth2", creds_dict,
+                        account_id=connected_email,
+                    )
     except Exception:
         # Non-fatal: ensure login completes even if saving creds fails.
         pass

@@ -34,8 +34,11 @@ from db import (
     get_user_by_id,
     record_page_view,
     get_user_view_summary,
+    list_gmail_accounts,
+    gmail_state_key,
+    gmail_thread_url,
 )
-from pollers.gmail.poller import BACKFILL_PENDING_KEY, BACKFILLED_EMAIL_KEY
+from pollers.gmail.poller import BACKFILL_PENDING_SUFFIX, BACKFILLED_SUFFIX
 from pollers.digest import poller as digest_poller
 from auth import (
     complete_login,
@@ -509,7 +512,10 @@ def gmail_auth():
     flow = get_auth_flow(redirect_uri)
     auth_url, state = flow.authorization_url(
         access_type="offline",
-        prompt="consent",
+        # `select_account` is required for multi-account: with `consent` alone
+        # Google silently reuses the already signed-in account, making it
+        # impossible to add a second mailbox from the browser.
+        prompt="select_account consent",
     )
     session["gmail_oauth_state"] = state
     session["gmail_oauth_code_verifier"] = flow.code_verifier
@@ -539,27 +545,44 @@ def gmail_callback():
     creds = flow.credentials
     db = get_db()
     creds_dict = json.loads(creds.to_json())
+
+    # The address is mandatory now: it is the connection's primary key, the
+    # value the deep link needs, and the namespace for the poll cursor. A row
+    # without one cannot be keyed, linked, or polled, so fail loudly rather
+    # than storing an unusable connection.
     try:
         gmail_svc = google_build("gmail", "v1", credentials=creds)
         profile = gmail_svc.users().getProfile(userId="me").execute()
-        creds_dict["connected_email"] = profile.get("emailAddress")
+        connected_email = (profile.get("emailAddress") or "").strip().lower()
     except Exception:
-        pass
+        connected_email = ""
+    if not connected_email:
+        session.pop("gmail_oauth_state", None)
+        session.pop("gmail_oauth_code_verifier", None)
+        return (
+            "Couldn't read the Gmail address for that account, so it wasn't "
+            "connected. This is usually temporary — please try again.",
+            502,
+        )
+
+    creds_dict["connected_email"] = connected_email
     user_id = current_user_id()
     assert user_id
-    set_source_credentials(db, user_id, "gmail", "oauth2", creds_dict)
+    set_source_credentials(
+        db, user_id, "gmail", "oauth2", creds_dict, account_id=connected_email
+    )
 
-    connected_email = (creds_dict.get("connected_email") or "").strip().lower()
-    if connected_email:
-        creds_dict["connected_email"] = connected_email
-        set_source_credentials(db, user_id, "gmail", "oauth2", creds_dict)
-        backfilled_email = (get_user_state(db, user_id, BACKFILLED_EMAIL_KEY) or "").strip().lower()
-        if backfilled_email == connected_email:
-            print(f"[gmail] reconnect of {connected_email} — skipping backfill")
-        else:
-            print(f"[gmail] new account {connected_email} (previous: {backfilled_email or 'none'}) — scheduling backfill")
-            set_user_state(db, user_id, BACKFILL_PENDING_KEY, connected_email)
-            clear_user_state(db, user_id, "history_id")
+    backfilled_key = gmail_state_key(connected_email, BACKFILLED_SUFFIX)
+    if get_user_state(db, user_id, backfilled_key):
+        print(f"[gmail] reconnect of {connected_email} — skipping backfill")
+    else:
+        print(f"[gmail] new account {connected_email} — scheduling backfill")
+        set_user_state(
+            db, user_id,
+            gmail_state_key(connected_email, BACKFILL_PENDING_SUFFIX),
+            connected_email,
+        )
+        clear_user_state(db, user_id, gmail_state_key(connected_email, "history_id"))
 
     session.pop("gmail_oauth_state", None)
     session.pop("gmail_oauth_code_verifier", None)
