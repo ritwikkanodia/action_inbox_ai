@@ -77,12 +77,13 @@ def init_db(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS source_connections (
             user_id       TEXT NOT NULL,
             source        TEXT NOT NULL,
+            account_id    TEXT NOT NULL DEFAULT '',
             auth_type     TEXT NOT NULL
                               CHECK (auth_type IN ('api_key','oauth2')),
             credentials   TEXT NOT NULL,
             connected_at  TEXT NOT NULL,
             updated_at    TEXT NOT NULL,
-            PRIMARY KEY (user_id, source)
+            PRIMARY KEY (user_id, source, account_id)
         );
 
         CREATE TABLE IF NOT EXISTS events (
@@ -98,6 +99,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             user_id                TEXT,
             source                 TEXT NOT NULL
                                        CHECK (source IN ('gmail','fathom','browser_history','system','user')),
+            account_id             TEXT,
             dedup_key              TEXT,
             title                  TEXT,
             suggested_action       TEXT,
@@ -191,13 +193,19 @@ def init_db(conn: sqlite3.Connection) -> None:
     if "user_id" not in todo_cols:
         conn.execute("ALTER TABLE todos ADD COLUMN user_id TEXT")
 
+    if "account_id" not in todo_cols:
+        conn.execute("ALTER TABLE todos ADD COLUMN account_id TEXT")
+
     sc_cols = {row[1] for row in conn.execute("PRAGMA table_info(source_connections)").fetchall()}
-    needs_sc_rebuild = "user_id" not in sc_cols
+    # Pre-multi-user databases: source_connections has no user_id at all.
+    needs_user_id_backfill = "user_id" not in sc_cols
+    # Pre-multi-account databases: the rebuild this migration performs.
+    needs_sc_rebuild = "account_id" not in sc_cols
 
     has_orphan_todos = bool(
         conn.execute("SELECT 1 FROM todos WHERE user_id IS NULL LIMIT 1").fetchone()
     )
-    has_legacy_sc_rows = needs_sc_rebuild and bool(
+    has_legacy_sc_rows = needs_user_id_backfill and bool(
         conn.execute("SELECT 1 FROM source_connections LIMIT 1").fetchone()
     )
     placeholders = ",".join("?" * len(_LEGACY_USER_STATE_KEYS))
@@ -213,29 +221,50 @@ def init_db(conn: sqlite3.Connection) -> None:
     if needs_backfill:
         legacy_user_id, _ = upsert_user(conn, _legacy_user_email())
 
+    # `account_id` widens the primary key so one user can connect several
+    # accounts per source. Gmail rows are deliberately NOT carried across:
+    # the only pre-existing connection has no recorded address, so its
+    # account-namespaced cursor key can't be derived. Users reconnect once.
+    # See docs/superpowers/specs/2026-09-06-multi-gmail-accounts-design.md.
     if needs_sc_rebuild:
         conn.execute("""
             CREATE TABLE source_connections_new (
                 user_id       TEXT NOT NULL,
                 source        TEXT NOT NULL,
+                account_id    TEXT NOT NULL DEFAULT '',
                 auth_type     TEXT NOT NULL
                                   CHECK (auth_type IN ('api_key','oauth2')),
                 credentials   TEXT NOT NULL,
                 connected_at  TEXT NOT NULL,
                 updated_at    TEXT NOT NULL,
-                PRIMARY KEY (user_id, source)
+                PRIMARY KEY (user_id, source, account_id)
             )
         """)
-        if legacy_user_id and has_legacy_sc_rows:
+        if needs_user_id_backfill:
+            # Very old database: stamp the legacy user onto every row.
             conn.execute(
                 "INSERT INTO source_connections_new "
-                "(user_id, source, auth_type, credentials, connected_at, updated_at) "
-                "SELECT ?, source, auth_type, credentials, connected_at, updated_at "
-                "FROM source_connections",
+                "(user_id, source, account_id, auth_type, credentials, connected_at, updated_at) "
+                "SELECT ?, source, '', auth_type, credentials, connected_at, updated_at "
+                "FROM source_connections WHERE source != 'gmail'",
                 (legacy_user_id,),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO source_connections_new "
+                "(user_id, source, account_id, auth_type, credentials, connected_at, updated_at) "
+                "SELECT user_id, source, '', auth_type, credentials, connected_at, updated_at "
+                "FROM source_connections WHERE source != 'gmail'"
             )
         conn.execute("DROP TABLE source_connections")
         conn.execute("ALTER TABLE source_connections_new RENAME TO source_connections")
+        # Legacy single-account Gmail cursors are meaningless now that cursors
+        # are namespaced per account. Dropping them makes the next poll after
+        # reconnect start from a clean backfill.
+        conn.execute(
+            "DELETE FROM user_state WHERE key IN "
+            "('history_id', 'gmail_backfill_pending', 'gmail_backfilled_email')"
+        )
 
     if has_orphan_todos and legacy_user_id:
         conn.execute(
