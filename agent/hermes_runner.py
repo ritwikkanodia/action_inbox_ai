@@ -4,8 +4,8 @@ Hermes replaces the in-process Agents-SDK resolver for *execution*: it brings
 its own browser, terminal, file and desktop tools, so this module only has to
 build a prompt, shell out, and read the result back.
 
-The entire Hermes surface is deliberately confined to this file. Swapping
-executors again should not touch app.py.
+The entire Hermes surface is deliberately confined to this file; `resolve`
+implements the contract in `agent/executor.py`, which is what app.py calls.
 """
 
 import json
@@ -13,6 +13,7 @@ import os
 import subprocess
 import tempfile
 
+from agent.executor import ExecutorError
 from agent.hermes_prompt import build_followup_prompt, build_prompt
 
 HERMES_BIN = os.environ.get("HERMES_BIN", "hermes")
@@ -26,10 +27,6 @@ TIMEOUT_SECONDS = int(os.environ.get("HERMES_TIMEOUT_SECONDS", "600"))
 # approval prompt would block until the timeout. Set HERMES_YOLO=0 to fall back
 # to Hermes' own approval rules (expect blocked runs unless you've allowlisted).
 YOLO = os.environ.get("HERMES_YOLO", "1").strip().lower() not in {"0", "false", "no"}
-
-
-class HermesError(RuntimeError):
-    """Hermes failed to produce a reply. Message is safe to show the user."""
 
 
 def _run(prompt: str, session_id: str | None) -> tuple[str, str | None]:
@@ -54,11 +51,11 @@ def _run(prompt: str, session_id: str | None) -> tuple[str, str | None]:
                 cmd, capture_output=True, text=True, timeout=TIMEOUT_SECONDS
             )
         except subprocess.TimeoutExpired:
-            raise HermesError(
+            raise ExecutorError(
                 f"Hermes did not finish within {TIMEOUT_SECONDS}s and was stopped."
             ) from None
         except FileNotFoundError:
-            raise HermesError(
+            raise ExecutorError(
                 f"Hermes CLI not found (looked for {HERMES_BIN!r}). "
                 "Set HERMES_BIN if it lives elsewhere."
             ) from None
@@ -74,16 +71,16 @@ def _run(prompt: str, session_id: str | None) -> tuple[str, str | None]:
 
     if proc.returncode != 0 or usage.get("failed"):
         detail = (proc.stderr or proc.stdout or "").strip()
-        raise HermesError(detail or f"Hermes exited with status {proc.returncode}.")
+        raise ExecutorError(detail or f"Hermes exited with status {proc.returncode}.")
 
     reply = (proc.stdout or "").strip()
     if not reply:
-        raise HermesError("Hermes returned an empty reply.")
+        raise ExecutorError("Hermes returned an empty reply.")
 
     return reply, usage.get("session_id") or session_id
 
 
-def resolve_todo(
+def resolve(
     todo: dict, thread: list, user_message: str, user_id: str, session_id: str | None
 ) -> tuple[list, str | None]:
     """Run one turn and append it to `thread`.

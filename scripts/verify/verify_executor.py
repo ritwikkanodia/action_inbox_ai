@@ -1,11 +1,11 @@
-"""Verifies the Hermes execution path behind POST /todos/<id>/ask-ai.
+"""Verifies the executor seam behind POST /todos/<id>/ask-ai.
 
-The Hermes CLI itself is stubbed out, so this covers the app<->runner glue —
-session persistence, resume, the failure path, and reset — deterministically and
-without spending money. Real CLI behavior (one-shot output, --resume continuity)
-is verified by hand against the installed binary.
+The Hermes CLI itself is stubbed out, so this covers the app<->executor glue —
+executor selection, state persistence, resume, the failure path, and reset —
+deterministically and without spending money. Real CLI behavior (one-shot
+output, --resume continuity) is verified by hand against the installed binary.
 
-Usage: python scripts/verify/verify_hermes.py
+Usage: python scripts/verify/verify_executor.py
 """
 import json
 import os
@@ -23,7 +23,7 @@ os.environ.setdefault("GOOGLE_CLIENT_SECRET", "verify-client-secret")
 import sqlite3
 
 import app as app_module
-from agent import hermes_runner
+from agent import executor, hermes_runner
 from db import init_db, upsert_user
 
 
@@ -43,12 +43,12 @@ def stub_run(prompt: str, session_id: str | None) -> tuple[str, str | None]:
 
 def failing_run(prompt: str, session_id: str | None) -> tuple[str, str | None]:
     calls.append((prompt, session_id))
-    raise hermes_runner.HermesError("browser exploded")
+    raise executor.ExecutorError("browser exploded")
 
 
 def row(conn, todo_id):
     return conn.execute(
-        "SELECT ai_thread, hermes_session_id FROM todos WHERE todo_id = ?", (todo_id,)
+        "SELECT ai_thread, executor_state FROM todos WHERE todo_id = ?", (todo_id,)
     ).fetchone()
 
 
@@ -123,8 +123,28 @@ def main() -> None:
     check("reset clears the display log", ai_thread is None)
     check("reset clears the Hermes session", session_id is None)
 
+    # ---- the seam itself ---------------------------------------------------
+    check("defaults to hermes", executor.current_executor() == "hermes")
+
+    os.environ["TODO_EXECUTOR"] = "agents_sdk"
+    check("TODO_EXECUTOR selects the SDK executor",
+          executor._load(executor.current_executor()).__module__ == "agent.sdk_executor")
+
+    os.environ["TODO_EXECUTOR"] = "hermes"
+    check("TODO_EXECUTOR selects Hermes",
+          executor._load(executor.current_executor()).__module__ == "agent.hermes_runner")
+
+    os.environ["TODO_EXECUTOR"] = "nonsense"
+    try:
+        executor._load(executor.current_executor())
+        unknown_rejected = False
+    except executor.ExecutorError:
+        unknown_rejected = True
+    check("an unknown executor is rejected", unknown_rejected)
+    os.environ.pop("TODO_EXECUTOR")
+
     conn.close()
-    print("\nAll Hermes path checks passed.")
+    print("\nAll executor seam checks passed.")
 
 
 if __name__ == "__main__":

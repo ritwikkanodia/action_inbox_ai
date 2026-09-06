@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-from agent.hermes_runner import HermesError, resolve_todo
+from agent.executor import ExecutorError, resolve
 
 from flask import (
     Flask,
@@ -320,7 +320,7 @@ def ask_ai(todo_id):
     assert user_id
     row = db.execute(
         "SELECT title, suggested_action, reasoning, importance, due_date, source, "
-        "account_id, ai_thread, hermes_session_id, source_meta "
+        "account_id, ai_thread, executor_state, source_meta "
         "FROM todos WHERE todo_id = ? AND user_id = ?",
         (todo_id, user_id),
     ).fetchone()
@@ -343,10 +343,10 @@ def ask_ai(todo_id):
         return jsonify({"thread": _thread_for_client(thread)})
 
     try:
-        thread, session_id = resolve_todo(
-            dict(row), thread, user_message, user_id, row["hermes_session_id"]
+        thread, state = resolve(
+            dict(row), thread, user_message, user_id, row["executor_state"]
         )
-    except HermesError as exc:
+    except ExecutorError as exc:
         # Show the failure in the thread pane instead of erroring the request:
         # the frontend reads data.thread without checking the status code, so a
         # non-200 would just vanish. Deliberately not persisted — the run failed,
@@ -354,15 +354,15 @@ def ask_ai(todo_id):
         failed = list(thread)
         if user_message:
             failed.append({"role": "user", "content": user_message})
-        failed.append({"role": "assistant", "content": f"⚠️ Hermes failed: {exc}"})
+        failed.append({"role": "assistant", "content": f"⚠️ Resolution failed: {exc}"})
         return jsonify({"thread": _thread_for_client(failed)})
 
     db.execute(
-        "UPDATE todos SET ai_thread = ?, hermes_session_id = ?, updated_at = ? "
+        "UPDATE todos SET ai_thread = ?, executor_state = ?, updated_at = ? "
         "WHERE todo_id = ? AND user_id = ?",
         (
             json.dumps(thread),
-            session_id,
+            state,
             datetime.now(timezone.utc).isoformat(),
             todo_id,
             user_id,
@@ -446,10 +446,10 @@ def reset_thread(todo_id):
     db = get_db()
     user_id = current_user_id()
     assert user_id
-    # Drop the Hermes session too: clearing only the display log would leave the
-    # agent still remembering the old conversation on the next turn.
+    # Drop the executor's own state too: clearing only the display log would
+    # leave an executor like Hermes still remembering the old conversation.
     db.execute(
-        "UPDATE todos SET ai_thread = NULL, hermes_session_id = NULL, updated_at = ? "
+        "UPDATE todos SET ai_thread = NULL, executor_state = NULL, updated_at = ? "
         "WHERE todo_id = ? AND user_id = ?",
         (datetime.now(timezone.utc).isoformat(), todo_id, user_id),
     )
