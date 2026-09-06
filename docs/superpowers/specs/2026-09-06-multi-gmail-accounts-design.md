@@ -41,6 +41,8 @@ it: routing to the right account is the whole point of the feature.
 - Filtering the todo list by account. Attribution is display-only.
 - Changing which account the user signs in with, or supporting more than
   one sign-in identity. Sign-in stays single; only *data* connections fan out.
+- Preserving the existing Gmail connection across the schema change. See
+  "Migration" — it is dropped deliberately.
 
 ## Chosen approach
 
@@ -60,8 +62,8 @@ Two alternatives were considered and rejected:
   callbacks clobber each other.
 
 The chosen approach mirrors the move this repo already made when it went
-multi-user; the rebuild-and-copy migration at `db.py:218` is the pattern to
-follow.
+multi-user; the rebuild-and-copy migration at `db.py:218` is the structural
+pattern to follow, minus the copy.
 
 ## Data model
 
@@ -87,27 +89,15 @@ single-connection sources such as Fathom. Using the address as the key —
 rather than a synthetic id — means the value the deep link needs is the same
 value the row is keyed by, with no extra lookup.
 
-Migration: detect a missing `account_id` column via `PRAGMA table_info`,
-create `source_connections_new`, and copy every row across, setting
-`account_id` to `lower(json_extract(credentials, '$.connected_email'))` for
-Gmail rows and `''` where that is absent or the source is not Gmail. Then
-drop and rename, exactly as `db.py:218` does.
-
-An existing Gmail row whose stored credentials never got a
-`connected_email` (the `except: pass` paths in `app.py:546` and `auth.py:158`
-allow this) migrates to `account_id = ''`. That row stays addressable and
-keeps polling; the poller fills in the real address on its next successful
-profile call and rewrites the row under the correct key.
-
 ### `todos`
 
 Add a nullable `account_id TEXT` column via the existing idempotent
 `ALTER TABLE` migration style.
 
-Legacy Gmail todos get `NULL`, not a backfilled guess. `NULL` is the honest
+Existing Gmail todos get `NULL`, not a backfilled guess. `NULL` is the honest
 value: before this change only one Gmail account could exist, but nothing in
-the row records *which* address it was at the time, and the connected account
-may since have been swapped. `NULL` reads as "unknown" and falls back to
+the row records *which* address it was, and the sole existing connection has
+no recorded address at all. `NULL` reads as "unknown" and falls back to
 current link behaviour.
 
 ### Poll cursors
@@ -120,15 +110,36 @@ Cursor keys in `user_state` become account-namespaced:
 | `gmail_backfill_pending` | `gmail:<email>:backfill_pending` |
 | `gmail_backfilled_email` | *removed* — the account identity is now in the key |
 
-A one-time migration renames the existing keys onto the currently-connected
-Gmail address. This matters: without it, every existing user's connected
-account would look brand new on the first run after deploy and re-run the
-3-day backfill, and `history_id` would reset to a fresh baseline.
-
 The `gmail_backfilled_email` key is replaced by a per-account
-`gmail:<email>:backfilled` marker, which preserves the existing
-"reconnect of a known account skips backfill" behaviour in `app.py:555-563`
-on a per-account basis.
+`gmail:<email>:backfilled` marker, preserving the existing "reconnect of a
+known account skips backfill" behaviour in `app.py:553-563` per account.
+
+### Migration: drop the existing Gmail connection
+
+The migration **deletes** every Gmail row from `source_connections` and the
+legacy `history_id` / `gmail_backfill_pending` / `gmail_backfilled_email`
+keys from `user_state`. Users reconnect Gmail once from Settings.
+
+This is a deliberate trade, valid because the product has no users yet. The
+only existing Gmail connection is the developer's, and — verified directly
+against `gmail_events.db` — its stored credentials have **no
+`connected_email`**, while `user_state` holds a bare `history_id` and no
+backfill keys. Since the account's address was never recorded, there is no
+way to derive the account-namespaced cursor key for it. Preserving that row
+would require the poller to learn the address on its first `getProfile` call,
+then rewrite the row and rename the cursor key mid-flight — the most
+intricate code in the feature, written to serve exactly one row that a single
+click can recreate.
+
+Dropping it removes the copy-with-`json_extract` logic, the cursor-key rename,
+the adopt-on-first-poll path, and the `account_id = ''` collision guard in the
+OAuth callback. The cost is one re-auth and a 3-day backfill, both acceptable.
+
+Fathom rows are **not** dropped — they migrate across to `account_id = ''`
+untouched, since the rebuild is the only reason they move at all.
+
+Existing todos are not touched by the migration. The one existing Gmail todo
+keeps `account_id = NULL` and uses the fallback link and fallback account.
 
 ### Dedup — deliberately unchanged
 
@@ -137,7 +148,7 @@ on a per-account basis.
 
 Account-scoping the key (`<account>:<message_id>`) was considered and
 rejected: it would make every already-seen message look new, regenerating
-todos for the entire existing corpus on first poll after deploy.
+todos for the entire existing corpus on first poll.
 
 The failure mode this leaves open — one email delivered to two connected
 accounts, producing two different `message_id`s and therefore two todos — is
@@ -181,14 +192,14 @@ perform from the browser even once the backend supports it.
 
 `gmail_callback` (`app.py:521`) keys the write by the address returned from
 the profile call, so re-authorizing an already-connected account updates that
-row in place rather than creating a duplicate. If the profile call fails, the
-callback must **not** write a row under `account_id = ''` when other accounts
-exist — that would collide with a legacy unkeyed row. It returns an error and
-asks the user to retry instead.
+row in place rather than creating a duplicate. The address is now **required**:
+where the current code swallows a failed profile call and saves the row anyway
+(`app.py:546`), it must instead refuse to write and surface an error, since a
+row with no address cannot be keyed, linked, or polled per-account. The same
+applies to the login-time credential save in `auth.py:158`.
 
-The login-time credential save in `auth.py:146-167` writes under the
-sign-in address, making the sign-in account the first connected account
-naturally.
+That login-time save writes under the sign-in address, making the sign-in
+account the first connected account naturally.
 
 ## Links, UI, and the agent
 
@@ -200,8 +211,8 @@ https://mail.google.com/mail/u/<email>/#all/<thread_id>
 
 Gmail accepts an address in the `u/` slot and resolves it to the right
 profile. This replaces the broken `/u/0/?authuser=` form at `db.py:709`.
-Where `account_id` is `NULL` (legacy todos), fall back to the existing
-`/u/0/#all/<thread_id>` form — the same behaviour as today, no worse.
+Where `account_id` is `NULL`, fall back to the existing `/u/0/#all/<thread_id>`
+form — the same behaviour as today, no worse.
 
 The same fix applies to the fallback URL at `app.py:391`.
 
@@ -227,7 +238,8 @@ accounts" rather than "no connection row".
 ### Todo attribution
 
 Each Gmail todo row shows an account badge. Display-only — no account filter,
-and no change to the existing source filter or sort order.
+and no change to the existing source filter or sort order. A todo with
+`NULL` `account_id` shows no badge.
 
 ### Agent and thread context
 
@@ -242,7 +254,7 @@ an arbitrary account. `_build_agent` (`agent/resolver.py:11`) and
 todo's `account_id`.
 
 For a todo with `NULL` `account_id`, all of these fall back to the user's
-first connected account — the only account that could have produced it.
+first connected account.
 
 ### Disconnected accounts
 
@@ -257,28 +269,34 @@ tools already log and degrade. No new "stale account" UI is in scope.
 This repo has no test suite, no linter, and no CI. Per CLAUDE.md, verification
 is running both processes and exercising the UI. The checks that matter:
 
-1. **Migration is non-destructive.** Run `init_db` against a *copy* of the
-   real `gmail_events.db`. Confirm the existing Gmail row lands with the right
-   `account_id`, the renamed cursor keys are present, and the first poll after
-   migration does **not** re-backfill or replay history.
-2. **Two accounts poll independently.** Connect a second account; confirm the
-   log shows both, each with its own history cursor, and that the second
-   account backfills while the first does not.
-3. **Links route correctly.** A todo from account B opens the thread in
+1. **Migration lands cleanly.** Run `init_db` against a copy of
+   `gmail_events.db`. Confirm `source_connections` has the new shape, the
+   Gmail row and legacy cursor keys are gone, the Fathom row (if any)
+   survived, and all 23 todos are intact.
+2. **Reconnect works.** Connect Gmail from Settings; confirm the row is keyed
+   by the real address and a backfill runs.
+3. **Two accounts poll independently.** Connect a second account; confirm the
+   log shows both with separate history cursors, and that only the new one
+   backfills.
+4. **Links route correctly.** A todo from account B opens the thread in
    account B, in a browser signed into both.
-4. **Isolation on failure.** Revoke account B's token; confirm B flips to
+5. **Isolation on failure.** Revoke account B's token; confirm B flips to
    not-connected and A keeps polling.
-5. **Disconnect.** Disconnect B; confirm A still polls and B's todos remain
-   in the list.
-6. **Legacy todos.** A todo with `NULL` `account_id` still opens and still
-   loads its thread pane via the fallback account.
+6. **Disconnect.** Disconnect B; confirm A still polls and B's todos remain.
+7. **Legacy todo.** The existing `NULL`-account Gmail todo still opens and
+   still loads its thread pane via the fallback account.
 
 ## Risks
 
-- **The `source_connections` rebuild is the highest-risk step.** It drops and
-  recreates a table holding every OAuth credential in the system. Mitigation:
-  copy the proven pattern at `db.py:218`, and verify against a database copy
-  before running against the real one.
-- **Cursor-key migration is silently destructive if missed.** Getting it
-  wrong doesn't error — it re-backfills three days of mail for every existing
-  user and regenerates todos. Test 1 above exists specifically to catch this.
+- **The migration is destructive by design.** It drops Gmail credentials.
+  That is the accepted trade above, but it means the change cannot ship after
+  real users exist without revisiting this decision — anyone connected at
+  deploy time is silently signed out of Gmail until they reconnect. If users
+  arrive before this ships, the migration must be reconsidered.
+- **The `source_connections` rebuild touches every stored credential**,
+  including Fathom's. Mitigation: follow the proven pattern at `db.py:218`
+  and verify against a database copy first.
+- **Requiring the profile call to succeed** makes OAuth stricter than today.
+  A transient Google failure now blocks connecting rather than silently
+  saving an unusable row. This is intended, but the error surfaced to the
+  user must say "try again" rather than fail opaquely.
