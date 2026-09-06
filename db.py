@@ -547,12 +547,23 @@ def clear_source_connection(
 # ---------------------------------------------------------------------------
 
 
-def get_last_history_id(conn: sqlite3.Connection, user_id: str) -> str | None:
-    return get_user_state(conn, user_id, "history_id")
+def gmail_state_key(account_id: str, suffix: str) -> str:
+    """Namespace a Gmail poll cursor by account, e.g. 'gmail:a@x.com:history_id'."""
+    return f"gmail:{account_id}:{suffix}"
 
 
-def set_last_history_id(conn: sqlite3.Connection, user_id: str, history_id: str) -> None:
-    set_user_state(conn, user_id, "history_id", history_id)
+def get_gmail_history_id(
+    conn: sqlite3.Connection, user_id: str, account_id: str
+) -> str | None:
+    return get_user_state(conn, user_id, gmail_state_key(account_id, "history_id"))
+
+
+def set_gmail_history_id(
+    conn: sqlite3.Connection, user_id: str, account_id: str, history_id: str
+) -> None:
+    set_user_state(
+        conn, user_id, gmail_state_key(account_id, "history_id"), history_id
+    )
 
 
 def get_fathom_last_polled_at(conn: sqlite3.Connection, user_id: str) -> str | None:
