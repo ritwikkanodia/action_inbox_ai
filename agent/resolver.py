@@ -13,9 +13,9 @@ from agent.tools.local_files import local_file_tools
 ENABLE_BROWSER_AGENT = os.environ.get("ENABLE_BROWSER_AGENT", "").strip().lower() in {"1", "true", "yes"}
 
 
-def _build_agent(user_id: str) -> Agent:
+def _build_agent(user_id: str, account_id: str | None = None) -> Agent:
     tools: list[Any] = [WebSearchTool()]
-    tools.extend(gmail_tools(user_id))
+    tools.extend(gmail_tools(user_id, account_id))
     tools.extend(local_file_tools())
     if ENABLE_BROWSER_AGENT:
         from agent.tools.browser import use_browser
@@ -32,7 +32,9 @@ def resolve_todo(
     todo: dict, thread: list[Any], user_message: str, user_id: str
 ) -> list[Any]:
     """Run one turn of the agent. Returns the updated thread (SDK input-list shape)."""
-    agent = _build_agent(user_id)
+    # The agent searches the mailbox the todo came from. None (legacy todos)
+    # falls back to the user's first connected account.
+    agent = _build_agent(user_id, todo.get("account_id"))
 
     input_items: list[Any]
     if thread:

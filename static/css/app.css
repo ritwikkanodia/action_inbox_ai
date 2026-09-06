@@ -1306,3 +1306,32 @@
       header.top::before { display: none; }
       .tabs { gap: 8px; }
     }
+
+    .gmail-account-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 6px 0;
+      border-bottom: 1px solid var(--rule);
+    }
+    .gmail-account-row:last-of-type { border-bottom: none; }
+    .gmail-account-email {
+      font-size: 13px;
+      color: var(--ink-2);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #gmail-accounts { margin-bottom: 8px; }
+    .account-badge {
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: var(--pill-stone-bg);
+      color: var(--pill-stone-fg);
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }

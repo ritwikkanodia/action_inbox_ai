@@ -34,8 +34,11 @@ from db import (
     get_user_by_id,
     record_page_view,
     get_user_view_summary,
+    list_gmail_accounts,
+    gmail_state_key,
+    gmail_thread_url,
 )
-from pollers.gmail.poller import BACKFILL_PENDING_KEY, BACKFILLED_EMAIL_KEY
+from pollers.gmail.poller import BACKFILL_PENDING_SUFFIX, BACKFILLED_SUFFIX
 from pollers.digest import poller as digest_poller
 from auth import (
     complete_login,
@@ -207,7 +210,7 @@ def index():
     rows = db.execute(
         """
         SELECT todo_id, title, suggested_action, importance,
-               estimated_time_minutes, due_date, relevant_link, reasoning, status, source, decision, created_at, source_meta,
+               estimated_time_minutes, due_date, relevant_link, reasoning, status, source, account_id, decision, created_at, source_meta,
                (ai_thread IS NOT NULL AND ai_thread != '' AND ai_thread != '[]') AS has_ai_thread
         FROM todos
         WHERE user_id = ? AND title IS NOT NULL AND title != ''
@@ -228,7 +231,8 @@ def index():
                 t["source_meta"] = {}
         else:
             t["source_meta"] = {}
-    gmail_connected = bool(get_source_connection(db, user_id, "gmail"))
+    gmail_accounts = list_gmail_accounts(db, user_id)
+    gmail_connected = bool(gmail_accounts)
     fresh_signup = bool(session.pop("fresh_signup", False))
     return render_template(
         "index.html",
@@ -315,7 +319,8 @@ def ask_ai(todo_id):
     user_id = current_user_id()
     assert user_id
     row = db.execute(
-        "SELECT title, suggested_action, reasoning, importance, due_date, source, ai_thread, source_meta "
+        "SELECT title, suggested_action, reasoning, importance, due_date, source, "
+        "account_id, ai_thread, source_meta "
         "FROM todos WHERE todo_id = ? AND user_id = ?",
         (todo_id, user_id),
     ).fetchone()
@@ -355,7 +360,7 @@ def todo_context(todo_id):
     user_id = current_user_id()
     assert user_id
     row = db.execute(
-        "SELECT source, source_meta, relevant_link FROM todos WHERE todo_id = ? AND user_id = ?",
+        "SELECT source, account_id, source_meta, relevant_link FROM todos WHERE todo_id = ? AND user_id = ?",
         (todo_id, user_id),
     ).fetchone()
     if row is None:
@@ -371,8 +376,11 @@ def todo_context(todo_id):
         thread_id = meta.get("thread_id")
         if not thread_id:
             return jsonify({"source": source, "error": "No thread linked to this todo."})
+        account_id = row["account_id"]
         try:
-            service = get_gmail_service(db, user_id)
+            # account_id is None for todos created before per-account provenance;
+            # get_gmail_service falls back to the user's first connected account.
+            service = get_gmail_service(db, user_id, account_id)
             user_email = service.users().getProfile(userId="me").execute().get("emailAddress", "")
             messages = fetch_thread_messages(service, thread_id)
             formatted = [
@@ -388,7 +396,8 @@ def todo_context(todo_id):
             return jsonify({
                 "source": "gmail",
                 "thread": formatted,
-                "thread_url": row["relevant_link"] or f"https://mail.google.com/mail/u/0/#all/{thread_id}",
+                "account": account_id,
+                "thread_url": row["relevant_link"] or gmail_thread_url(thread_id, account_id),
             })
         except Exception as exc:
             return jsonify({"source": "gmail", "error": f"Couldn't load thread: {exc}"})
@@ -485,8 +494,7 @@ def get_settings():
     assert user_id
     fathom = get_source_connection(db, user_id, "fathom")
     fathom_key = (fathom or {}).get("credentials", {}).get("api_key", "") if fathom else None
-    gmail = get_source_connection(db, user_id, "gmail")
-    gmail_email = (gmail or {}).get("credentials", {}).get("connected_email") if gmail else None
+    accounts = list_gmail_accounts(db, user_id)
     return jsonify({
         "sources": {
             "fathom": {
@@ -494,8 +502,10 @@ def get_settings():
                 "api_key_preview": f"...{fathom_key[-6:]}" if fathom_key else None,
             },
             "gmail": {
-                "connected": bool(gmail),
-                "email": gmail_email,
+                "accounts": [
+                    {"email": a["account_id"], "connected_at": a["connected_at"]}
+                    for a in accounts
+                ],
                 "auth_url": url_for("gmail_auth"),
             },
         }
@@ -509,7 +519,10 @@ def gmail_auth():
     flow = get_auth_flow(redirect_uri)
     auth_url, state = flow.authorization_url(
         access_type="offline",
-        prompt="consent",
+        # `select_account` is required for multi-account: with `consent` alone
+        # Google silently reuses the already signed-in account, making it
+        # impossible to add a second mailbox from the browser.
+        prompt="select_account consent",
     )
     session["gmail_oauth_state"] = state
     session["gmail_oauth_code_verifier"] = flow.code_verifier
@@ -539,27 +552,44 @@ def gmail_callback():
     creds = flow.credentials
     db = get_db()
     creds_dict = json.loads(creds.to_json())
+
+    # The address is mandatory now: it is the connection's primary key, the
+    # value the deep link needs, and the namespace for the poll cursor. A row
+    # without one cannot be keyed, linked, or polled, so fail loudly rather
+    # than storing an unusable connection.
     try:
         gmail_svc = google_build("gmail", "v1", credentials=creds)
         profile = gmail_svc.users().getProfile(userId="me").execute()
-        creds_dict["connected_email"] = profile.get("emailAddress")
+        connected_email = (profile.get("emailAddress") or "").strip().lower()
     except Exception:
-        pass
+        connected_email = ""
+    if not connected_email:
+        session.pop("gmail_oauth_state", None)
+        session.pop("gmail_oauth_code_verifier", None)
+        return (
+            "Couldn't read the Gmail address for that account, so it wasn't "
+            "connected. This is usually temporary — please try again.",
+            502,
+        )
+
+    creds_dict["connected_email"] = connected_email
     user_id = current_user_id()
     assert user_id
-    set_source_credentials(db, user_id, "gmail", "oauth2", creds_dict)
+    set_source_credentials(
+        db, user_id, "gmail", "oauth2", creds_dict, account_id=connected_email
+    )
 
-    connected_email = (creds_dict.get("connected_email") or "").strip().lower()
-    if connected_email:
-        creds_dict["connected_email"] = connected_email
-        set_source_credentials(db, user_id, "gmail", "oauth2", creds_dict)
-        backfilled_email = (get_user_state(db, user_id, BACKFILLED_EMAIL_KEY) or "").strip().lower()
-        if backfilled_email == connected_email:
-            print(f"[gmail] reconnect of {connected_email} — skipping backfill")
-        else:
-            print(f"[gmail] new account {connected_email} (previous: {backfilled_email or 'none'}) — scheduling backfill")
-            set_user_state(db, user_id, BACKFILL_PENDING_KEY, connected_email)
-            clear_user_state(db, user_id, "history_id")
+    backfilled_key = gmail_state_key(connected_email, BACKFILLED_SUFFIX)
+    if get_user_state(db, user_id, backfilled_key):
+        print(f"[gmail] reconnect of {connected_email} — skipping backfill")
+    else:
+        print(f"[gmail] new account {connected_email} — scheduling backfill")
+        set_user_state(
+            db, user_id,
+            gmail_state_key(connected_email, BACKFILL_PENDING_SUFFIX),
+            connected_email,
+        )
+        clear_user_state(db, user_id, gmail_state_key(connected_email, "history_id"))
 
     session.pop("gmail_oauth_state", None)
     session.pop("gmail_oauth_code_verifier", None)
@@ -587,8 +617,17 @@ def update_source_settings(source: str):
         return jsonify({"ok": True, "connected": True, "api_key_preview": f"...{api_key[-6:]}"})
     if source == "gmail":
         if data.get("disconnect"):
-            clear_source_connection(db, user_id, "gmail")
-            return jsonify({"ok": True, "connected": False})
+            # An explicit account_id disconnects one mailbox; omitting it
+            # disconnects every Gmail account for this user.
+            account_id = (data.get("account_id") or "").strip().lower() or None
+            clear_source_connection(db, user_id, "gmail", account_id)
+            return jsonify({
+                "ok": True,
+                "accounts": [
+                    {"email": a["account_id"], "connected_at": a["connected_at"]}
+                    for a in list_gmail_accounts(db, user_id)
+                ],
+            })
         return jsonify({"error": "use /settings/sources/gmail/auth to connect"}), 400
     return jsonify({"error": "unhandled"}), 500
 

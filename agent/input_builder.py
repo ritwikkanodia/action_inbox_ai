@@ -27,7 +27,9 @@ def build_initial_inputs(todo: dict, user_message: str, user_id: str) -> list[di
     """
     context_parts = []
     if todo.get("source") == "gmail" and todo.get("source_meta"):
-        email_context = fetch_gmail_thread_context(todo["source_meta"], user_id)
+        email_context = fetch_gmail_thread_context(
+            todo["source_meta"], user_id, todo.get("account_id")
+        )
         if email_context:
             context_parts.append(f"Email thread:\n{email_context}")
     context_parts.append(_format_todo(todo))

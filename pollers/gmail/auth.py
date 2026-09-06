@@ -46,13 +46,24 @@ def get_auth_flow(
     )
 
 
-def get_gmail_service(conn: sqlite3.Connection, user_id: str):
-    row = get_source_connection(conn, user_id, "gmail")
+def get_gmail_service(
+    conn: sqlite3.Connection, user_id: str, account_id: str | None = None
+):
+    """Build a Gmail client for one connected account.
+
+    account_id=None resolves to the user's first connected account, which is
+    the fallback for todos created before per-account provenance existed.
+    """
+    row = get_source_connection(conn, user_id, "gmail", account_id)
     if not row:
+        label = account_id or "any account"
         raise RuntimeError(
-            "Gmail not connected. Visit the settings page to authorize."
+            f"Gmail not connected ({label}). Visit the settings page to authorize."
         )
 
+    # Resolve the concrete account so revocation clears only this row, never
+    # every account the user has connected.
+    resolved = row["account_id"]
     creds = Credentials.from_authorized_user_info(row["credentials"], SCOPES)
 
     if not creds.valid:
@@ -62,18 +73,22 @@ def get_gmail_service(conn: sqlite3.Connection, user_id: str):
             except RefreshError as e:
                 # Google has revoked the refresh token (Testing-mode 7-day expiry,
                 # user revoked access, password change, etc.). Clear the stored
-                # credentials so the UI flips to "not connected" and prompts re-auth.
-                clear_source_connection(conn, user_id, "gmail")
+                # credentials for THIS account so the UI flips to "not connected"
+                # and prompts re-auth, leaving the user's other accounts polling.
+                clear_source_connection(conn, user_id, "gmail", resolved)
                 raise RuntimeError(
-                    "Gmail access revoked by Google. Reconnect Gmail in settings."
+                    f"Gmail access revoked by Google for {resolved or 'this account'}. "
+                    "Reconnect it in settings."
                 ) from e
             set_source_credentials(
-                conn, user_id, "gmail", "oauth2", json.loads(creds.to_json())
+                conn, user_id, "gmail", "oauth2",
+                json.loads(creds.to_json()), account_id=resolved,
             )
         else:
-            clear_source_connection(conn, user_id, "gmail")
+            clear_source_connection(conn, user_id, "gmail", resolved)
             raise RuntimeError(
-                "Gmail credentials expired. Re-authorize via the settings page."
+                f"Gmail credentials expired for {resolved or 'this account'}. "
+                "Re-authorize via the settings page."
             )
 
     return build("gmail", "v1", credentials=creds)

@@ -153,6 +153,9 @@
             <div class="row-meta">
               {% if t.due_date %}<span class="row-due">{{ t.due_date | fmt_dt }}</span>{% endif %}
               <span class="source-badge {{ t.source or 'gmail' }}">{{ src_label }}</span>
+              {% if t.source == 'gmail' and t.account_id %}
+              <span class="account-badge" title="{{ t.account_id }}">{{ t.account_id.split('@')[0] }}</span>
+              {% endif %}
             </div>
           </div>
           <div class="row-inline-actions" data-id="{{ t.todo_id }}">
@@ -198,13 +201,8 @@
           <span class="source-connected-badge off" id="gmail-status">Not connected</span>
         </div>
         <div class="source-card-body">
-          <div id="gmail-connect-row">
-            <button class="btn-connect" id="gmail-connect-btn">Connect with Google</button>
-          </div>
-          <div id="gmail-connected-row">
-            <span class="source-card-hint" id="gmail-email-hint">Authorized via OAuth</span>
-            <button class="btn-disconnect" id="gmail-disconnect-btn">Disconnect</button>
-          </div>
+          <div id="gmail-accounts"></div>
+          <button class="btn-connect" id="gmail-connect-btn">Connect another account</button>
         </div>
       </div>
       <div class="source-card" id="fathom-card">

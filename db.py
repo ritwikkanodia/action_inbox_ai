@@ -77,12 +77,13 @@ def init_db(conn: sqlite3.Connection) -> None:
         CREATE TABLE IF NOT EXISTS source_connections (
             user_id       TEXT NOT NULL,
             source        TEXT NOT NULL,
+            account_id    TEXT NOT NULL DEFAULT '',
             auth_type     TEXT NOT NULL
                               CHECK (auth_type IN ('api_key','oauth2')),
             credentials   TEXT NOT NULL,
             connected_at  TEXT NOT NULL,
             updated_at    TEXT NOT NULL,
-            PRIMARY KEY (user_id, source)
+            PRIMARY KEY (user_id, source, account_id)
         );
 
         CREATE TABLE IF NOT EXISTS events (
@@ -98,6 +99,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             user_id                TEXT,
             source                 TEXT NOT NULL
                                        CHECK (source IN ('gmail','fathom','browser_history','system','user')),
+            account_id             TEXT,
             dedup_key              TEXT,
             title                  TEXT,
             suggested_action       TEXT,
@@ -191,13 +193,19 @@ def init_db(conn: sqlite3.Connection) -> None:
     if "user_id" not in todo_cols:
         conn.execute("ALTER TABLE todos ADD COLUMN user_id TEXT")
 
+    if "account_id" not in todo_cols:
+        conn.execute("ALTER TABLE todos ADD COLUMN account_id TEXT")
+
     sc_cols = {row[1] for row in conn.execute("PRAGMA table_info(source_connections)").fetchall()}
-    needs_sc_rebuild = "user_id" not in sc_cols
+    # Pre-multi-user databases: source_connections has no user_id at all.
+    needs_user_id_backfill = "user_id" not in sc_cols
+    # Pre-multi-account databases: the rebuild this migration performs.
+    needs_sc_rebuild = "account_id" not in sc_cols
 
     has_orphan_todos = bool(
         conn.execute("SELECT 1 FROM todos WHERE user_id IS NULL LIMIT 1").fetchone()
     )
-    has_legacy_sc_rows = needs_sc_rebuild and bool(
+    has_legacy_sc_rows = needs_user_id_backfill and bool(
         conn.execute("SELECT 1 FROM source_connections LIMIT 1").fetchone()
     )
     placeholders = ",".join("?" * len(_LEGACY_USER_STATE_KEYS))
@@ -213,29 +221,50 @@ def init_db(conn: sqlite3.Connection) -> None:
     if needs_backfill:
         legacy_user_id, _ = upsert_user(conn, _legacy_user_email())
 
+    # `account_id` widens the primary key so one user can connect several
+    # accounts per source. Gmail rows are deliberately NOT carried across:
+    # the only pre-existing connection has no recorded address, so its
+    # account-namespaced cursor key can't be derived. Users reconnect once.
+    # See docs/superpowers/specs/2026-09-06-multi-gmail-accounts-design.md.
     if needs_sc_rebuild:
         conn.execute("""
             CREATE TABLE source_connections_new (
                 user_id       TEXT NOT NULL,
                 source        TEXT NOT NULL,
+                account_id    TEXT NOT NULL DEFAULT '',
                 auth_type     TEXT NOT NULL
                                   CHECK (auth_type IN ('api_key','oauth2')),
                 credentials   TEXT NOT NULL,
                 connected_at  TEXT NOT NULL,
                 updated_at    TEXT NOT NULL,
-                PRIMARY KEY (user_id, source)
+                PRIMARY KEY (user_id, source, account_id)
             )
         """)
-        if legacy_user_id and has_legacy_sc_rows:
+        if needs_user_id_backfill:
+            # Very old database: stamp the legacy user onto every row.
             conn.execute(
                 "INSERT INTO source_connections_new "
-                "(user_id, source, auth_type, credentials, connected_at, updated_at) "
-                "SELECT ?, source, auth_type, credentials, connected_at, updated_at "
-                "FROM source_connections",
+                "(user_id, source, account_id, auth_type, credentials, connected_at, updated_at) "
+                "SELECT ?, source, '', auth_type, credentials, connected_at, updated_at "
+                "FROM source_connections WHERE source != 'gmail'",
                 (legacy_user_id,),
+            )
+        else:
+            conn.execute(
+                "INSERT INTO source_connections_new "
+                "(user_id, source, account_id, auth_type, credentials, connected_at, updated_at) "
+                "SELECT user_id, source, '', auth_type, credentials, connected_at, updated_at "
+                "FROM source_connections WHERE source != 'gmail'"
             )
         conn.execute("DROP TABLE source_connections")
         conn.execute("ALTER TABLE source_connections_new RENAME TO source_connections")
+        # Legacy single-account Gmail cursors are meaningless now that cursors
+        # are namespaced per account. Dropping them makes the next poll after
+        # reconnect start from a clean backfill.
+        conn.execute(
+            "DELETE FROM user_state WHERE key IN "
+            "('history_id', 'gmail_backfill_pending', 'gmail_backfilled_email')"
+        )
 
     if has_orphan_todos and legacy_user_id:
         conn.execute(
@@ -433,22 +462,43 @@ def clear_user_state(conn: sqlite3.Connection, user_id: str, key: str) -> None:
 
 
 def get_source_connection(
-    conn: sqlite3.Connection, user_id: str, source: str
+    conn: sqlite3.Connection,
+    user_id: str,
+    source: str,
+    account_id: str | None = None,
 ) -> dict | None:
-    row = conn.execute(
-        "SELECT source, auth_type, credentials, connected_at, updated_at "
-        "FROM source_connections WHERE user_id = ? AND source = ?",
-        (user_id, source),
-    ).fetchone()
+    """Fetch one connection. With account_id=None, returns the earliest-connected
+    row for the source — the fallback used by legacy todos with no provenance."""
+    sql = (
+        "SELECT source, account_id, auth_type, credentials, connected_at, updated_at "
+        "FROM source_connections WHERE user_id = ? AND source = ?"
+    )
+    params: tuple = (user_id, source)
+    if account_id is not None:
+        sql += " AND account_id = ?"
+        params += (account_id,)
+    sql += " ORDER BY connected_at ASC LIMIT 1"
+    row = conn.execute(sql, params).fetchone()
     if not row:
         return None
     return {
         "source": row[0],
-        "auth_type": row[1],
-        "credentials": json.loads(row[2]),
-        "connected_at": row[3],
-        "updated_at": row[4],
+        "account_id": row[1],
+        "auth_type": row[2],
+        "credentials": json.loads(row[3]),
+        "connected_at": row[4],
+        "updated_at": row[5],
     }
+
+
+def list_gmail_accounts(conn: sqlite3.Connection, user_id: str) -> list[dict]:
+    """Every connected Gmail account for a user, oldest connection first."""
+    rows = conn.execute(
+        "SELECT account_id, connected_at FROM source_connections "
+        "WHERE user_id = ? AND source = 'gmail' ORDER BY connected_at ASC",
+        (user_id,),
+    ).fetchall()
+    return [{"account_id": r[0], "connected_at": r[1]} for r in rows]
 
 
 def set_source_credentials(
@@ -457,30 +507,38 @@ def set_source_credentials(
     source: str,
     auth_type: str,
     credentials: dict,
+    account_id: str = "",
 ) -> None:
     now = _now()
     conn.execute(
         """
         INSERT INTO source_connections
-            (user_id, source, auth_type, credentials, connected_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id, source) DO UPDATE SET
+            (user_id, source, account_id, auth_type, credentials, connected_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, source, account_id) DO UPDATE SET
             auth_type    = excluded.auth_type,
             credentials  = excluded.credentials,
             updated_at   = excluded.updated_at
         """,
-        (user_id, source, auth_type, json.dumps(credentials), now, now),
+        (user_id, source, account_id, auth_type, json.dumps(credentials), now, now),
     )
     conn.commit()
 
 
 def clear_source_connection(
-    conn: sqlite3.Connection, user_id: str, source: str
+    conn: sqlite3.Connection,
+    user_id: str,
+    source: str,
+    account_id: str | None = None,
 ) -> None:
-    conn.execute(
-        "DELETE FROM source_connections WHERE user_id = ? AND source = ?",
-        (user_id, source),
-    )
+    """Disconnect one account, or every account for the source when account_id
+    is None."""
+    sql = "DELETE FROM source_connections WHERE user_id = ? AND source = ?"
+    params: tuple = (user_id, source)
+    if account_id is not None:
+        sql += " AND account_id = ?"
+        params += (account_id,)
+    conn.execute(sql, params)
     conn.commit()
 
 
@@ -489,12 +547,23 @@ def clear_source_connection(
 # ---------------------------------------------------------------------------
 
 
-def get_last_history_id(conn: sqlite3.Connection, user_id: str) -> str | None:
-    return get_user_state(conn, user_id, "history_id")
+def gmail_state_key(account_id: str, suffix: str) -> str:
+    """Namespace a Gmail poll cursor by account, e.g. 'gmail:a@x.com:history_id'."""
+    return f"gmail:{account_id}:{suffix}"
 
 
-def set_last_history_id(conn: sqlite3.Connection, user_id: str, history_id: str) -> None:
-    set_user_state(conn, user_id, "history_id", history_id)
+def get_gmail_history_id(
+    conn: sqlite3.Connection, user_id: str, account_id: str
+) -> str | None:
+    return get_user_state(conn, user_id, gmail_state_key(account_id, "history_id"))
+
+
+def set_gmail_history_id(
+    conn: sqlite3.Connection, user_id: str, account_id: str, history_id: str
+) -> None:
+    set_user_state(
+        conn, user_id, gmail_state_key(account_id, "history_id"), history_id
+    )
 
 
 def get_fathom_last_polled_at(conn: sqlite3.Connection, user_id: str) -> str | None:
@@ -538,6 +607,7 @@ def _save_todo(
     user_id: str,
     todo_id: str,
     source: str,
+    account_id: str | None = None,
     dedup_key: str | None,
     title: str | None,
     suggested_action: str | None = None,
@@ -556,15 +626,15 @@ def _save_todo(
     conn.execute(
         """
         INSERT OR IGNORE INTO todos (
-            todo_id, user_id, source, dedup_key, title, suggested_action, importance,
-            estimated_time_minutes, due_date, relevant_link, reasoning,
+            todo_id, user_id, account_id, source, dedup_key, title, suggested_action,
+            importance, estimated_time_minutes, due_date, relevant_link, reasoning,
             status, decision, source_meta, created_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?)
         """,
         (
-            todo_id, user_id, source, dedup_key, title, suggested_action, importance,
-            estimated_time_minutes, due_date, relevant_link, reasoning or "",
-            decision,
+            todo_id, user_id, account_id or None, source, dedup_key, title,
+            suggested_action, importance, estimated_time_minutes, due_date,
+            relevant_link, reasoning or "", decision,
             json.dumps(source_meta) if source_meta else None, now, now,
         ),
     )
@@ -681,6 +751,19 @@ def _event_to_dict(event: GmailEvent) -> dict:
     }
 
 
+def gmail_thread_url(thread_id: str, account_id: str | None) -> str:
+    """Deep link to a thread in a specific mailbox.
+
+    Gmail resolves an email address in the `/u/` slot to the right profile.
+    The older `/u/0/?authuser=<email>` form does not work: `/u/0/` pins profile
+    index 0 and overrides the authuser hint, so links opened whichever account
+    happened to be first in the browser.
+    """
+    if not account_id:
+        return f"https://mail.google.com/mail/u/0/#all/{thread_id}"
+    return f"https://mail.google.com/mail/u/{account_id}/#all/{thread_id}"
+
+
 def save_todo(
     conn: sqlite3.Connection,
     event_id: str,
@@ -688,7 +771,7 @@ def save_todo(
     thread_id: str,
     result: dict,
     user_id: str,
-    gmail_email: str = "",
+    account_id: str = "",
 ) -> bool:
     todo = result.get("todo") or {}
     title = (todo.get("title") or "").strip()
@@ -703,16 +786,13 @@ def save_todo(
     for (et,) in existing:
         if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.80:
             return False
-    authuser = f"?authuser={gmail_email}" if gmail_email else ""
-    relevant_link = (
-        todo.get("relevant_link")
-        or f"https://mail.google.com/mail/u/0/{authuser}#all/{thread_id}"
-    )
+    relevant_link = todo.get("relevant_link") or gmail_thread_url(thread_id, account_id)
     return _save_todo(
         conn,
         user_id=user_id,
         todo_id=f"todo_{user_id[:8]}_{message_id}",
         source="gmail",
+        account_id=account_id or None,
         dedup_key=message_id,
         title=title,
         suggested_action=todo.get("suggested_action"),

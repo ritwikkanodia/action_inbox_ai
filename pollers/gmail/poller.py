@@ -6,16 +6,17 @@ from googleapiclient.errors import HttpError as GApiHttpError
 
 from pollers.gmail.events import Actor, Actors, Content, GmailEvent, Metadata
 from db import (
-    get_last_history_id,
-    set_last_history_id,
+    gmail_state_key,
+    get_gmail_history_id,
+    set_gmail_history_id,
     save_event,
     get_user_state,
     set_user_state,
     clear_user_state,
 )
 
-BACKFILL_PENDING_KEY = "gmail_backfill_pending"
-BACKFILLED_EMAIL_KEY = "gmail_backfilled_email"
+BACKFILL_PENDING_SUFFIX = "backfill_pending"
+BACKFILLED_SUFFIX = "backfilled"
 
 HISTORY_TYPES = ["messageAdded", "messageDeleted", "labelAdded", "labelRemoved"]
 
@@ -197,24 +198,28 @@ def _backfill_messages(
     return events
 
 
-def poll(service, conn: sqlite3.Connection, user_id: str) -> list[GmailEvent]:
-    pending_email = get_user_state(conn, user_id, BACKFILL_PENDING_KEY)
-    if pending_email:
+def poll(
+    service, conn: sqlite3.Connection, user_id: str, account_id: str
+) -> list[GmailEvent]:
+    pending_key = gmail_state_key(account_id, BACKFILL_PENDING_SUFFIX)
+    if get_user_state(conn, user_id, pending_key):
         # Capture baseline before fetching so incremental polls pick up anything
         # that arrives during backfill (dedup handles overlap).
         current_id = get_current_history_id(service)
-        print(f"[gmail] {pending_email}: backfill (3d window)")
+        print(f"[gmail] {account_id}: backfill (3d window)")
         events = _backfill_messages(service, conn, user_id, days=3)
-        set_last_history_id(conn, user_id, current_id)
-        set_user_state(conn, user_id, BACKFILLED_EMAIL_KEY, pending_email)
-        clear_user_state(conn, user_id, BACKFILL_PENDING_KEY)
+        set_gmail_history_id(conn, user_id, account_id, current_id)
+        set_user_state(
+            conn, user_id, gmail_state_key(account_id, BACKFILLED_SUFFIX), "1"
+        )
+        clear_user_state(conn, user_id, pending_key)
         return events
 
-    last_id = get_last_history_id(conn, user_id)
+    last_id = get_gmail_history_id(conn, user_id, account_id)
 
     if last_id is None:
         current_id = get_current_history_id(service)
-        set_last_history_id(conn, user_id, current_id)
+        set_gmail_history_id(conn, user_id, account_id, current_id)
         return []
 
     events: list[GmailEvent] = []
@@ -280,6 +285,6 @@ def poll(service, conn: sqlite3.Connection, user_id: str) -> list[GmailEvent]:
             break
 
     if max_history_id != last_id:
-        set_last_history_id(conn, user_id, max_history_id)
+        set_gmail_history_id(conn, user_id, account_id, max_history_id)
 
     return events
