@@ -31,6 +31,7 @@ python scripts/verify/verify_links.py
 python scripts/verify/verify_cursors.py
 python scripts/verify/verify_web.py
 python scripts/verify/verify_executor.py    # stubs the Hermes CLI; no API spend
+python scripts/verify/verify_actions.py     # stubs the OpenAI call; no API spend
 ```
 
 ## Architecture
@@ -52,8 +53,10 @@ exists, and a redirect to `/login` would make the app non-installable. Key route
 - `GET /` — todos for the current user, ordered closed-last, then importance, then recency
 - `POST /todos` — user-entered todo (`source='user'`)
 - `PATCH /todos/<id>` — `due_date`, `importance`, `status`, `decision`
-- `POST /todos/<id>/ask-ai` — one agent turn; posting with no message returns the existing
-  thread without an LLM call
+- `GET /todos/<id>/actions` — the three inferred ways to close the todo; `?refresh=1` re-infers
+- `POST /todos/<id>/ask-ai` — starts one agent turn in the background and returns immediately;
+  posting with no message returns the existing thread without an LLM call
+- `GET /todos/<id>/run`, `POST /todos/<id>/run/stop` — poll and stop the running turn
 - `GET /todos/<id>/context` — source context (e.g. the Gmail thread) for the detail pane
 - `POST /todos/<id>/reset-thread` — clears `ai_thread`
 - `GET /settings`, `POST /settings/sources/<source>`, `/settings/sources/gmail/auth` — source connections
@@ -92,7 +95,8 @@ Don't swallow that — the clear-and-reprompt is the intended behavior.
 - `events` — raw `GmailEvent` payloads as JSON, append-only
 - `todos` — the unified list. `source` ∈ `gmail|fathom|browser_history|system|user`.
   `account_id` records which Gmail account a todo came from; `NULL` means unknown
-  (todos predating multi-account support).
+  (todos predating multi-account support). `action_options` caches the three
+  suggested actions as JSON; `NULL` means they haven't been inferred yet.
 - `page_views` — lightweight analytics behind `/stats`
 
 **Dedup** is a unique partial index on `(user_id, source, dedup_key)` where `dedup_key IS NOT NULL`,
@@ -111,26 +115,56 @@ the `save_*` helpers. Keep both in sync when adding an enum value.
 ## LLM usage
 
 Every OpenAI call in the repo uses **`gpt-5.4-mini`** — `pollers/gmail/todo_generator.py`,
-`pollers/browser/generator.py`, `pollers/system/generator.py`, and `agent/resolver.py`. The
-three generators use Chat Completions with `response_format={"type": "json_object"}`.
+`pollers/browser/generator.py`, `pollers/system/generator.py`, `agent/action_options.py`, and
+`agent/resolver.py`. The generators use Chat Completions with
+`response_format={"type": "json_object"}`.
 
 **Todo generation** (`pollers/gmail/todo_generator.py`): thread context + sender → JSON with a
 `should_generate_todo` boolean and a `reasoning` sentence. Returning `false` is a first-class
 outcome, not an error — newsletters, receipts, OTPs, and sign-in requests should be skipped
 there, and the poller logs the reasoning.
 
+**Suggested actions** (`agent/action_options.py`): todo + thread context → JSON with three
+`{label, detail, instruction}` options for closing the item. This is a plain Chat Completions
+call, not an agent turn — it only *proposes* the routes. Clicking one sends its `instruction`
+to `/ask-ai` as the user message, so a suggested action and a hand-typed one take exactly the
+same path. Options are generated on first open of a todo's detail pane and cached in
+`todos.action_options`, so reopening costs nothing.
+
 **Discovery and execution are decoupled.** The pollers generate todos; resolution runs on a
 *selectable executor* behind `agent/executor.py`. `app.py` calls `executor.resolve` and knows
 nothing about which one is configured. The contract:
 
 ```
-resolve(todo, thread, user_message, user_id, state) -> (thread, state)
+resolve(todo, thread, user_message, user_id, state, cancel=None) -> (thread, state)
 ```
 
 `thread` is the display log (`{role, content}` bubbles — also a valid Agents-SDK input list, so
 executors can read each other's threads). `state` is an opaque per-executor string persisted in
 `todos.executor_state`; nothing outside the executor interprets it. Implementations are imported
 lazily, so picking one never pays for the other's dependencies.
+
+`cancel` is an `agent.runs.CancelToken` — honouring it is best-effort and per-executor. Hermes
+attaches its subprocess to the token, so a stop kills it (and its process group — the CLI drives
+a browser, and killing only the parent would leave it holding the pipes the run is blocked on).
+`agents_sdk` has nothing to interrupt and ignores it.
+
+**Turns run in the background** (`agent/runs.py`). Resolution used to happen inline in the
+ask-ai request, which left no handle on a run in flight — the only thing connected to it was
+the request blocking on it, so "stop" had nothing to talk to. `POST /ask-ai` now registers a run
+on a background thread and returns at once; the client polls `GET /run` and can `POST /run/stop`.
+The registry is per-process and deliberately not persisted: only *completed* runs are written to
+the database, so a restart (including the debug reloader) simply leaves the todo where it was.
+At most one run exists per (user, todo). A stopped run is treated like a failed one — neither
+the log nor the session id advances, since the agent may already have sent mail or submitted a
+form before the stop landed.
+
+Returning immediately also gets the turn out from under gunicorn's request timeout, which a
+600s Hermes run would otherwise blow through. The flip side is that the registry lives in one
+process: with more than one gunicorn worker a poll can land on a worker that never saw the run
+and answer `idle`. The UI treats that as "stop watching", and the run still persists its result
+when it finishes — but keep the web runtime at a single worker for the stop button to be
+reliable.
 
 `TODO_EXECUTOR` picks one, defaulting to `hermes`:
 

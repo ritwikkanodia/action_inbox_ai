@@ -7,7 +7,8 @@ from dotenv import load_dotenv
 
 load_dotenv(override=True)
 
-from agent.executor import ExecutorError, resolve
+from agent import runs
+from agent.executor import ExecutorCancelled, ExecutorError, resolve
 
 from flask import (
     Flask,
@@ -312,65 +313,206 @@ def _thread_for_client(thread):
     return out
 
 
-@app.route("/todos/<todo_id>/ask-ai", methods=["POST"])
-@login_required
-def ask_ai(todo_id):
-    db = get_db()
-    user_id = current_user_id()
-    assert user_id
-    row = db.execute(
+def _load_thread(raw) -> list:
+    if not raw:
+        return []
+    try:
+        return json.loads(raw)
+    except Exception:
+        return []
+
+
+def _own_todo(db, todo_id: str, user_id: str):
+    return db.execute(
         "SELECT title, suggested_action, reasoning, importance, due_date, source, "
-        "account_id, ai_thread, executor_state, source_meta "
+        "account_id, ai_thread, executor_state, action_options, source_meta "
         "FROM todos WHERE todo_id = ? AND user_id = ?",
         (todo_id, user_id),
     ).fetchone()
+
+
+def _persist_resolution(todo_id: str, user_id: str, thread: list, state) -> None:
+    """Write a completed run's result from the background thread.
+
+    Opens its own connection: `get_db` caches on Flask's `g`, which belongs to
+    the request that started the run and is long gone by the time this runs.
+    """
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    try:
+        conn.execute(
+            "UPDATE todos SET ai_thread = ?, executor_state = ?, updated_at = ? "
+            "WHERE todo_id = ? AND user_id = ?",
+            (
+                json.dumps(thread),
+                state,
+                datetime.now(timezone.utc).isoformat(),
+                todo_id,
+                user_id,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, state):
+    """Build the callable `agent.runs.start` will execute on its own thread.
+
+    Renders its own failures into the thread rather than raising: the frontend
+    reads `thread` without checking the status code, so anything not in there is
+    invisible to the user.
+    """
+    todo_id = todo["todo_id"]
+
+    def notice(text: str) -> list:
+        shown = list(thread)
+        if user_message:
+            shown.append({"role": "user", "content": user_message})
+        shown.append({"role": "assistant", "content": text})
+        return shown
+
+    def work(cancel):
+        try:
+            final, new_state = resolve(
+                todo, thread, user_message, user_id, state, cancel=cancel
+            )
+        except ExecutorCancelled:
+            # Not persisted. The agent may already have sent mail or submitted a
+            # form before the stop landed, so neither the log nor the session id
+            # should advance as if the turn had completed.
+            return notice("⏹ Stopped. Anything already done before the stop stands."), runs.CANCELLED
+        except ExecutorError as exc:
+            return notice(f"⚠️ Resolution failed: {exc}"), runs.ERROR
+
+        _persist_resolution(todo_id, user_id, final, new_state)
+        return final, runs.DONE
+
+    return work
+
+
+@app.route("/todos/<todo_id>/actions", methods=["GET"])
+@login_required
+def todo_action_options(todo_id):
+    """The three ways this todo could be closed.
+
+    Generated once and cached in `todos.action_options`, so reopening a todo
+    costs nothing; `?refresh=1` re-runs the inference.
+    """
+    db = get_db()
+    user_id = current_user_id()
+    assert user_id
+    row = _own_todo(db, todo_id, user_id)
+    if row is None:
+        return jsonify({"error": "not found"}), 404
+
+    if row["action_options"] and request.args.get("refresh") != "1":
+        try:
+            return jsonify({"actions": json.loads(row["action_options"])})
+        except ValueError:
+            pass  # Corrupt cache — fall through and regenerate.
+
+    # Imported lazily so the OpenAI client is only built by workers that use it.
+    from agent.action_options import generate_action_options
+
+    todo = dict(row)
+    todo["todo_id"] = todo_id
+    try:
+        actions = generate_action_options(todo, user_id)
+    except Exception as exc:
+        app.logger.exception("Failed to generate action options")
+        # 200 with an error field: the pane renders this inline next to a retry,
+        # which is more useful than a silent empty section.
+        return jsonify({"actions": [], "error": str(exc)})
+
+    db.execute(
+        "UPDATE todos SET action_options = ?, updated_at = ? "
+        "WHERE todo_id = ? AND user_id = ?",
+        (json.dumps(actions), datetime.now(timezone.utc).isoformat(), todo_id, user_id),
+    )
+    db.commit()
+    return jsonify({"actions": actions})
+
+
+@app.route("/todos/<todo_id>/ask-ai", methods=["POST"])
+@login_required
+def ask_ai(todo_id):
+    """Start a resolution turn, or hand back what is already there.
+
+    Returns as soon as the run is registered rather than when it finishes, so
+    the caller keeps a connection free to poll `/run` and to stop it.
+    """
+    db = get_db()
+    user_id = current_user_id()
+    assert user_id
+    row = _own_todo(db, todo_id, user_id)
     if row is None:
         return jsonify({"error": "not found"}), 404
 
     data = request.get_json(force=True, silent=True) or {}
     user_message = (data.get("message") or "").strip()
 
-    # Load persisted thread
-    thread = []
-    if row["ai_thread"]:
-        try:
-            thread = json.loads(row["ai_thread"])
-        except Exception:
-            thread = []
-
-    # If thread already exists and no new message, return it without an LLM call
-    if thread and not user_message:
-        return jsonify({"thread": _thread_for_client(thread)})
-
-    try:
-        thread, state = resolve(
-            dict(row), thread, user_message, user_id, row["executor_state"]
+    active = runs.get(user_id, todo_id)
+    if active is not None and active.status == runs.RUNNING:
+        # Don't start a second agent on the same todo behind the user's back.
+        return jsonify(
+            {
+                "status": runs.RUNNING,
+                "run_id": active.run_id,
+                "thread": _thread_for_client(active.thread),
+            }
         )
-    except ExecutorError as exc:
-        # Show the failure in the thread pane instead of erroring the request:
-        # the frontend reads data.thread without checking the status code, so a
-        # non-200 would just vanish. Deliberately not persisted — the run failed,
-        # so neither the log nor the session id should advance.
-        failed = list(thread)
-        if user_message:
-            failed.append({"role": "user", "content": user_message})
-        failed.append({"role": "assistant", "content": f"⚠️ Resolution failed: {exc}"})
-        return jsonify({"thread": _thread_for_client(failed)})
 
-    db.execute(
-        "UPDATE todos SET ai_thread = ?, executor_state = ?, updated_at = ? "
-        "WHERE todo_id = ? AND user_id = ?",
-        (
-            json.dumps(thread),
-            state,
-            datetime.now(timezone.utc).isoformat(),
-            todo_id,
-            user_id,
-        ),
+    thread = _load_thread(row["ai_thread"])
+
+    # No message means "show me what's there" — the detail pane asks this every
+    # time it opens a todo with an existing thread, and it must never spend a
+    # turn or launch an agent on an empty prompt.
+    if not user_message:
+        return jsonify({"status": "idle", "thread": _thread_for_client(thread)})
+
+    todo = dict(row)
+    todo["todo_id"] = todo_id
+    seeded = thread + [{"role": "user", "content": user_message}]
+    run = runs.start(
+        user_id,
+        todo_id,
+        seeded,
+        _resolution_work(todo, thread, user_message, user_id, row["executor_state"]),
     )
-    db.commit()
+    return jsonify(
+        {
+            "status": run.status,
+            "run_id": run.run_id,
+            "thread": _thread_for_client(run.thread),
+        }
+    )
 
-    return jsonify({"thread": _thread_for_client(thread)})
+
+@app.route("/todos/<todo_id>/run", methods=["GET"])
+@login_required
+def todo_run(todo_id):
+    """Poll a resolution run. `idle` means this process has no run for the todo."""
+    user_id = current_user_id()
+    assert user_id
+    run = runs.get(user_id, todo_id)
+    if run is None:
+        return jsonify({"status": "idle"})
+    return jsonify(
+        {
+            "status": run.status,
+            "run_id": run.run_id,
+            "thread": _thread_for_client(run.thread),
+        }
+    )
+
+
+@app.route("/todos/<todo_id>/run/stop", methods=["POST"])
+@login_required
+def stop_todo_run(todo_id):
+    """Stop the running resolution — for Hermes, by killing the CLI process."""
+    user_id = current_user_id()
+    assert user_id
+    return jsonify({"stopped": runs.stop(user_id, todo_id)})
 
 
 @app.route("/todos/<todo_id>/context", methods=["GET"])
@@ -448,6 +590,8 @@ def reset_thread(todo_id):
     assert user_id
     # Drop the executor's own state too: clearing only the display log would
     # leave an executor like Hermes still remembering the old conversation.
+    # Any run in flight goes with it, for the same reason.
+    runs.discard(user_id, todo_id)
     db.execute(
         "UPDATE todos SET ai_thread = NULL, executor_state = NULL, updated_at = ? "
         "WHERE todo_id = ? AND user_id = ?",

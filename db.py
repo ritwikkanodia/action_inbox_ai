@@ -113,6 +113,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             decision               TEXT CHECK (decision IS NULL OR decision IN ('accepted','rejected')),
             ai_thread              TEXT,
             executor_state         TEXT,
+            action_options         TEXT,
             source_meta            TEXT,
             created_at             TEXT NOT NULL,
             updated_at             TEXT NOT NULL
@@ -208,6 +209,12 @@ def init_db(conn: sqlite3.Connection) -> None:
             )
         else:
             conn.execute("ALTER TABLE todos ADD COLUMN executor_state TEXT")
+
+    # Cached "three ways to close this" options (see agent/action_options.py),
+    # stored as a JSON list. NULL means they have not been generated yet, which
+    # is what keeps generation a once-per-todo cost rather than a per-open one.
+    if "action_options" not in todo_cols:
+        conn.execute("ALTER TABLE todos ADD COLUMN action_options TEXT")
 
     sc_cols = {row[1] for row in conn.execute("PRAGMA table_info(source_connections)").fetchall()}
     # Pre-multi-user databases: source_connections has no user_id at all.

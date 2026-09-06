@@ -982,6 +982,93 @@
     #ai-send-btn:hover { background: var(--accent-deep); }
     #ai-send-btn:disabled { opacity: 0.35; cursor: default; }
 
+    #ai-stop-btn {
+      font-family: var(--sans);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      background: none;
+      color: var(--u-high);
+      border: 1px solid var(--u-high);
+      border-radius: 8px;
+      padding: 8px 17px;
+      cursor: pointer;
+      flex-shrink: 0;
+      transition: background 0.15s, color 0.15s;
+    }
+    #ai-stop-btn:hover { background: var(--u-high); color: var(--accent-ink); }
+    #ai-stop-btn:disabled { opacity: 0.45; cursor: default; background: none; color: var(--u-high); }
+
+    /* Inferred ways to close the item */
+    #ai-regen-btn {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      background: none;
+      border: none;
+      padding: 4px 0;
+      cursor: pointer;
+      transition: color 0.15s;
+    }
+    #ai-regen-btn:hover { color: var(--accent); }
+    #ai-regen-btn:disabled { opacity: 0.35; cursor: default; }
+
+    #ai-actions { display: flex; flex-direction: column; gap: 8px; }
+
+    .action-option {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      width: 100%;
+      text-align: left;
+      background: var(--panel);
+      border: 1px solid var(--rule);
+      border-radius: 10px;
+      padding: 12px 14px;
+      cursor: pointer;
+      font-family: var(--sans);
+      color: var(--ink);
+      transition: border-color 0.15s, background 0.15s, opacity 0.15s;
+    }
+    .action-option:hover:not(:disabled) { border-color: var(--accent); background: var(--paper-deep); }
+    .action-option:disabled { cursor: default; }
+    .action-option.is-waiting { opacity: 0.4; }
+    .action-option.is-chosen { border-color: var(--accent); background: var(--accent-soft); }
+
+    .action-option-num {
+      font-family: var(--mono);
+      font-size: 10px;
+      color: var(--ink-3);
+      border: 1px solid var(--rule-strong);
+      border-radius: 5px;
+      padding: 2px 6px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .action-option.is-chosen .action-option-num { color: var(--accent); border-color: var(--accent); }
+
+    .action-option-text { display: flex; flex-direction: column; gap: 3px; flex: 1; min-width: 0; }
+    .action-option-label { font-size: 14px; font-weight: 500; line-height: 1.4; }
+    .action-option-detail { font-size: 13px; line-height: 1.5; color: var(--ink-2); }
+
+    .action-option-go {
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      flex-shrink: 0;
+      margin-top: 3px;
+      opacity: 0;
+      transition: opacity 0.15s;
+    }
+    .action-option:hover:not(:disabled) .action-option-go { opacity: 1; color: var(--accent); }
+
+    .ai-thread-header { margin-top: 32px; }
+
     /* Settings modal */
     #settings-modal {
       display: none; position: fixed; inset: 0;
@@ -1225,16 +1312,6 @@
       color: var(--muted);
       font-size: 13px;
       padding: 8px 0;
-    }
-    .ai-kickoff-btn {
-      font: inherit;
-      font-size: 13px;
-      color: var(--text);
-      background: none;
-      border: none;
-      padding: 0;
-      cursor: pointer;
-      text-decoration: underline;
     }
     .assignee-hint {
       margin-top: 6px;

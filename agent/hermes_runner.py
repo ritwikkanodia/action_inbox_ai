@@ -13,7 +13,7 @@ import os
 import subprocess
 import tempfile
 
-from agent.executor import ExecutorError
+from agent.executor import ExecutorCancelled, ExecutorError
 from agent.hermes_prompt import build_followup_prompt, build_prompt
 
 HERMES_BIN = os.environ.get("HERMES_BIN", "hermes")
@@ -29,12 +29,16 @@ TIMEOUT_SECONDS = int(os.environ.get("HERMES_TIMEOUT_SECONDS", "600"))
 YOLO = os.environ.get("HERMES_YOLO", "1").strip().lower() not in {"0", "false", "no"}
 
 
-def _run(prompt: str, session_id: str | None) -> tuple[str, str | None]:
+def _run(prompt: str, session_id: str | None, cancel=None) -> tuple[str, str | None]:
     """Invoke the CLI once. Returns (reply_text, session_id).
 
     `-z` prints only the final reply on stdout, so the session id has to come
     back out of band via --usage-file — that is the only way to get it in
     one-shot mode.
+
+    Spawned with Popen rather than `subprocess.run` so the process handle can be
+    attached to `cancel`: a stop from the UI has to reach the child, since this
+    call is blocked on it for as long as the agent takes.
     """
     cmd = [HERMES_BIN, "-z", prompt]
     if YOLO:
@@ -47,18 +51,40 @@ def _run(prompt: str, session_id: str | None) -> tuple[str, str | None]:
         cmd += ["--usage-file", usage_path]
 
         try:
-            proc = subprocess.run(
-                cmd, capture_output=True, text=True, timeout=TIMEOUT_SECONDS
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                # Own process group, so a stop can signal the browser and any
+                # other children Hermes spawned rather than just the CLI.
+                start_new_session=True,
             )
-        except subprocess.TimeoutExpired:
-            raise ExecutorError(
-                f"Hermes did not finish within {TIMEOUT_SECONDS}s and was stopped."
-            ) from None
         except FileNotFoundError:
             raise ExecutorError(
                 f"Hermes CLI not found (looked for {HERMES_BIN!r}). "
                 "Set HERMES_BIN if it lives elsewhere."
             ) from None
+
+        if cancel is not None:
+            cancel.attach_process(proc)
+        try:
+            try:
+                stdout, stderr = proc.communicate(timeout=TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                raise ExecutorError(
+                    f"Hermes did not finish within {TIMEOUT_SECONDS}s and was stopped."
+                ) from None
+        finally:
+            if cancel is not None:
+                cancel.detach_process()
+
+        # A cancelled run also comes back with a non-zero status, so check the
+        # token before reading the exit code as a failure.
+        if cancel is not None and cancel.cancelled:
+            raise ExecutorCancelled("Stopped.")
 
         usage = {}
         try:
@@ -70,10 +96,10 @@ def _run(prompt: str, session_id: str | None) -> tuple[str, str | None]:
             pass
 
     if proc.returncode != 0 or usage.get("failed"):
-        detail = (proc.stderr or proc.stdout or "").strip()
+        detail = (stderr or stdout or "").strip()
         raise ExecutorError(detail or f"Hermes exited with status {proc.returncode}.")
 
-    reply = (proc.stdout or "").strip()
+    reply = (stdout or "").strip()
     if not reply:
         raise ExecutorError("Hermes returned an empty reply.")
 
@@ -81,7 +107,12 @@ def _run(prompt: str, session_id: str | None) -> tuple[str, str | None]:
 
 
 def resolve(
-    todo: dict, thread: list, user_message: str, user_id: str, session_id: str | None
+    todo: dict,
+    thread: list,
+    user_message: str,
+    user_id: str,
+    session_id: str | None,
+    cancel=None,
 ) -> tuple[list, str | None]:
     """Run one turn and append it to `thread`.
 
@@ -91,6 +122,9 @@ def resolve(
 
     A failed run is NOT retried: by the time it fails the agent may already have
     sent mail or submitted a form, and re-running would repeat those effects.
+    The same reasoning applies to a stopped run, which additionally loses its
+    session id — the CLI only writes the usage file on a clean exit — so the
+    next turn starts a fresh session rather than resuming a half-finished one.
     """
     if session_id:
         # The session carries the conversation, but not the task framing — each
@@ -99,7 +133,7 @@ def resolve(
     else:
         prompt = build_prompt(todo, user_message, user_id)
 
-    reply, new_session_id = _run(prompt, session_id)
+    reply, new_session_id = _run(prompt, session_id, cancel)
 
     thread = list(thread or [])
     if user_message:
