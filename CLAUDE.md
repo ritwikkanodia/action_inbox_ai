@@ -30,6 +30,7 @@ python scripts/verify/verify_connections.py
 python scripts/verify/verify_links.py
 python scripts/verify/verify_cursors.py
 python scripts/verify/verify_web.py
+python scripts/verify/verify_hermes.py      # stubs the Hermes CLI; no API spend
 ```
 
 ## Architecture
@@ -118,8 +119,37 @@ three generators use Chat Completions with `response_format={"type": "json_objec
 outcome, not an error — newsletters, receipts, OTPs, and sign-in requests should be skipped
 there, and the poller logs the reasoning.
 
-**The per-todo agent** (`agent/`) uses the **OpenAI Agents SDK** (`openai-agents`), not the raw
-Responses API:
+**The per-todo agent runs on Hermes Agent**, not in-process. Discovery and execution are
+decoupled: the pollers generate todos, and resolution shells out to the locally installed
+`hermes` CLI, which brings its own browser, terminal, file, and desktop tools.
+
+- `agent/hermes_runner.py` is the *only* file that knows about Hermes. It runs
+  `hermes -z <prompt> --yolo [--resume <id>] --usage-file <tmp>`. `-z` prints only the final
+  reply on stdout, so the session id has to come back out of band via `--usage-file` — that
+  is the only way to get it in one-shot mode. Set `HERMES_BIN` if the binary isn't on `PATH`,
+  `HERMES_TIMEOUT_SECONDS` (default 600) to bound a wedged run, and `HERMES_YOLO=0` to fall
+  back to Hermes' approval rules (expect blocked runs — there is no TTY to approve at).
+- **`--yolo` is deliberate and load-bearing.** A run with no TTY that stops for an approval
+  prompt blocks until the timeout. It also means a full-access agent acts on prompts built
+  from email content, which is attacker-controlled text; this is an accepted risk of the
+  local POC, not an oversight.
+- **Sessions are the conversation.** `todos.hermes_session_id` is the resume handle;
+  `todos.ai_thread` is now just a display log of `{role, content}` bubbles, not agent state.
+  Hermes issues a *new* id per turn (lineage children), so the column is rewritten each run.
+  `/reset-thread` clears both — clearing only the log would leave the agent still remembering.
+- Each one-shot invocation gets a fresh system prompt, so a resumed turn must restate the task
+  framing (`build_followup_prompt`). Sending a bare user message makes the agent forget it is a
+  resolution agent and start asking clarifying questions.
+- A failed run is **not** retried: by the time it fails the agent may already have sent mail or
+  submitted a form. Failures render as a bubble in the thread, because `static/js/app.js` reads
+  `data.thread` without checking the status code — a non-200 would vanish silently.
+
+`agent/resolver.py` and its tools (`tools/browser/`, `tools/local_files.py`, `tools/email.py`)
+are the **previous** executor, built on the **OpenAI Agents SDK** (`openai-agents`). Only
+`tools/email.py` is still reachable, via `hermes_prompt.py`, to inline the Gmail thread — and
+because it decorates its Gmail tools with `@function_tool`, the Agents SDK still loads at boot
+even though nothing runs it. `resolver.py` itself has no importers left and is safe to delete.
+For that path:
 
 - `resolver.py` builds an `Agent` with `WebSearchTool` plus Gmail tools
   (`search_email_threads`, `fetch_email_thread`) and runs it via `Runner.run_sync`.

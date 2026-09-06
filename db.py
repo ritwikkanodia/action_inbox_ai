@@ -112,6 +112,7 @@ def init_db(conn: sqlite3.Connection) -> None:
                                        CHECK (status IN ('open','ongoing','closed')),
             decision               TEXT CHECK (decision IS NULL OR decision IN ('accepted','rejected')),
             ai_thread              TEXT,
+            hermes_session_id      TEXT,
             source_meta            TEXT,
             created_at             TEXT NOT NULL,
             updated_at             TEXT NOT NULL
@@ -195,6 +196,11 @@ def init_db(conn: sqlite3.Connection) -> None:
 
     if "account_id" not in todo_cols:
         conn.execute("ALTER TABLE todos ADD COLUMN account_id TEXT")
+
+    # Hermes owns the real per-todo conversation; ai_thread is only a display
+    # log. This is the handle used to resume it (`hermes --resume <id>`).
+    if "hermes_session_id" not in todo_cols:
+        conn.execute("ALTER TABLE todos ADD COLUMN hermes_session_id TEXT")
 
     sc_cols = {row[1] for row in conn.execute("PRAGMA table_info(source_connections)").fetchall()}
     # Pre-multi-user databases: source_connections has no user_id at all.
