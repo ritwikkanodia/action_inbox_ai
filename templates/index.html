@@ -30,25 +30,48 @@
 
 <header class="top">
   <div class="tabs">
+    {# 'ongoing' is a real status users can set, so it filters on its own rather
+       than hiding inside 'open'. Defaults reproduce the old Open tab. #}
+    {% set status_opts = [
+      ('open', 'Open', true), ('ongoing', 'Ongoing', true),
+      ('closed', 'Closed', false), ('rejected', 'Rejected', false)] %}
+    {% set source_opts = [
+      ('gmail', 'Gmail'), ('fathom', 'Fathom'), ('browser_history', 'Browser'),
+      ('system', 'System'), ('user', 'User')] %}
+
     <div class="filter-dropdown" id="statusFilter">
-      <button class="filter-btn" id="statusFilterBtn" aria-haspopup="true" aria-expanded="false">
+      <button class="filter-btn" aria-haspopup="true" aria-expanded="false">
         <span class="sr-only">Filter by status: </span>
-        <span id="statusFilterLabel">Open</span>
+        <span class="filter-label">Open</span>
         <svg class="filter-chevron" viewBox="0 0 16 16" aria-hidden="true">
           <path d="M4 6.5 8 10.5 12 6.5" fill="none" stroke="currentColor" stroke-width="1.6"
                 stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
       </button>
-      <div class="filter-menu" id="statusFilterMenu" role="group" aria-label="Statuses to show">
+      <div class="filter-menu" role="group" aria-label="Statuses to show">
+        {% for value, label, on in status_opts %}
         <label class="filter-opt">
-          <input type="checkbox" value="open" checked><span class="filter-check"></span>Open
+          <input type="checkbox" value="{{ value }}"{% if on %} checked{% endif %}><span class="filter-check"></span>{{ label }}
         </label>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="filter-dropdown" id="sourceFilter">
+      <button class="filter-btn" aria-haspopup="true" aria-expanded="false">
+        <span class="sr-only">Filter by source: </span>
+        <span class="filter-label">All sources</span>
+        <svg class="filter-chevron" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M4 6.5 8 10.5 12 6.5" fill="none" stroke="currentColor" stroke-width="1.6"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <div class="filter-menu" role="group" aria-label="Sources to show">
+        {% for value, label in source_opts %}
         <label class="filter-opt">
-          <input type="checkbox" value="closed"><span class="filter-check"></span>Closed
+          <input type="checkbox" value="{{ value }}" checked><span class="filter-check"></span>{{ label }}
         </label>
-        <label class="filter-opt">
-          <input type="checkbox" value="rejected"><span class="filter-check"></span>Rejected
-        </label>
+        {% endfor %}
       </div>
     </div>
   </div>
@@ -117,6 +140,7 @@
         <div class="todo-row {{ t.status }}{% if t.decision == 'rejected' %} rejected-todo{% endif %}{% if pending %} pending-decision{% endif %}"
              data-id="{{ t.todo_id }}"
              data-importance="{{ t.importance or 'none' }}"
+             data-source="{{ t.source or 'user' }}"
              {% if t.relevant_link %}data-link="{{ t.relevant_link }}"{% endif %}>
           <div class="row-body">
             <div class="row-title">
@@ -150,7 +174,7 @@
         </div>
         {% endfor %}
       {% endif %}
-      <p class="empty-note" id="noMatches" hidden>No todos match the selected statuses.</p>
+      <p class="empty-note" id="noMatches" hidden>No todos match the selected filters.</p>
     </div>
   </aside>
 
