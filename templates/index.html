@@ -3,16 +3,16 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Inbox Todos</title>
-  <meta name="theme-color" content="#7a2e2a">
+  <title>Self-driving Inbox</title>
+  <meta name="theme-color" content="#0b0b0c">
   <meta name="description" content="Your inbox, meetings and notes turned into a single list of things to actually do.">
   <link rel="manifest" href="{{ url_for('manifest') }}">
   <link rel="icon" href="{{ url_for('static', filename='icons/favicon-32.png') }}" sizes="32x32">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Inbox">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Self-driving">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -30,9 +30,27 @@
 
 <header class="top">
   <div class="tabs">
-    <button class="tab-btn active" id="tabOpen">Open</button>
-    <button class="tab-btn" id="tabClosed">Closed</button>
-    <button class="tab-btn" id="tabRejected">Rejected</button>
+    <div class="filter-dropdown" id="statusFilter">
+      <button class="filter-btn" id="statusFilterBtn" aria-haspopup="true" aria-expanded="false">
+        <span class="sr-only">Filter by status: </span>
+        <span id="statusFilterLabel">Open</span>
+        <svg class="filter-chevron" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M4 6.5 8 10.5 12 6.5" fill="none" stroke="currentColor" stroke-width="1.6"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+      <div class="filter-menu" id="statusFilterMenu" role="group" aria-label="Statuses to show">
+        <label class="filter-opt">
+          <input type="checkbox" value="open" checked><span class="filter-check"></span>Open
+        </label>
+        <label class="filter-opt">
+          <input type="checkbox" value="closed"><span class="filter-check"></span>Closed
+        </label>
+        <label class="filter-opt">
+          <input type="checkbox" value="rejected"><span class="filter-check"></span>Rejected
+        </label>
+      </div>
+    </div>
   </div>
   <div class="header-right">
     <span class="count" id="todoCount">{{ todos|length }}</span>
@@ -88,7 +106,7 @@
       <div class="lh-cell lh-decision"></div>
     </div>
 
-    <div id="todo-list" class="show-open">
+    <div id="todo-list">
       {% if not todos %}
         <p class="empty">No todos yet.</p>
       {% else %}
@@ -132,6 +150,7 @@
         </div>
         {% endfor %}
       {% endif %}
+      <p class="empty-note" id="noMatches" hidden>No todos match the selected statuses.</p>
     </div>
   </aside>
 

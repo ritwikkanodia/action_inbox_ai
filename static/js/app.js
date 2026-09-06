@@ -46,46 +46,86 @@ function isPending(t) {
 
 // ---------------- Sidebar state ----------------
 const todoList = document.getElementById('todo-list');
-const tabOpen     = document.getElementById('tabOpen');
-const tabClosed   = document.getElementById('tabClosed');
-const tabRejected = document.getElementById('tabRejected');
+const statusFilter    = document.getElementById('statusFilter');
+const statusFilterBtn = document.getElementById('statusFilterBtn');
+const statusFilterLbl = document.getElementById('statusFilterLabel');
+const noMatchesEl     = document.getElementById('noMatches');
 const countEl     = document.getElementById('todoCount');
 const appEl = document.getElementById('app');
 const detailEmpty   = document.getElementById('detail-empty');
 const detailContent = document.getElementById('detail-content');
 
-let currentFilter = 'open';
+const STATUS_LABELS = { open: 'Open', closed: 'Closed', rejected: 'Rejected' };
+const statusBoxes = Array.from(statusFilter.querySelectorAll('input[type="checkbox"]'));
+const selectedStatuses = new Set(statusBoxes.filter(b => b.checked).map(b => b.value));
 let selectedId = null;
 const contextCache = {};
 const threadCache  = {};
 
-function refreshCount() {
-  const rows = Array.from(document.querySelectorAll('#todo-list .todo-row'));
-  const n = rows.filter(r => {
-    if (currentFilter === 'open')     return !r.classList.contains('closed') && !r.classList.contains('rejected-todo');
-    if (currentFilter === 'closed')   return r.classList.contains('closed');
-    if (currentFilter === 'rejected') return r.classList.contains('rejected-todo');
-    return false;
-  }).length;
-  countEl.textContent = n;
+// A row shows if it falls in ANY selected status, which is what the three
+// tabs each did on their own. 'open' is the leftover bucket: neither closed
+// nor rejected. A row can be both closed and rejected, so these overlap.
+function matchesStatusFilter(r) {
+  if (selectedStatuses.has('closed')   && r.classList.contains('closed'))        return true;
+  if (selectedStatuses.has('rejected') && r.classList.contains('rejected-todo')) return true;
+  return selectedStatuses.has('open')
+    && !r.classList.contains('closed')
+    && !r.classList.contains('rejected-todo');
 }
 
-function switchTab(tab) {
-  currentFilter = tab;
-  [tabOpen, tabClosed, tabRejected].forEach(b => b.classList.remove('active'));
-  todoList.className = `show-${tab}`;
-  ({ open: tabOpen, closed: tabClosed, rejected: tabRejected })[tab].classList.add('active');
-  refreshCount();
+// pruneSelection only when the filter itself moved — a todo you close while
+// reading it should leave the list without yanking the detail pane away.
+function applyFilter({ pruneSelection = false } = {}) {
+  const rows = Array.from(document.querySelectorAll('#todo-list .todo-row'));
+  let shown = 0;
+  rows.forEach(r => {
+    const show = matchesStatusFilter(r);
+    r.classList.toggle('filtered-out', !show);
+    if (show) shown++;
+  });
+  countEl.textContent = shown;
+  if (noMatchesEl) noMatchesEl.hidden = !(rows.length && shown === 0);
 
-  if (selectedId) {
+  if (pruneSelection && selectedId) {
     const row = document.querySelector(`.todo-row[data-id="${selectedId}"]`);
-    if (row && getComputedStyle(row).display === 'none') clearSelection();
+    if (row && row.classList.contains('filtered-out')) clearSelection();
   }
 }
 
-tabOpen.addEventListener('click',     () => switchTab('open'));
-tabClosed.addEventListener('click',   () => switchTab('closed'));
-tabRejected.addEventListener('click', () => switchTab('rejected'));
+function updateStatusLabel() {
+  const picked = [...selectedStatuses];
+  statusFilterLbl.textContent =
+    picked.length === 0 ? 'No statuses'
+    : picked.length === 1 ? STATUS_LABELS[picked[0]]
+    : picked.length === statusBoxes.length ? 'All statuses'
+    : `${picked.length} statuses`;
+}
+
+function setStatusFilterOpen(open) {
+  statusFilter.classList.toggle('open', open);
+  statusFilterBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+statusBoxes.forEach(box => box.addEventListener('change', () => {
+  if (box.checked) selectedStatuses.add(box.value);
+  else selectedStatuses.delete(box.value);
+  updateStatusLabel();
+  applyFilter({ pruneSelection: true });
+}));
+
+statusFilterBtn.addEventListener('click', (e) => {
+  e.stopPropagation();
+  setStatusFilterOpen(!statusFilter.classList.contains('open'));
+});
+document.addEventListener('click', (e) => {
+  if (!statusFilter.contains(e.target)) setStatusFilterOpen(false);
+});
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') setStatusFilterOpen(false);
+});
+
+updateStatusLabel();
+applyFilter();
 
 // ---------------- Selection / detail rendering ----------------
 function clearSelection() {
@@ -222,7 +262,7 @@ function applyFieldChange(t, field, newVal) {
     }
   }
 
-  refreshCount();
+  applyFilter();
 }
 
 function bindEditable(cell, todo) {
@@ -260,7 +300,7 @@ function applyDecision(t, decision) {
     row.querySelectorAll('.row-inline-actions .accept, .row-inline-actions .reject').forEach(b => b.remove());
   }
   if (selectedId === t.todo_id) renderDetail(t); // decision changes structure; re-render is appropriate here
-  refreshCount();
+  applyFilter();
 }
 
 function sendDecision(t, decision) {
@@ -754,7 +794,7 @@ saveBtnNew.addEventListener('click', () => {
     if (empty) empty.remove();
     todoList.insertBefore(row, todoList.firstChild);
     resetForm();
-    refreshCount();
+    applyFilter();
     selectTodo(t.todo_id);
   });
 });
@@ -765,7 +805,7 @@ document.getElementById('ntTitle').addEventListener('keydown', e => {
 });
 
 // ---------------- Init ----------------
-switchTab('open');
+// The status filter applies itself once on load, where it is defined.
 (function initSelection() {
   const m = location.hash.match(/^#todo\/([^/]+)$/);
   if (m && todosById[m[1]]) { selectTodo(m[1]); return; }
