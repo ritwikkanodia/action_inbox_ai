@@ -14,10 +14,10 @@ from pollers.gmail.thread_context import (
 logger = logging.getLogger(__name__)
 
 
-def _gmail_service(user_id: str):
+def _gmail_service(user_id: str, account_id: str | None = None):
     conn = open_db()
     try:
-        return get_gmail_service(conn, user_id)
+        return get_gmail_service(conn, user_id, account_id)
     finally:
         conn.close()
 
@@ -40,14 +40,16 @@ def _build_full_thread_context(messages: list[dict], user_email: str) -> str:
     return "\n---\n".join(parts) + note
 
 
-def fetch_gmail_thread_context(source_meta_json, user_id: str) -> str | None:
+def fetch_gmail_thread_context(
+    source_meta_json, user_id: str, account_id: str | None = None
+) -> str | None:
     """Used by the input builder to inject the linked thread on turn 1."""
     try:
         meta = json.loads(source_meta_json) if isinstance(source_meta_json, str) else source_meta_json
         thread_id = (meta or {}).get("thread_id")
         if not thread_id:
             return None
-        service = _gmail_service(user_id)
+        service = _gmail_service(user_id, account_id)
         user_email = service.users().getProfile(userId="me").execute()["emailAddress"]
         messages = fetch_thread_messages(service, thread_id)
         return _build_full_thread_context(messages, user_email)
@@ -56,7 +58,7 @@ def fetch_gmail_thread_context(source_meta_json, user_id: str) -> str | None:
         return None
 
 
-def gmail_tools(user_id: str) -> list[Any]:
+def gmail_tools(user_id: str, account_id: str | None = None) -> list[Any]:
     @function_tool
     def search_email_threads(query: str) -> list[dict]:
         """Search the user's Gmail using a Gmail query string and return matching threads.
@@ -66,7 +68,7 @@ def gmail_tools(user_id: str) -> list[Any]:
         Returns up to 10 threads, each with thread_id, subject, snippet, and from.
         Use fetch_email_thread(thread_id) to read the full conversation.
         """
-        service = _gmail_service(user_id)
+        service = _gmail_service(user_id, account_id)
         resp = (
             service.users()
             .threads()
@@ -107,7 +109,7 @@ def gmail_tools(user_id: str) -> list[Any]:
         about whether the user has replied recently. Use this after search_email_threads
         to read the contents of a specific thread.
         """
-        service = _gmail_service(user_id)
+        service = _gmail_service(user_id, account_id)
         user_email = service.users().getProfile(userId="me").execute()["emailAddress"]
         messages = fetch_thread_messages(service, thread_id)
         return _build_full_thread_context(messages, user_email)
