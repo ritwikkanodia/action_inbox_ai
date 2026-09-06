@@ -46,46 +46,128 @@ function isPending(t) {
 
 // ---------------- Sidebar state ----------------
 const todoList = document.getElementById('todo-list');
-const tabOpen     = document.getElementById('tabOpen');
-const tabClosed   = document.getElementById('tabClosed');
-const tabRejected = document.getElementById('tabRejected');
+const noMatchesEl = document.getElementById('noMatches');
 const countEl     = document.getElementById('todoCount');
 const appEl = document.getElementById('app');
 const detailEmpty   = document.getElementById('detail-empty');
 const detailContent = document.getElementById('detail-content');
 
-let currentFilter = 'open';
 let selectedId = null;
 const contextCache = {};
 const threadCache  = {};
 
-function refreshCount() {
-  const rows = Array.from(document.querySelectorAll('#todo-list .todo-row'));
-  const n = rows.filter(r => {
-    if (currentFilter === 'open')     return !r.classList.contains('closed') && !r.classList.contains('rejected-todo');
-    if (currentFilter === 'closed')   return r.classList.contains('closed');
-    if (currentFilter === 'rejected') return r.classList.contains('rejected-todo');
-    return false;
-  }).length;
-  countEl.textContent = n;
+const STATUS_LABELS = { open: 'Open', ongoing: 'Ongoing', closed: 'Closed', rejected: 'Rejected' };
+const SOURCE_LABELS = {
+  gmail: 'Gmail', fathom: 'Fathom', browser_history: 'Browser',
+  system: 'System', user: 'User',
+};
+const FILTER_STORE_PREFIX = 'inbox.filter.';
+
+// Private-mode browsers throw on both of these, so a failure to remember the
+// filter must never take the list down with it.
+function readStoredFilter(key) {
+  try {
+    const raw = localStorage.getItem(FILTER_STORE_PREFIX + key);
+    const parsed = raw ? JSON.parse(raw) : null;
+    return Array.isArray(parsed) ? parsed : null;
+  } catch { return null; }
+}
+function writeStoredFilter(key, values) {
+  try {
+    localStorage.setItem(FILTER_STORE_PREFIX + key, JSON.stringify([...values]));
+  } catch { /* not worth surfacing */ }
 }
 
-function switchTab(tab) {
-  currentFilter = tab;
-  [tabOpen, tabClosed, tabRejected].forEach(b => b.classList.remove('active'));
-  todoList.className = `show-${tab}`;
-  ({ open: tabOpen, closed: tabClosed, rejected: tabRejected })[tab].classList.add('active');
-  refreshCount();
+// Wires up one checkbox dropdown and returns the live Set of chosen values.
+function setupMultiFilter({ id, storageKey, labels, plural, onChange }) {
+  const root  = document.getElementById(id);
+  const btn   = root.querySelector('.filter-btn');
+  const label = root.querySelector('.filter-label');
+  const boxes = Array.from(root.querySelectorAll('input[type="checkbox"]'));
 
-  if (selectedId) {
+  // Drop remembered values whose option no longer exists, but keep a
+  // deliberately empty selection — that is a choice, not missing data.
+  const known  = new Set(boxes.map(b => b.value));
+  const stored = readStoredFilter(storageKey);
+  const initial = stored ? stored.filter(v => known.has(v))
+                         : boxes.filter(b => b.checked).map(b => b.value);
+  const selected = new Set(initial);
+  boxes.forEach(b => { b.checked = selected.has(b.value); });
+
+  function updateLabel() {
+    const picked = [...selected];
+    label.textContent =
+      picked.length === 0 ? `No ${plural}`
+      : picked.length === 1 ? labels[picked[0]]
+      : picked.length === boxes.length ? `All ${plural}`
+      : `${picked.length} ${plural}`;
+  }
+  function setOpen(open) {
+    root.classList.toggle('open', open);
+    btn.setAttribute('aria-expanded', open ? 'true' : 'false');
+  }
+
+  boxes.forEach(box => box.addEventListener('change', () => {
+    if (box.checked) selected.add(box.value);
+    else selected.delete(box.value);
+    writeStoredFilter(storageKey, selected);
+    updateLabel();
+    onChange();
+  }));
+  btn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    setOpen(!root.classList.contains('open'));
+  });
+  document.addEventListener('click', (e) => { if (!root.contains(e.target)) setOpen(false); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') setOpen(false); });
+
+  updateLabel();
+  return selected;
+}
+
+// Rejection is exclusive: a dismissed suggestion lives under Rejected only, so
+// the default view stays clear of things you already said no to.
+function statusBucket(r) {
+  if (r.classList.contains('rejected-todo')) return 'rejected';
+  if (r.classList.contains('closed'))  return 'closed';
+  if (r.classList.contains('ongoing')) return 'ongoing';
+  return 'open';
+}
+
+function matchesFilters(r) {
+  return selectedStatuses.has(statusBucket(r))
+      && selectedSources.has(r.dataset.source || 'user');
+}
+
+// pruneSelection only when a filter itself moved — a todo you close while
+// reading it should leave the list without yanking the detail pane away.
+function applyFilter({ pruneSelection = false } = {}) {
+  const rows = Array.from(document.querySelectorAll('#todo-list .todo-row'));
+  let shown = 0;
+  rows.forEach(r => {
+    const show = matchesFilters(r);
+    r.classList.toggle('filtered-out', !show);
+    if (show) shown++;
+  });
+  countEl.textContent = shown;
+  if (noMatchesEl) noMatchesEl.hidden = !(rows.length && shown === 0);
+
+  if (pruneSelection && selectedId) {
     const row = document.querySelector(`.todo-row[data-id="${selectedId}"]`);
-    if (row && getComputedStyle(row).display === 'none') clearSelection();
+    if (row && row.classList.contains('filtered-out')) clearSelection();
   }
 }
 
-tabOpen.addEventListener('click',     () => switchTab('open'));
-tabClosed.addEventListener('click',   () => switchTab('closed'));
-tabRejected.addEventListener('click', () => switchTab('rejected'));
+const selectedStatuses = setupMultiFilter({
+  id: 'statusFilter', storageKey: 'statuses', labels: STATUS_LABELS,
+  plural: 'statuses', onChange: () => applyFilter({ pruneSelection: true }),
+});
+const selectedSources = setupMultiFilter({
+  id: 'sourceFilter', storageKey: 'sources', labels: SOURCE_LABELS,
+  plural: 'sources', onChange: () => applyFilter({ pruneSelection: true }),
+});
+
+applyFilter();
 
 // ---------------- Selection / detail rendering ----------------
 function clearSelection() {
@@ -222,7 +304,7 @@ function applyFieldChange(t, field, newVal) {
     }
   }
 
-  refreshCount();
+  applyFilter();
 }
 
 function bindEditable(cell, todo) {
@@ -260,7 +342,7 @@ function applyDecision(t, decision) {
     row.querySelectorAll('.row-inline-actions .accept, .row-inline-actions .reject').forEach(b => b.remove());
   }
   if (selectedId === t.todo_id) renderDetail(t); // decision changes structure; re-render is appropriate here
-  refreshCount();
+  applyFilter();
 }
 
 function sendDecision(t, decision) {
@@ -708,6 +790,7 @@ function buildRow(t) {
   row.className = `todo-row ${t.status || 'open'}`;
   row.dataset.id = t.todo_id;
   row.dataset.importance = t.importance || 'none';
+  row.dataset.source = t.source || 'user';
   if (t.relevant_link) row.dataset.link = t.relevant_link;
   row.innerHTML = `
     <div class="row-body">
@@ -754,7 +837,7 @@ saveBtnNew.addEventListener('click', () => {
     if (empty) empty.remove();
     todoList.insertBefore(row, todoList.firstChild);
     resetForm();
-    refreshCount();
+    applyFilter();
     selectTodo(t.todo_id);
   });
 });
@@ -765,7 +848,7 @@ document.getElementById('ntTitle').addEventListener('keydown', e => {
 });
 
 // ---------------- Init ----------------
-switchTab('open');
+// The status filter applies itself once on load, where it is defined.
 (function initSelection() {
   const m = location.hash.match(/^#todo\/([^/]+)$/);
   if (m && todosById[m[1]]) { selectTodo(m[1]); return; }

@@ -823,7 +823,7 @@ ONBOARDING_TODOS = [
             "stays on track."
         ),
         "reasoning": (
-            "👋 Welcome to Action Inbox! This is a sample todo to show you "
+            "👋 Welcome to Self-driving Inbox! This is a sample todo to show you "
             "what action items extracted from your Gmail look like. Once you "
             "connect Gmail, real emails that need a response, a decision, or "
             "a follow-up will show up here automatically — with the thread, "
@@ -842,7 +842,7 @@ ONBOARDING_TODOS = [
             "review first."
         ),
         "reasoning": (
-            "📞 This is a sample of how Action Inbox surfaces commitments "
+            "📞 This is a sample of how Self-driving Inbox surfaces commitments "
             "from your meetings. Connect Fathom in Settings and any action "
             "items you agree to during a call will appear here — linked back "
             "to the recording so you can replay the moment for context."

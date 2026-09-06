@@ -3,25 +3,29 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sign in — Inbox Todos</title>
-  <meta name="theme-color" content="#7a2e2a">
+  <title>Sign in — Self-driving Inbox</title>
+  <meta name="theme-color" content="#0b0b0c">
   <meta name="description" content="Your inbox, meetings and notes turned into a single list of things to actually do.">
   <link rel="manifest" href="{{ url_for('manifest') }}">
   <link rel="icon" href="{{ url_for('static', filename='icons/favicon-32.png') }}" sizes="32x32">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Inbox">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Self-driving">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --bg: #f7f6f3;
-      --border: #e2e0da;
-      --text: #1a1a1a;
-      --muted: #9a9893;
+      color-scheme: dark;
+      --bg: #0b0b0c;
+      --panel: #141417;
+      --border: #232327;
+      --text: #ededed;
+      --muted: #74747d;
+      --accent: #f0b429;
+      --accent-ink: #17130a;
     }
 
     body {
@@ -36,9 +40,9 @@
     }
 
     .card {
-      background: white;
+      background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 12px;
+      border-radius: 14px;
       padding: 40px 36px;
       width: min(380px, 92vw);
       text-align: center;
@@ -66,16 +70,17 @@
       font-family: inherit;
       font-size: 14px;
       font-weight: 500;
-      background: var(--text);
-      color: white;
+      background: var(--accent);
+      color: var(--accent-ink);
       border: none;
-      border-radius: 6px;
+      border-radius: 8px;
       padding: 11px 18px;
       cursor: pointer;
       text-decoration: none;
+      transition: background 0.15s;
     }
 
-    .google-btn:hover { opacity: 0.92; }
+    .google-btn:hover { background: #ffc94d; }
 
     .google-icon {
       width: 16px;
@@ -94,7 +99,7 @@
 </head>
 <body>
   <div class="card">
-    <h1>Inbox Todos</h1>
+    <h1>Self-driving Inbox</h1>
     <p>Sign in with your Google account. We may request Gmail access to import emails (optional).</p>
     <a class="google-btn" href="{{ url_for('login_start') }}">
       <span class="google-icon">G</span>
