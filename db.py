@@ -462,22 +462,43 @@ def clear_user_state(conn: sqlite3.Connection, user_id: str, key: str) -> None:
 
 
 def get_source_connection(
-    conn: sqlite3.Connection, user_id: str, source: str
+    conn: sqlite3.Connection,
+    user_id: str,
+    source: str,
+    account_id: str | None = None,
 ) -> dict | None:
-    row = conn.execute(
-        "SELECT source, auth_type, credentials, connected_at, updated_at "
-        "FROM source_connections WHERE user_id = ? AND source = ?",
-        (user_id, source),
-    ).fetchone()
+    """Fetch one connection. With account_id=None, returns the earliest-connected
+    row for the source — the fallback used by legacy todos with no provenance."""
+    sql = (
+        "SELECT source, account_id, auth_type, credentials, connected_at, updated_at "
+        "FROM source_connections WHERE user_id = ? AND source = ?"
+    )
+    params: tuple = (user_id, source)
+    if account_id is not None:
+        sql += " AND account_id = ?"
+        params += (account_id,)
+    sql += " ORDER BY connected_at ASC LIMIT 1"
+    row = conn.execute(sql, params).fetchone()
     if not row:
         return None
     return {
         "source": row[0],
-        "auth_type": row[1],
-        "credentials": json.loads(row[2]),
-        "connected_at": row[3],
-        "updated_at": row[4],
+        "account_id": row[1],
+        "auth_type": row[2],
+        "credentials": json.loads(row[3]),
+        "connected_at": row[4],
+        "updated_at": row[5],
     }
+
+
+def list_gmail_accounts(conn: sqlite3.Connection, user_id: str) -> list[dict]:
+    """Every connected Gmail account for a user, oldest connection first."""
+    rows = conn.execute(
+        "SELECT account_id, connected_at FROM source_connections "
+        "WHERE user_id = ? AND source = 'gmail' ORDER BY connected_at ASC",
+        (user_id,),
+    ).fetchall()
+    return [{"account_id": r[0], "connected_at": r[1]} for r in rows]
 
 
 def set_source_credentials(
@@ -486,30 +507,38 @@ def set_source_credentials(
     source: str,
     auth_type: str,
     credentials: dict,
+    account_id: str = "",
 ) -> None:
     now = _now()
     conn.execute(
         """
         INSERT INTO source_connections
-            (user_id, source, auth_type, credentials, connected_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?)
-        ON CONFLICT(user_id, source) DO UPDATE SET
+            (user_id, source, account_id, auth_type, credentials, connected_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(user_id, source, account_id) DO UPDATE SET
             auth_type    = excluded.auth_type,
             credentials  = excluded.credentials,
             updated_at   = excluded.updated_at
         """,
-        (user_id, source, auth_type, json.dumps(credentials), now, now),
+        (user_id, source, account_id, auth_type, json.dumps(credentials), now, now),
     )
     conn.commit()
 
 
 def clear_source_connection(
-    conn: sqlite3.Connection, user_id: str, source: str
+    conn: sqlite3.Connection,
+    user_id: str,
+    source: str,
+    account_id: str | None = None,
 ) -> None:
-    conn.execute(
-        "DELETE FROM source_connections WHERE user_id = ? AND source = ?",
-        (user_id, source),
-    )
+    """Disconnect one account, or every account for the source when account_id
+    is None."""
+    sql = "DELETE FROM source_connections WHERE user_id = ? AND source = ?"
+    params: tuple = (user_id, source)
+    if account_id is not None:
+        sql += " AND account_id = ?"
+        params += (account_id,)
+    conn.execute(sql, params)
     conn.commit()
 
 
