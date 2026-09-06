@@ -19,8 +19,18 @@ entrypoints — before any other import, since module-level code reads env vars)
 `.env.example` for the annotated list. `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
 `OPENAI_API_KEY`, and `FLASK_SECRET_KEY` are required; everything else has a default.
 
-There are no tests, no linter config, and no CI in this repo. Verify changes by running the
-two processes and exercising the UI.
+There is no test suite, linter config, or CI in this repo. Verify changes by running the
+two processes and exercising the UI. The exception is `scripts/verify/`, a handful of
+standalone assertion scripts for the `db.py` schema/helpers and the web surface — run
+them with plain `python` (no pytest):
+
+```bash
+python scripts/verify/verify_migration.py    # optionally: <path-to-db-copy>
+python scripts/verify/verify_connections.py
+python scripts/verify/verify_links.py
+python scripts/verify/verify_cursors.py
+python scripts/verify/verify_web.py
+```
 
 ## Architecture
 
@@ -52,26 +62,36 @@ exists, and a redirect to `/login` would make the app non-installable. Key route
 
 Sign-in-with-Google lives in `auth.py`; Gmail *data* access is a separate OAuth grant in
 `pollers/gmail/auth.py`. Both use the same `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET` Google
-Cloud project. There is no `credentials.json` or `token.json` — every credential is per user,
-stored as JSON in the `source_connections` table (`auth_type` is `oauth2` or `api_key`).
-Fathom is an API key the user pastes into Settings; there is no global fallback key.
+Cloud project. There is no `credentials.json` or `token.json` — every credential is per user
+*and per account*, stored as JSON in the `source_connections` table, keyed by
+`(user_id, source, account_id)` (`auth_type` is `oauth2` or `api_key`).
+`account_id` is the lowercased Gmail address for Gmail and `''` for
+single-connection sources. A user can connect several Gmail accounts; each has
+its own credentials, its own poll cursor, and its own place in the poll loop,
+so one revoked token never disturbs the others. Fathom is an API key the user
+pastes into Settings; there is no global fallback key.
 
 Redirect URIs are computed per request from the browser's own hostname to avoid PKCE/state
 mismatches between `localhost` and `127.0.0.1`. `ProxyFix` is applied so this works behind a
 proxy in deployment.
 
 When Google returns a `RefreshError` (Testing-mode 7-day token expiry, revoked access, password
-change), `get_gmail_service` clears the stored connection so the UI flips to "not connected"
-and prompts re-auth. Don't swallow that — the clear-and-reprompt is the intended behavior.
+change), `get_gmail_service` clears the stored connection **for that account** so the UI
+flips to "not connected" and prompts re-auth, leaving the user's other accounts polling.
+Don't swallow that — the clear-and-reprompt is the intended behavior.
 
 ## Data model (`db.py`)
 
 - `users` — one row per Google sign-in
-- `user_state` — per-user key/value: Gmail `history_id`, `fathom_last_polled_at`, digest
-  bookkeeping, backfill flags. (`state` is the legacy single-user table, migrated away from.)
+- `user_state` — per-user key/value: Gmail cursors (`gmail:<email>:history_id`,
+  `gmail:<email>:backfill_pending`, `gmail:<email>:backfilled` — one set per connected
+  account), `fathom_last_polled_at`, digest bookkeeping. (`state` is the legacy
+  single-user table, migrated away from.)
 - `source_connections` — per-user, per-source credentials
 - `events` — raw `GmailEvent` payloads as JSON, append-only
 - `todos` — the unified list. `source` ∈ `gmail|fathom|browser_history|system|user`.
+  `account_id` records which Gmail account a todo came from; `NULL` means unknown
+  (todos predating multi-account support).
 - `page_views` — lightweight analytics behind `/stats`
 
 **Dedup** is a unique partial index on `(user_id, source, dedup_key)` where `dedup_key IS NOT NULL`,
@@ -114,9 +134,11 @@ Responses API:
 
 ## Gmail polling specifics
 
-On first connect the poller does a **3-day backfill** (`gmail_backfill_pending` user-state key),
-capturing the current `historyId` *before* fetching so anything arriving mid-backfill is still
-picked up on the next cycle — dedup absorbs the overlap. After that it's incremental: History
+The poller iterates every connected Gmail account for a user, each in its own
+`try/except`. On first connect of an account it does a **3-day backfill**
+(`gmail:<email>:backfill_pending` user-state key), capturing that account's current
+`historyId` *before* fetching so anything arriving mid-backfill is still picked up on
+the next cycle — dedup absorbs the overlap. After that it's incremental: History
 API with `startHistoryId`, paged to exhaustion, writing back the max `historyId` seen. A
 `last_id` of `None` on a non-backfill path just bootstraps the baseline and returns nothing.
 
