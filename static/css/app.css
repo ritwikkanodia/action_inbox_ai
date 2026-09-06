@@ -1238,3 +1238,14 @@
       white-space: nowrap;
     }
     #gmail-accounts { margin-bottom: 8px; }
+    .account-badge {
+      font-size: 11px;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: var(--pill-stone-bg);
+      color: var(--pill-stone-fg);
+      max-width: 120px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }

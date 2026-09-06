@@ -210,7 +210,7 @@ def index():
     rows = db.execute(
         """
         SELECT todo_id, title, suggested_action, importance,
-               estimated_time_minutes, due_date, relevant_link, reasoning, status, source, decision, created_at, source_meta,
+               estimated_time_minutes, due_date, relevant_link, reasoning, status, source, account_id, decision, created_at, source_meta,
                (ai_thread IS NOT NULL AND ai_thread != '' AND ai_thread != '[]') AS has_ai_thread
         FROM todos
         WHERE user_id = ? AND title IS NOT NULL AND title != ''
@@ -231,7 +231,8 @@ def index():
                 t["source_meta"] = {}
         else:
             t["source_meta"] = {}
-    gmail_connected = bool(get_source_connection(db, user_id, "gmail"))
+    gmail_accounts = list_gmail_accounts(db, user_id)
+    gmail_connected = bool(gmail_accounts)
     fresh_signup = bool(session.pop("fresh_signup", False))
     return render_template(
         "index.html",
@@ -318,7 +319,8 @@ def ask_ai(todo_id):
     user_id = current_user_id()
     assert user_id
     row = db.execute(
-        "SELECT title, suggested_action, reasoning, importance, due_date, source, ai_thread, source_meta "
+        "SELECT title, suggested_action, reasoning, importance, due_date, source, "
+        "account_id, ai_thread, source_meta "
         "FROM todos WHERE todo_id = ? AND user_id = ?",
         (todo_id, user_id),
     ).fetchone()
@@ -358,7 +360,7 @@ def todo_context(todo_id):
     user_id = current_user_id()
     assert user_id
     row = db.execute(
-        "SELECT source, source_meta, relevant_link FROM todos WHERE todo_id = ? AND user_id = ?",
+        "SELECT source, account_id, source_meta, relevant_link FROM todos WHERE todo_id = ? AND user_id = ?",
         (todo_id, user_id),
     ).fetchone()
     if row is None:
@@ -374,8 +376,11 @@ def todo_context(todo_id):
         thread_id = meta.get("thread_id")
         if not thread_id:
             return jsonify({"source": source, "error": "No thread linked to this todo."})
+        account_id = row["account_id"]
         try:
-            service = get_gmail_service(db, user_id)
+            # account_id is None for todos created before per-account provenance;
+            # get_gmail_service falls back to the user's first connected account.
+            service = get_gmail_service(db, user_id, account_id)
             user_email = service.users().getProfile(userId="me").execute().get("emailAddress", "")
             messages = fetch_thread_messages(service, thread_id)
             formatted = [
@@ -391,7 +396,8 @@ def todo_context(todo_id):
             return jsonify({
                 "source": "gmail",
                 "thread": formatted,
-                "thread_url": row["relevant_link"] or f"https://mail.google.com/mail/u/0/#all/{thread_id}",
+                "account": account_id,
+                "thread_url": row["relevant_link"] or gmail_thread_url(thread_id, account_id),
             })
         except Exception as exc:
             return jsonify({"source": "gmail", "error": f"Couldn't load thread: {exc}"})

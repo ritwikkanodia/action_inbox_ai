@@ -111,6 +111,9 @@
             <div class="row-meta">
               {% if t.due_date %}<span class="row-due">{{ t.due_date | fmt_dt }}</span>{% endif %}
               <span class="source-badge {{ t.source or 'gmail' }}">{{ src_label }}</span>
+              {% if t.source == 'gmail' and t.account_id %}
+              <span class="account-badge" title="{{ t.account_id }}">{{ t.account_id.split('@')[0] }}</span>
+              {% endif %}
             </div>
           </div>
           <div class="row-inline-actions" data-id="{{ t.todo_id }}">
