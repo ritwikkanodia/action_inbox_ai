@@ -793,12 +793,47 @@ function setSourceConnected(prefix, on, hint) {
   }
 }
 
+function renderGmailAccounts(accounts) {
+  const container = document.getElementById('gmail-accounts');
+  const status = document.getElementById('gmail-status');
+  const connectBtn = document.getElementById('gmail-connect-btn');
+  const count = accounts.length;
+
+  status.textContent = count
+    ? `${count} account${count === 1 ? '' : 's'}`
+    : 'Not connected';
+  status.className = `source-connected-badge ${count ? 'on' : 'off'}`;
+  connectBtn.textContent = count ? 'Connect another account' : 'Connect with Google';
+
+  container.innerHTML = accounts.map(a => `
+    <div class="gmail-account-row" data-email="${escapeHtml(a.email)}">
+      <span class="gmail-account-email">${escapeHtml(a.email)}</span>
+      <button class="btn-disconnect gmail-account-disconnect">Disconnect</button>
+    </div>`).join('');
+
+  container.querySelectorAll('.gmail-account-disconnect').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const email = btn.closest('.gmail-account-row').dataset.email;
+      if (!confirm(`Disconnect ${email}? Existing todos from this account are kept.`)) return;
+      btn.disabled = true;
+      fetch('/settings/sources/gmail', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ disconnect: true, account_id: email }),
+      })
+        .then(r => r.json())
+        .then(data => { if (data.ok) renderGmailAccounts(data.accounts); })
+        .finally(() => { btn.disabled = false; });
+    });
+  });
+}
+
 function openSettingsModal() {
   settingsModal.classList.add('open');
   fetch('/settings').then(r => r.json()).then(data => {
     const { fathom, gmail } = data.sources;
     setSourceConnected('fathom', fathom.connected, fathom.api_key_preview);
-    setSourceConnected('gmail', gmail.connected, gmail.email || 'Authorized via OAuth');
+    renderGmailAccounts(gmail.accounts || []);
   });
 }
 document.getElementById('openSettingsBtn').addEventListener('click', openSettingsModal);
@@ -826,13 +861,7 @@ document.getElementById('fathom-disconnect-btn').addEventListener('click', () =>
     body: JSON.stringify({ disconnect: true }),
   }).then(r => r.json()).then(data => { if (data.ok) setSourceConnected('fathom', false); });
 });
+
 document.getElementById('gmail-connect-btn').addEventListener('click', () => {
   window.location.href = '/settings/sources/gmail/auth';
-});
-document.getElementById('gmail-disconnect-btn').addEventListener('click', () => {
-  fetch('/settings/sources/gmail', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ disconnect: true }),
-  }).then(r => r.json()).then(data => { if (data.ok) setSourceConnected('gmail', false); });
 });

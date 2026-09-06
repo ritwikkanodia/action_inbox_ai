@@ -488,8 +488,7 @@ def get_settings():
     assert user_id
     fathom = get_source_connection(db, user_id, "fathom")
     fathom_key = (fathom or {}).get("credentials", {}).get("api_key", "") if fathom else None
-    gmail = get_source_connection(db, user_id, "gmail")
-    gmail_email = (gmail or {}).get("credentials", {}).get("connected_email") if gmail else None
+    accounts = list_gmail_accounts(db, user_id)
     return jsonify({
         "sources": {
             "fathom": {
@@ -497,8 +496,10 @@ def get_settings():
                 "api_key_preview": f"...{fathom_key[-6:]}" if fathom_key else None,
             },
             "gmail": {
-                "connected": bool(gmail),
-                "email": gmail_email,
+                "accounts": [
+                    {"email": a["account_id"], "connected_at": a["connected_at"]}
+                    for a in accounts
+                ],
                 "auth_url": url_for("gmail_auth"),
             },
         }
@@ -610,8 +611,17 @@ def update_source_settings(source: str):
         return jsonify({"ok": True, "connected": True, "api_key_preview": f"...{api_key[-6:]}"})
     if source == "gmail":
         if data.get("disconnect"):
-            clear_source_connection(db, user_id, "gmail")
-            return jsonify({"ok": True, "connected": False})
+            # An explicit account_id disconnects one mailbox; omitting it
+            # disconnects every Gmail account for this user.
+            account_id = (data.get("account_id") or "").strip().lower() or None
+            clear_source_connection(db, user_id, "gmail", account_id)
+            return jsonify({
+                "ok": True,
+                "accounts": [
+                    {"email": a["account_id"], "connected_at": a["connected_at"]}
+                    for a in list_gmail_accounts(db, user_id)
+                ],
+            })
         return jsonify({"error": "use /settings/sources/gmail/auth to connect"}), 400
     return jsonify({"error": "unhandled"}), 500
 
