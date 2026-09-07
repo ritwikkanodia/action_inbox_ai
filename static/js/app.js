@@ -422,13 +422,20 @@ function renderDetail(t) {
 
     <div class="ai-section">
       <div class="ai-section-header">
-        <h3>Ask AI</h3>
+        <h3>Ways to close this</h3>
+        <button id="ai-regen-btn" title="Re-infer the options">Regenerate</button>
+      </div>
+      <div id="ai-actions"></div>
+
+      <div class="ai-section-header ai-thread-header">
+        <h3>Execution</h3>
         <button id="ai-new-thread-btn">New thread</button>
       </div>
       <div id="ai-thread"></div>
       <div id="ai-input-area">
-        <textarea id="ai-followup" placeholder="Ask a follow-up…" rows="1"></textarea>
+        <textarea id="ai-followup" placeholder="Or type your own instruction…" rows="1"></textarea>
         <button id="ai-send-btn">Send</button>
+        <button id="ai-stop-btn" class="hidden">Stop</button>
       </div>
     </div>
   `;
@@ -436,6 +443,7 @@ function renderDetail(t) {
   wireDetailHandlers(t);
   loadContext(t);
   loadAiThread(t);
+  loadActions(t);
 }
 
 function wireDetailHandlers(t) {
@@ -455,13 +463,13 @@ function wireDetailHandlers(t) {
   sendBtn.addEventListener('click', () => {
     const msg = followup.value.trim();
     if (!msg) return;
-    const userBubble = document.createElement('div');
-    userBubble.className = 'ai-bubble user';
-    userBubble.textContent = msg;
-    document.getElementById('ai-thread').appendChild(userBubble);
     followup.value = '';
+    followup.style.height = 'auto';
     callAI(t.todo_id, msg);
   });
+
+  document.getElementById('ai-stop-btn').addEventListener('click', () => stopRun(t.todo_id));
+  document.getElementById('ai-regen-btn').addEventListener('click', () => loadActions(t, true));
   followup.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }
   });
@@ -473,8 +481,9 @@ function wireDetailHandlers(t) {
   document.getElementById('ai-new-thread-btn').addEventListener('click', () => {
     fetch(`/todos/${t.todo_id}/reset-thread`, { method: 'POST' }).then(() => {
       delete threadCache[t.todo_id];
+      stopPolling();
+      setRunning(false);
       document.getElementById('ai-thread').innerHTML = '';
-      callAI(t.todo_id, null);
     });
   });
 }
@@ -683,7 +692,71 @@ function renderContext(data, heading, body) {
   body.innerHTML = '<div class="context-error">No additional context.</div>';
 }
 
-// ---------------- Ask AI ----------------
+// ---------------- Suggested actions ----------------
+// The three inferred ways to close the item. Picking one hands its instruction
+// to the executor as the user message — same path as typing it by hand.
+const actionsCache = {};
+
+function renderActions(todoId, actions, error) {
+  const el = document.getElementById('ai-actions');
+  if (!el || selectedId !== todoId) return;
+
+  if (error) {
+    el.innerHTML = `<div class="context-error">Couldn't work out the options — ${escapeHtml(error)}</div>`;
+    return;
+  }
+  if (!actions || !actions.length) {
+    el.innerHTML = '<div class="context-error">No options suggested for this item.</div>';
+    return;
+  }
+
+  el.innerHTML = actions.map((a, i) => `
+    <button class="action-option" data-idx="${i}">
+      <span class="action-option-num">${i + 1}</span>
+      <span class="action-option-text">
+        <span class="action-option-label">${escapeHtml(a.label || '')}</span>
+        ${a.detail ? `<span class="action-option-detail">${escapeHtml(a.detail)}</span>` : ''}
+      </span>
+      <span class="action-option-go">Run →</span>
+    </button>`).join('');
+
+  el.querySelectorAll('.action-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (runningTodoId) return;
+      const action = actions[Number(btn.dataset.idx)];
+      if (!action) return;
+      btn.classList.add('is-chosen');
+      callAI(todoId, action.instruction);
+    });
+  });
+  applyRunningStateToActions();
+}
+
+function loadActions(t, refresh) {
+  const el = document.getElementById('ai-actions');
+  if (!el) return;
+
+  if (!refresh && actionsCache[t.todo_id]) {
+    renderActions(t.todo_id, actionsCache[t.todo_id]);
+    return;
+  }
+  el.innerHTML = '<div class="context-loading">Working out how to close this…</div>';
+  fetch(`/todos/${t.todo_id}/actions${refresh ? '?refresh=1' : ''}`)
+    .then(r => r.json())
+    .then(data => {
+      if (!data.error) actionsCache[t.todo_id] = data.actions;
+      renderActions(t.todo_id, data.actions, data.error);
+    })
+    .catch(() => renderActions(t.todo_id, null, 'request failed'));
+}
+
+// ---------------- Execution ----------------
+// A turn runs on the server in the background so it can be stopped mid-flight;
+// the page starts it, then polls until it reaches a terminal state.
+let runningTodoId = null;
+let pollTimer = null;
+const POLL_MS = 1500;
+
 function renderThread(thread) {
   const threadEl = document.getElementById('ai-thread');
   if (!threadEl) return;
@@ -700,11 +773,11 @@ function renderThread(thread) {
 
 function addLoadingBubble() {
   const threadEl = document.getElementById('ai-thread');
-  if (!threadEl) return;
+  if (!threadEl || document.getElementById('ai-loading-bubble')) return;
   const div = document.createElement('div');
   div.className = 'ai-bubble loading';
   div.id = 'ai-loading-bubble';
-  div.textContent = 'Thinking…';
+  div.textContent = 'Working…';
   threadEl.appendChild(div);
   threadEl.scrollTop = threadEl.scrollHeight;
 }
@@ -714,12 +787,91 @@ function removeLoadingBubble() {
   if (el) el.remove();
 }
 
-function callAI(todoId, message) {
+function applyRunningStateToActions() {
+  const running = Boolean(runningTodoId);
+  document.querySelectorAll('#ai-actions .action-option').forEach(btn => {
+    btn.disabled = running;
+    btn.classList.toggle('is-waiting', running && !btn.classList.contains('is-chosen'));
+  });
+  if (!running) {
+    document.querySelectorAll('#ai-actions .is-chosen').forEach(b => b.classList.remove('is-chosen'));
+  }
+}
+
+// While a run is in flight the composer's Send is swapped for Stop, so the one
+// control the user reaches for is always the one that applies.
+function setRunning(running, todoId) {
+  runningTodoId = running ? todoId : null;
   const sendBtn = document.getElementById('ai-send-btn');
+  const stopBtn = document.getElementById('ai-stop-btn');
   const followup = document.getElementById('ai-followup');
-  if (sendBtn) sendBtn.disabled = true;
-  if (followup) followup.disabled = true;
-  addLoadingBubble();
+  const regen = document.getElementById('ai-regen-btn');
+  if (sendBtn) sendBtn.classList.toggle('hidden', running);
+  if (stopBtn) {
+    stopBtn.classList.toggle('hidden', !running);
+    stopBtn.disabled = false;
+    stopBtn.textContent = 'Stop';
+  }
+  if (followup) followup.disabled = running;
+  if (regen) regen.disabled = running;
+  if (running) addLoadingBubble(); else removeLoadingBubble();
+  applyRunningStateToActions();
+}
+
+function stopPolling() {
+  if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+}
+
+function applyRunState(todoId, data) {
+  if (data.thread) {
+    // Only completed turns are cached, because only those are persisted: a
+    // stop or a failure leaves nothing behind server-side, so keeping its
+    // notice around would survive longer than the state it describes.
+    if (data.status === 'done' || data.status === 'idle') threadCache[todoId] = data.thread;
+    if (selectedId === todoId) renderThread(data.thread);
+  }
+  if (data.status === 'running') {
+    if (selectedId === todoId) setRunning(true, todoId);
+    schedulePoll(todoId);
+    return;
+  }
+  stopPolling();
+  if (selectedId === todoId) setRunning(false);
+}
+
+function schedulePoll(todoId) {
+  stopPolling();
+  pollTimer = setTimeout(() => {
+    fetch(`/todos/${todoId}/run`)
+      .then(r => r.json())
+      .then(data => {
+        // The run may have been reset, or the worker restarted, while we waited.
+        if (data.status === 'idle') { stopPolling(); if (selectedId === todoId) setRunning(false); return; }
+        applyRunState(todoId, data);
+      })
+      .catch(() => schedulePoll(todoId));
+  }, POLL_MS);
+}
+
+function stopRun(todoId) {
+  const stopBtn = document.getElementById('ai-stop-btn');
+  if (stopBtn) { stopBtn.disabled = true; stopBtn.textContent = 'Stopping…'; }
+  fetch(`/todos/${todoId}/run/stop`, { method: 'POST' })
+    .then(() => schedulePoll(todoId))
+    .catch(() => schedulePoll(todoId));
+}
+
+function callAI(todoId, message) {
+  if (message) {
+    const threadEl = document.getElementById('ai-thread');
+    if (threadEl && selectedId === todoId) {
+      const userBubble = document.createElement('div');
+      userBubble.className = 'ai-bubble user';
+      userBubble.textContent = message;
+      threadEl.appendChild(userBubble);
+    }
+    setRunning(true, todoId);
+  }
   const body = message ? { message } : {};
   return fetch(`/todos/${todoId}/ask-ai`, {
     method: 'POST',
@@ -727,42 +879,50 @@ function callAI(todoId, message) {
     body: JSON.stringify(body),
   })
     .then(r => r.json())
-    .then(data => {
-      removeLoadingBubble();
-      threadCache[todoId] = data.thread;
-      if (selectedId !== todoId) return;
-      renderThread(data.thread);
-      if (sendBtn) sendBtn.disabled = false;
-      if (followup) { followup.disabled = false; followup.focus(); }
-    })
+    .then(data => applyRunState(todoId, data))
     .catch(() => {
-      removeLoadingBubble();
-      if (sendBtn) sendBtn.disabled = false;
-      if (followup) followup.disabled = false;
+      stopPolling();
+      if (selectedId === todoId) {
+        setRunning(false);
+        addErrorBubble("Couldn't reach the server.");
+      }
     });
+}
+
+function addErrorBubble(text) {
+  const threadEl = document.getElementById('ai-thread');
+  if (!threadEl) return;
+  const div = document.createElement('div');
+  div.className = 'ai-bubble assistant';
+  div.textContent = `⚠️ ${text}`;
+  threadEl.appendChild(div);
 }
 
 function loadAiThread(t) {
   const threadEl = document.getElementById('ai-thread');
+  stopPolling();
+  setRunning(false);
+
   if (threadCache[t.todo_id] && threadCache[t.todo_id].length > 0) {
     renderThread(threadCache[t.todo_id]);
-    return;
+  } else if (!t.has_ai_thread) {
+    threadEl.innerHTML = '<div class="ai-empty-cta">Pick an action above, or type your own instruction below.</div>';
   }
-  if (t.has_ai_thread) {
-    callAI(t.todo_id, null);
-    return;
-  }
-  threadEl.innerHTML = `
-    <div class="ai-empty-cta">
-      Ask a question, or
-      <button id="ai-kickoff-btn" class="ai-kickoff-btn">get AI suggestions</button>
-      for this item.
-    </div>`;
-  const kickoff = document.getElementById('ai-kickoff-btn');
-  if (kickoff) kickoff.addEventListener('click', () => {
-    threadEl.innerHTML = '';
-    callAI(t.todo_id, null);
-  });
+
+  // Ask the server what it has: either the persisted thread, or a run this
+  // page never started — one left behind by a reload, or by another tab.
+  fetch(`/todos/${t.todo_id}/ask-ai`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (selectedId !== t.todo_id) return;
+      if (data.thread && data.thread.length) applyRunState(t.todo_id, data);
+      else if (data.status === 'running') applyRunState(t.todo_id, data);
+    })
+    .catch(() => {});
 }
 
 // ---------------- New-todo form ----------------

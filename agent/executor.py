@@ -6,7 +6,7 @@ here and nowhere else.
 
 The contract every executor implements:
 
-    resolve(todo, thread, user_message, user_id, state) -> (thread, state)
+    resolve(todo, thread, user_message, user_id, state, cancel=None) -> (thread, state)
 
 `thread` is the display log: a list of {role, content} bubbles, which is also a
 valid Agents-SDK input list, so the two executors can read each other's threads.
@@ -15,6 +15,11 @@ valid Agents-SDK input list, so the two executors can read each other's threads.
 Hermes keeps its session id there; the Agents-SDK resolver has no out-of-band
 state (the thread *is* its state) and returns None. Nothing outside the executor
 interprets it.
+
+`cancel` is a `agent.runs.CancelToken` when the caller wants the run to be
+stoppable, and None otherwise. Honouring it is best-effort and per-executor:
+Hermes attaches its subprocess to the token so a stop kills it outright, while
+the in-process Agents-SDK loop has nothing to interrupt and ignores it.
 
 Set TODO_EXECUTOR to pick one. `hermes` needs the CLI on the host, so the
 deployed container — which has no such binary — wants `agents_sdk`.
@@ -27,6 +32,14 @@ DEFAULT_EXECUTOR = "hermes"
 
 class ExecutorError(RuntimeError):
     """An executor failed to produce a reply. Message is safe to show the user."""
+
+
+class ExecutorCancelled(ExecutorError):
+    """The user stopped the run. A subclass, so plain error handlers still catch it.
+
+    Whatever the agent had already done before the stop — mail sent, a form
+    submitted — stands; only the run itself was interrupted.
+    """
 
 
 def _load(name: str):
@@ -48,7 +61,14 @@ def current_executor() -> str:
 
 
 def resolve(
-    todo: dict, thread: list, user_message: str, user_id: str, state: str | None
+    todo: dict,
+    thread: list,
+    user_message: str,
+    user_id: str,
+    state: str | None,
+    cancel=None,
 ) -> tuple[list, str | None]:
     """Run one turn on the configured executor."""
-    return _load(current_executor())(todo, thread, user_message, user_id, state)
+    return _load(current_executor())(
+        todo, thread, user_message, user_id, state, cancel=cancel
+    )

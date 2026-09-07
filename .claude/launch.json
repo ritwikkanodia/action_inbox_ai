@@ -4,8 +4,16 @@
     {
       "name": "action-inbox-web",
       "runtimeExecutable": "venv/bin/flask",
-      "runtimeArgs": ["--app", "app", "run", "--debug", "--port", "5001"],
-      "port": 5001
+      "runtimeArgs": [
+        "--app",
+        "app",
+        "run",
+        "--debug",
+        "--port",
+        "5001"
+      ],
+      "port": 5001,
+      "autoPort": false
     }
   ]
 }
