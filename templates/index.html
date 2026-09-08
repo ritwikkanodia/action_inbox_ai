@@ -34,7 +34,8 @@
        than hiding inside 'open'. Defaults reproduce the old Open tab. #}
     {% set status_opts = [
       ('open', 'Open', true), ('ongoing', 'Ongoing', true),
-      ('closed', 'Closed', false), ('rejected', 'Rejected', false)] %}
+      ('closed', 'Closed', false), ('archived', 'Archived', false),
+      ('rejected', 'Rejected', false)] %}
     {% set source_opts = [
       ('gmail', 'Gmail'), ('fathom', 'Fathom'), ('browser_history', 'Browser'),
       ('system', 'System'), ('user', 'User')] %}
@@ -135,7 +136,7 @@
       {% else %}
         {% for t in todos %}
         {% set is_ai = t.source in ('gmail', 'fathom', 'browser_history', 'system') %}
-        {% set pending = is_ai and not t.decision and t.status != 'closed' %}
+        {% set pending = is_ai and not t.decision and t.status not in ('closed', 'archived') %}
         {% set src_label = 'browser' if t.source == 'browser_history' else ('system' if t.source == 'system' else (t.source or 'gmail')) %}
         <div class="todo-row {{ t.status }}{% if t.decision == 'rejected' %} rejected-todo{% endif %}{% if pending %} pending-decision{% endif %}"
              data-id="{{ t.todo_id }}"
