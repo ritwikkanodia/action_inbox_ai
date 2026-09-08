@@ -389,6 +389,7 @@
     .row-act.editable[data-field="status"][data-value="open"]    { background: var(--pill-blue-bg);  color: var(--pill-blue-fg);  border-color: transparent; }
     .row-act.editable[data-field="status"][data-value="ongoing"] { background: var(--pill-amber-bg); color: var(--pill-amber-fg); border-color: transparent; }
     .row-act.editable[data-field="status"][data-value="closed"]  { background: var(--pill-green-bg); color: var(--pill-green-fg); border-color: transparent; }
+    .row-act.editable[data-field="status"][data-value="archived"] { background: var(--pill-stone-bg); color: var(--pill-stone-fg); border-color: transparent; }
 
     .row-act .edit-select, .row-act .edit-date {
       font-family: var(--sans);
@@ -526,6 +527,7 @@
     .row-due { color: var(--ink-2); }
 
     .todo-row.closed .row-title { text-decoration: line-through; color: var(--ink-3); }
+    .todo-row.archived .row-title { color: var(--ink-3); }
     .todo-row.pending-decision .row-title {
       color: var(--ink-2);
     }
@@ -676,6 +678,7 @@
     .status.open    { background: var(--pill-blue-bg);  color: var(--pill-blue-fg); }
     .status.ongoing { background: var(--pill-amber-bg); color: var(--pill-amber-fg); }
     .status.closed  { background: var(--pill-green-bg); color: var(--pill-green-fg); }
+    .status.archived { background: var(--pill-stone-bg); color: var(--pill-stone-fg); }
 
     .importance {
       font-family: var(--mono);

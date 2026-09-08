@@ -24,6 +24,9 @@ from flask import (
 from werkzeug.middleware.proxy_fix import ProxyFix
 
 from db import (
+    _VALID_DECISION,
+    _VALID_IMPORTANCE,
+    _VALID_STATUS,
     init_db,
     save_user_todo,
     get_source_connection,
@@ -216,7 +219,7 @@ def index():
         FROM todos
         WHERE user_id = ? AND title IS NOT NULL AND title != ''
         ORDER BY
-            CASE status WHEN 'closed' THEN 1 ELSE 0 END,
+            CASE WHEN status IN ('closed', 'archived') THEN 1 ELSE 0 END,
             CASE importance WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
             created_at DESC
         """,
@@ -605,10 +608,20 @@ def reset_thread(todo_id):
 @login_required
 def update_todo(todo_id):
     ALLOWED = {"due_date", "importance", "status", "decision", "title"}
+    # Migrated databases carry no CHECK constraints, so the enums are enforced
+    # here too. importance and decision are clearable, so None is valid there.
+    ENUMS = {
+        "status": _VALID_STATUS,
+        "importance": _VALID_IMPORTANCE | {None},
+        "decision": _VALID_DECISION | {None},
+    }
     data = request.get_json(force=True)
     updates = {k: v for k, v in data.items() if k in ALLOWED}
     if not updates:
         return jsonify({"error": "no valid fields"}), 400
+    for field, allowed in ENUMS.items():
+        if field in updates and updates[field] not in allowed:
+            return jsonify({"error": f"invalid {field}"}), 400
     sets = ", ".join(f"{k} = ?" for k in updates) + ", updated_at = ?"
     db = get_db()
     user_id = current_user_id()

@@ -1,5 +1,5 @@
 const IMPORTANCE_OPTIONS = ['low', 'medium', 'high'];
-const STATUS_OPTIONS  = ['open', 'ongoing', 'closed'];
+const STATUS_OPTIONS  = ['open', 'ongoing', 'closed', 'archived'];
 const AI_SOURCES = ['gmail', 'fathom', 'browser_history', 'system'];
 
 const todosById = {};
@@ -41,7 +41,8 @@ function sourceLabel(source) {
 }
 
 function isPending(t) {
-  return AI_SOURCES.includes(t.source) && !t.decision && t.status !== 'closed';
+  return AI_SOURCES.includes(t.source) && !t.decision
+    && t.status !== 'closed' && t.status !== 'archived';
 }
 
 // ---------------- Sidebar state ----------------
@@ -56,7 +57,7 @@ let selectedId = null;
 const contextCache = {};
 const threadCache  = {};
 
-const STATUS_LABELS = { open: 'Open', ongoing: 'Ongoing', closed: 'Closed', rejected: 'Rejected' };
+const STATUS_LABELS = { open: 'Open', ongoing: 'Ongoing', closed: 'Closed', archived: 'Archived', rejected: 'Rejected' };
 const SOURCE_LABELS = {
   gmail: 'Gmail', fathom: 'Fathom', browser_history: 'Browser',
   system: 'System', user: 'User',
@@ -129,6 +130,7 @@ function setupMultiFilter({ id, storageKey, labels, plural, onChange }) {
 // the default view stays clear of things you already said no to.
 function statusBucket(r) {
   if (r.classList.contains('rejected-todo')) return 'rejected';
+  if (r.classList.contains('archived')) return 'archived';
   if (r.classList.contains('closed'))  return 'closed';
   if (r.classList.contains('ongoing')) return 'ongoing';
   return 'open';
@@ -262,7 +264,7 @@ function applyFieldChange(t, field, newVal) {
   const row = document.querySelector(`.todo-row[data-id="${t.todo_id}"]`);
   if (row) {
     if (field === 'status') {
-      row.classList.remove('open', 'ongoing', 'closed');
+      row.classList.remove(...STATUS_OPTIONS);
       if (newVal) row.classList.add(newVal);
     } else if (field === 'importance') {
       row.dataset.importance = newVal || 'none';
