@@ -33,6 +33,7 @@ python scripts/verify/verify_web.py
 python scripts/verify/verify_executor.py    # stubs the Hermes CLI; no API spend
 python scripts/verify/verify_actions.py     # stubs the OpenAI call; no API spend
 python scripts/verify/verify_hermes_activity.py  # stubs Hermes' state.db; no CLI, no spend
+python scripts/verify/verify_clarify.py     # clarifying-question parsing; no CLI, no spend
 ```
 
 ## Architecture
@@ -135,6 +136,19 @@ call, not an agent turn — it only *proposes* the routes. Clicking one sends it
 to `/ask-ai` as the user message, so a suggested action and a hand-typed one take exactly the
 same path. Options are generated on first open of a todo's detail pane and cached in
 `todos.action_options`, so reopening costs nothing.
+
+**Clarifying questions** (`agent/clarify.py`). The resolution prompts forbid inventing a fact
+about the user — a rating, an opinion, an experience, a figure — and require the agent to stop
+before any irreversible act whose inputs it inferred rather than confirmed. That only works if
+asking is cheap, so an agent that needs something appends a fenced ` ```ask_user ` block to its
+reply holding `{questions: [{question, header, options: [{label, detail}], multiSelect}]}`.
+`app._thread_for_client` splits that off the prose at **read** time and hands it to the frontend
+as a `questions` field on the bubble; `static/js/app.js` renders the options as chips and always
+adds its own "Something else…" that focuses the composer, so the prompts ask for 2-3 options,
+never a free-text one. Parsing on read rather than on write is what makes the chips survive a
+reload — the raw block stays in `todos.ai_thread`, so every read re-derives them and no column
+was added. Every parse failure degrades to the untouched reply: a malformed block must cost the
+user chips, never the answer. Both executors get this, since neither knows the protocol exists.
 
 **Discovery and execution are decoupled.** The pollers generate todos; resolution runs on a
 *selectable executor* behind `agent/executor.py`. `app.py` calls `executor.resolve` and knows

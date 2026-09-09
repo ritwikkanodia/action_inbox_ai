@@ -294,7 +294,17 @@ def _extract_text(content) -> str:
 
 
 def _thread_for_client(thread):
-    """Filter an SDK input list down to renderable {role, content} bubbles."""
+    """Filter an SDK input list down to renderable {role, content} bubbles.
+
+    Assistant bubbles may also carry `questions`: a clarifying question the
+    agent asked as a fenced block inside its reply, lifted out here so the
+    frontend can render it as choices instead of making the user type.
+
+    Splitting on read rather than on write is deliberate — the stored reply
+    keeps the block, so the chips are re-derived every time the todo is opened
+    and survive a reload without a new column to migrate.
+    """
+    from agent.clarify import split_questions
     from agent.input_builder import HIDDEN_CONTEXT_SENTINEL
 
     out = []
@@ -309,7 +319,15 @@ def _thread_for_client(thread):
             continue
         if role == "user" and text.startswith(HIDDEN_CONTEXT_SENTINEL):
             continue
-        out.append({"role": role, "content": text})
+
+        bubble = {"role": role, "content": text}
+        if role == "assistant":
+            bubble["content"], questions = split_questions(text)
+            if questions:
+                bubble["questions"] = questions
+            elif not bubble["content"]:
+                continue
+        out.append(bubble)
     return out
 
 
