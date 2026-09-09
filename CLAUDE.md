@@ -176,10 +176,16 @@ typed. It exists because the user consented to a four-word label, not to the mod
 sentence behind it: an instruction that asserts something about them ("reflects a positive
 experience") would otherwise reach the agent as their own words and defeat the rule against
 inventing facts about the user. Executors that build a prompt frame such a turn as a route,
-not a statement. **Treat this as defence in depth, not a guarantee** — measured against a
-deliberately poisoned instruction, the framing lost to the concrete directive every time, in
-three different placements. The load-bearing fix is that `agent/action_options.py` does not
-generate presumptuous instructions in the first place.
+not a statement.
+
+**How well that holds depends on the model.** Measured against a deliberately poisoned
+instruction ("...one sentence that reflects a positive experience"), a `gpt-5-mini`-class agent
+ignored the framing in all three placements tried and wrote an invented 5-star review; a
+`gpt-6-astra` one stripped the presumption and asked "how would you rate *your own* experience",
+offering "no product-use experience to review" as an option. Weaker models follow the concrete
+directive and drop the abstract constraint. Treat the framing as real but model-dependent, and
+keep `agent/action_options.py` not generating presumptuous instructions in the first place —
+that is the fix that does not depend on which model is behind the executor.
 
 `cancel` is an `agent.runs.CancelToken` — honouring it is best-effort and per-executor. Hermes
 attaches its subprocess to the token, so a stop kills it (and its process group — the CLI drives

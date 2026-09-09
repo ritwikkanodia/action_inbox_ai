@@ -214,9 +214,10 @@ def check_suggested_route_framing() -> None:
     check("the framing says its claims are not the user's to act on",
           "the user did not make them" in clicked)
     check("the instruction itself still reaches the agent", msg in clicked)
-    # Order matters: a caution placed before a concrete directive loses to it.
-    # Measured — the earlier prefix-only version still produced an invented
-    # 5-star review. The constraint has to be the last thing read.
+    # Order matters: a caution placed before a concrete directive is more
+    # easily dropped. Measured on a gpt-5-mini-class agent, the prefix-only
+    # version still produced an invented 5-star review; a stronger model
+    # honoured either placement. Last-read is the cheaper of the two.
     check("the caution comes after the instruction, not before",
           clicked.index("Strike from it every claim") > clicked.index(msg))
 
