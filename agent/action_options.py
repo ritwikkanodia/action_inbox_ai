@@ -15,12 +15,13 @@ import os
 
 from openai import OpenAI
 
+import llm_models
 from agent.input_builder import _format_todo
 from agent.tools.email import fetch_gmail_thread_context
 
 log = logging.getLogger(__name__)
 
-MODEL = "gpt-5.4-mini"
+MODEL = llm_models.ACTIONS
 OPTION_COUNT = 3
 
 _client: OpenAI | None = None

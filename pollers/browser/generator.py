@@ -4,6 +4,8 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 
+import llm_models
+
 load_dotenv()
 
 _client: OpenAI | None = None
@@ -97,7 +99,7 @@ def generate_todos(
     user_content = "\n\n".join(blocks)
     try:
         response = _get_client().chat.completions.create(
-            model="gpt-5.4-mini",
+            model=llm_models.POLLER,
             response_format={"type": "json_object"},
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},

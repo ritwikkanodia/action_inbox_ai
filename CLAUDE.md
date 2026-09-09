@@ -120,10 +120,17 @@ the `save_*` helpers. Keep both in sync when adding an enum value.
 
 ## LLM usage
 
-Every OpenAI call in the repo uses **`gpt-5.4-mini`** — `pollers/gmail/todo_generator.py`,
-`pollers/browser/generator.py`, `pollers/system/generator.py`, `agent/action_options.py`, and
-`agent/resolver.py`. The generators use Chat Completions with
-`response_format={"type": "json_object"}`.
+Model choice is per call site, in **`llm_models.py`**, because the five sites differ in both
+volume and blast radius. `POLLER` (`gpt-5.6-luna`) is used by `pollers/gmail/todo_generator.py`,
+`pollers/browser/generator.py` and `pollers/system/generator.py` — it runs on every item the
+pollers see and only decides "is there a todo here", so it wants the cheapest current model.
+`ACTIONS` (`gpt-5.6-terra`) is `agent/action_options.py`: one cached call per todo, whose output
+becomes an agent's marching orders, so judgement there is cheap to buy and expensive to skip.
+`AGENT` (`gpt-6-astra`) is `agent/resolver.py`, the Agents-SDK loop the deployed container runs;
+it is also where spend can run away, since every tool result re-enters the context. Override any
+of them with `OPENAI_MODEL_POLLER` / `OPENAI_MODEL_ACTIONS` / `OPENAI_MODEL_AGENT`. They are read
+at import time, so `load_dotenv` has to have run first — it does, at the top of both entrypoints.
+The generators use Chat Completions with `response_format={"type": "json_object"}`.
 
 **Todo generation** (`pollers/gmail/todo_generator.py`): thread context + sender → JSON with a
 `should_generate_todo` boolean and a `reasoning` sentence. Returning `false` is a first-class

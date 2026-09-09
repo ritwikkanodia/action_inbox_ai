@@ -3,6 +3,7 @@ from typing import Any
 
 from agents import Agent, Runner, WebSearchTool
 
+import llm_models
 from agent.input_builder import (
     SUGGESTED_ROUTE_LEAD,
     SUGGESTED_ROUTE_TAIL,
@@ -26,7 +27,7 @@ def _build_agent(user_id: str, account_id: str | None = None) -> Agent:
         tools.append(use_browser)
     return Agent(
         name="Resolver",
-        model="gpt-5.4-mini",
+        model=llm_models.AGENT,
         instructions=INSTRUCTIONS,
         tools=tools,
     )
