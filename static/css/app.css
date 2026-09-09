@@ -1168,6 +1168,22 @@
     }
     .ai-option-other:hover { color: var(--accent); }
 
+    /* A question with no menu — the answer is whatever the user types. */
+    .ai-question-field {
+      width: 100%;
+      background: var(--panel);
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--ink);
+      resize: vertical;
+    }
+    .ai-question-field:focus { outline: none; border-color: var(--accent); }
+    .ai-question-field::placeholder { color: var(--ink-3); }
+
     .ai-question-send {
       align-self: flex-start;
       font-family: var(--sans);

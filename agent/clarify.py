@@ -5,6 +5,10 @@ knows, it appends a fenced ```ask_user block holding the question and its
 options; this module lifts that block out, leaving the prose to render as an
 ordinary bubble and handing the question to the frontend as structured data.
 
+A question may legitimately carry no options — "paste the sentence you want
+posted" has no menu — and those are kept, with an empty `options`, for the
+frontend to render as a text field.
+
 Parsing happens at *read* time, in `app._thread_for_client`, not at write time.
 That is what makes the chips survive a reload for free: the raw reply — block
 and all — is what gets persisted in `todos.ai_thread`, so every subsequent read
@@ -80,10 +84,11 @@ def _parse_question(raw) -> dict | None:
         if len(options) == MAX_OPTIONS:
             break
 
-    # A question with nothing to pick is just prose; leaving it unstructured
-    # lets the existing composer handle it, which is the right affordance.
-    if not options:
-        return None
+    # An option-less question is kept, not dropped. Some answers have no menu —
+    # "paste the sentence you want posted" is a real question with no plausible
+    # multiple choice — and dropping it would show the user two questions when
+    # the agent asked three, then send back an answer missing one. The frontend
+    # renders these as a text field instead of chips.
 
     return {
         "question": text,

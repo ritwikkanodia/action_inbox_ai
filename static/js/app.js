@@ -810,6 +810,25 @@ function renderQuestions(questions) {
     text.textContent = q.question;
     block.appendChild(text);
 
+    // Some answers have no menu — "paste the sentence you want posted". The
+    // agent is allowed to ask those, so they get a field rather than chips,
+    // and still travel with the rest under one Send.
+    if (!q.options || !q.options.length) {
+      const field = document.createElement('textarea');
+      field.className = 'ai-question-field';
+      field.rows = 2;
+      field.placeholder = 'Type your answer…';
+      field.addEventListener('input', () => {
+        const value = field.value.trim();
+        if (value) picked.set(qi, [value]);
+        else picked.delete(qi);
+        send.disabled = !picked.size;
+      });
+      block.appendChild(field);
+      wrap.appendChild(block);
+      return;
+    }
+
     const list = document.createElement('div');
     list.className = 'ai-question-options';
 

@@ -79,10 +79,21 @@ def check_parser() -> None:
     prose, questions = split_questions(broken)
     check("invalid JSON leaves the reply intact", prose == broken and questions == [])
 
-    no_options = "Prose.\n" + block({"questions": [{"question": "Which one?"}]})
-    prose, questions = split_questions(no_options)
-    check("a question with no options is left as prose",
-          prose == no_options and questions == [])
+    # A live run produced exactly this: two rating questions with options plus
+    # "paste the sentence you want posted", which has no plausible menu. It must
+    # survive, or the UI shows fewer questions than the agent asked and Send
+    # returns an incomplete answer.
+    free_text = "Prose.\n" + block({"questions": [
+        {"question": "Paste the sentence you want posted", "header": "Wording"},
+        {"question": "Which rating?", "options": ["5 stars", "4 stars"]},
+    ]})
+    prose, questions = split_questions(free_text)
+    check("an option-less question is kept, not dropped", len(questions) == 2)
+    check("it is kept with empty options for the frontend to render as a field",
+          questions[0]["options"] == [])
+    check("the question alongside it still gets its options",
+          len(questions[1]["options"]) == 2)
+    check("the block is still stripped", prose == "Prose.")
 
     no_text = "Prose.\n" + block({"questions": [{"options": [{"label": "A"}]}]})
     _, questions = split_questions(no_text)
