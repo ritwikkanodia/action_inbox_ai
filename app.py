@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 from agent import runs
-from agent.executor import ExecutorCancelled, ExecutorError, resolve
+from agent.executor import ExecutorCancelled, ExecutorError, current_executor, resolve
 
 from flask import (
     Flask,
@@ -380,8 +380,24 @@ def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, 
             # Not persisted. The agent may already have sent mail or submitted a
             # form before the stop landed, so neither the log nor the session id
             # should advance as if the turn had completed.
+            #
+            # Logged because a discarded turn is otherwise invisible: nothing
+            # reaches the database, and the thread on screen stays continuous,
+            # so a user reporting "it lost my conversation" leaves no evidence
+            # behind to check. `state` is the session the *next* turn will
+            # resume — unchanged by this one.
+            app.logger.warning(
+                "Resolution stopped: todo=%s user=%s executor=%s state=%s "
+                "(turn discarded; state unchanged)",
+                todo_id, user_id, current_executor(), state,
+            )
             return notice("⏹ Stopped. Anything already done before the stop stands."), runs.CANCELLED
         except ExecutorError as exc:
+            app.logger.warning(
+                "Resolution failed: todo=%s user=%s executor=%s state=%s: %s "
+                "(turn discarded; state unchanged)",
+                todo_id, user_id, current_executor(), state, exc,
+            )
             return notice(f"⚠️ Resolution failed: {exc}"), runs.ERROR
 
         _persist_resolution(todo_id, user_id, final, new_state)
