@@ -49,7 +49,11 @@ just connected ones, so unconnected users get a "connect Gmail" nudge instead of
 **Web UI (`app.py`)** — Flask, multi-user, every route behind `@login_required` except
 `/login`, the OAuth callbacks, `/digest/preview`, `/stats`, and the PWA routes
 (`/manifest.webmanifest`, `/sw.js`, `/offline`) — Chrome fetches those before a session
-exists, and a redirect to `/login` would make the app non-installable. Key routes:
+exists, and a redirect to `/login` would make the app non-installable. **The service worker
+serves `/static/` cache-first**, so any edit to `static/js/app.js` or `static/css/app.css` must
+bump `VERSION` in `static/js/sw.js`; otherwise `activate` keeps the old cache and the browser
+goes on running the frontend you just replaced, while the server-side half of the change works
+fine — a confusing way to lose an afternoon. Key routes:
 
 - `GET /` — todos for the current user, ordered closed-last, then importance, then recency
 - `POST /todos` — user-entered todo (`source='user'`)
