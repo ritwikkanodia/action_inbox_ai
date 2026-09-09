@@ -155,9 +155,10 @@ the request blocking on it, so "stop" had nothing to talk to. `POST /ask-ai` now
 on a background thread and returns at once; the client polls `GET /run` and can `POST /run/stop`.
 The registry is per-process and deliberately not persisted: only *completed* runs are written to
 the database, so a restart (including the debug reloader) simply leaves the todo where it was.
-At most one run exists per (user, todo). A stopped run is treated like a failed one — neither
-the log nor the session id advances, since the agent may already have sent mail or submitted a
-form before the stop landed.
+At most one run exists per (user, todo). A stopped run is treated like a failed one — the log
+does not advance, since the agent may already have sent mail or submitted a form before
+the stop landed. The session name is unchanged either way, so the next message continues
+the same Hermes session, simply without the discarded turn in it.
 
 Returning immediately also gets the turn out from under gunicorn's request timeout, which a
 600s Hermes run would otherwise blow through. The flip side is that the registry lives in one
@@ -178,20 +179,27 @@ reliable.
 Adding an executor means one module implementing `resolve` plus a branch in `executor._load`.
 
 - `agent/hermes_runner.py` is the *only* file that knows about Hermes. It runs
-  `hermes -z <prompt> --yolo [--resume <id>] --usage-file <tmp>`. `-z` prints only the final
-  reply on stdout, so the session id has to come back out of band via `--usage-file` — that
-  is the only way to get it in one-shot mode. Set `HERMES_BIN` if the binary isn't on `PATH`,
+  `hermes chat -q <prompt> -Q --yolo -c <session-name> --create-if-missing`. `-Q` keeps stdout
+  to the final reply alone, and `--create-if-missing` lets the first turn open the thread.
+  **Not** the top-level `-z` one-shot: `-z` accepts `--resume` but does not restore the
+  conversation. Measured against a fresh-session control, a resumed `-z` run recalled nothing
+  from the turn before it — what looked like continuity was Hermes' cross-session *memory*
+  recalling facts, not the thread. `chat` appends to the named session instead: same session
+  id, message count growing. Set `HERMES_BIN` if the binary isn't on `PATH`,
   `HERMES_TIMEOUT_SECONDS` (default 600) to bound a wedged run, and `HERMES_YOLO=0` to fall
   back to Hermes' approval rules (expect blocked runs — there is no TTY to approve at).
 - **`--yolo` is deliberate and load-bearing.** A run with no TTY that stops for an approval
   prompt blocks until the timeout. It also means a full-access agent acts on prompts built
   from email content, which is attacker-controlled text; this is an accepted risk of the
   local POC, not an oversight.
-- **Sessions are the conversation.** Hermes stores its session id in `todos.executor_state`;
-  `todos.ai_thread` is now just a display log of `{role, content}` bubbles, not agent state.
-  Hermes issues a *new* id per turn (lineage children), so the column is rewritten each run.
-  `/reset-thread` clears both — clearing only the log would leave the agent still remembering.
-- Each one-shot invocation gets a fresh system prompt, so a resumed turn must restate the task
+- **Sessions are the conversation.** `todos.executor_state` holds the Hermes session *name*
+  (`aib-<todo_id>-<nonce>`), not an id, and it is stable for the life of the thread — every
+  turn continues the same session. `todos.ai_thread` is just a display log of
+  `{role, content}` bubbles, not agent state. Session titles are globally unique, which is why
+  the name carries a random suffix: keyed on the todo id alone, the name would resolve back to
+  the session `/reset-thread` just cleared and silently resume it. `/reset-thread` clears both
+  columns — clearing only the log would leave the agent still remembering.
+- Each invocation gets a fresh system prompt, so a continuing turn must restate the task
   framing (`build_followup_prompt`). Sending a bare user message makes the agent forget it is a
   resolution agent and start asking clarifying questions.
 - A failed run is **not** retried: by the time it fails the agent may already have sent mail or

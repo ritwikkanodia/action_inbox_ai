@@ -43,19 +43,19 @@ def check(label: str, condition: bool) -> None:
 calls: list[tuple[str, str | None]] = []
 
 
-def stub_run(prompt: str, session_id: str | None, cancel=None) -> tuple[str, str | None]:
-    calls.append((prompt, session_id))
-    return f"reply {len(calls)}", f"sess-{len(calls)}"
+def stub_run(prompt: str, session_name: str, cancel=None) -> str:
+    calls.append((prompt, session_name))
+    return f"reply {len(calls)}"
 
 
-def failing_run(prompt: str, session_id: str | None, cancel=None) -> tuple[str, str | None]:
-    calls.append((prompt, session_id))
+def failing_run(prompt: str, session_name: str, cancel=None) -> str:
+    calls.append((prompt, session_name))
     raise executor.ExecutorError("browser exploded")
 
 
-def blocking_run(prompt: str, session_id: str | None, cancel=None) -> tuple[str, str | None]:
+def blocking_run(prompt: str, session_name: str, cancel=None) -> str:
     """Stands in for a long agent run: returns only once cancelled."""
-    calls.append((prompt, session_id))
+    calls.append((prompt, session_name))
     for _ in range(200):
         if cancel is not None and cancel.cancelled:
             raise executor.ExecutorCancelled("Stopped.")
@@ -110,19 +110,20 @@ def main() -> None:
     check("first turn completes", data["status"] == "done")
     check("first turn returns the assistant reply",
           data["thread"][-1] == {"role": "assistant", "content": "reply 1"})
-    check("first turn ran with no session id", calls[0][1] is None)
+    check("first turn opened a session named for the todo",
+          calls[0][1].startswith("aib-t1-"))
     check("first turn prompt carries the todo title",
           "Book a dentist appointment" in calls[0][0])
     check("first turn prompt carries the chosen action",
           "Sort this out." in calls[0][0])
 
-    ai_thread, session_id = row(conn, "t1")
-    check("session id persisted", session_id == "sess-1")
+    ai_thread, session_name = row(conn, "t1")
+    check("session name persisted", session_name == calls[0][1])
     check("thread persisted", json.loads(ai_thread)[-1]["content"] == "reply 1")
 
     # ---- follow-up resumes the session ------------------------------------
     data = turn(client, "t1", "Make it Tuesday.")
-    check("follow-up resumed the stored session", calls[1][1] == "sess-1")
+    check("follow-up continues the same session", calls[1][1] == calls[0][1])
     check("follow-up prompt carries the user message",
           "Make it Tuesday." in calls[1][0])
     check("follow-up prompt restates the task framing",
@@ -131,8 +132,8 @@ def main() -> None:
     check("user bubble rendered",
           data["thread"][2] == {"role": "user", "content": "Make it Tuesday."})
 
-    _, session_id = row(conn, "t1")
-    check("session id advanced", session_id == "sess-2")
+    _, after = row(conn, "t1")
+    check("the session name is stable across turns", after == session_name)
 
     # ---- no message + existing thread short-circuits -----------------------
     before = len(calls)
@@ -148,9 +149,9 @@ def main() -> None:
     check("failure is visible in the thread",
           "browser exploded" in data["thread"][-1]["content"])
 
-    ai_thread, session_id = row(conn, "t1")
+    ai_thread, after = row(conn, "t1")
     check("failed turn did not advance the log", len(json.loads(ai_thread)) == 4)
-    check("failed turn did not advance the session", session_id == "sess-2")
+    check("failed turn left the session name alone", after == session_name)
 
     # ---- stopping a run ----------------------------------------------------
     hermes_runner._run = blocking_run
@@ -174,9 +175,9 @@ def main() -> None:
     check("stopping a finished run reports nothing to stop",
           client.post("/todos/t1/run/stop").get_json()["stopped"] is False)
 
-    ai_thread, session_id = row(conn, "t1")
+    ai_thread, after = row(conn, "t1")
     check("stopped turn did not advance the log", len(json.loads(ai_thread)) == 4)
-    check("stopped turn did not advance the session", session_id == "sess-2")
+    check("stopped turn left the session name alone", after == session_name)
 
     # ---- stop actually kills the CLI process -------------------------------
     # The stub above proves the plumbing; this proves the signal reaches a real
@@ -193,7 +194,7 @@ def main() -> None:
 
     threading.Timer(0.4, token.cancel).start()
     try:
-        _real_run("prompt", None, token)
+        _real_run("prompt", "aib-killtest", token)
         killed = False
     except executor.ExecutorCancelled:
         killed = True
@@ -204,10 +205,32 @@ def main() -> None:
     # ---- reset clears both sides ------------------------------------------
     hermes_runner._run = stub_run
     client.post("/todos/t1/reset-thread")
-    ai_thread, session_id = row(conn, "t1")
+    ai_thread, after = row(conn, "t1")
     check("reset clears the display log", ai_thread is None)
-    check("reset clears the Hermes session", session_id is None)
+    check("reset clears the Hermes session", after is None)
     check("reset forgets the run", client.get("/todos/t1/run").get_json()["status"] == "idle")
+
+    # ---- a reset really starts over ----------------------------------------
+    # Titles are unique, so reusing the todo id alone would resolve back to the
+    # session the user just cleared.
+    before = len(calls)
+    turn(client, "t1", "Start again.")
+    check("the turn after a reset opens a different session",
+          calls[before][1] != session_name and calls[before][1].startswith("aib-t1-"))
+
+    # ---- a pre-migration row heals itself ----------------------------------
+    # Older rows hold a raw Hermes session id, which names nothing resolvable.
+    conn.execute("UPDATE todos SET executor_state = '20260907_122717_bbf552' "
+                 "WHERE todo_id = 't1'")
+    conn.commit()
+    before = len(calls)
+    turn(client, "t1", "Carry on.")
+    check("a legacy session id is replaced, not used as a name",
+          calls[before][1].startswith("aib-t1-"))
+    check("a legacy row gets the full task framing, not a follow-up prompt",
+          "Book a dentist appointment" in calls[before][0])
+    _, healed = row(conn, "t1")
+    check("the healed name is persisted", healed == calls[before][1])
 
     # ---- the seam itself ---------------------------------------------------
     check("defaults to hermes", executor.current_executor() == "hermes")
