@@ -43,19 +43,25 @@ def check(label: str, condition: bool) -> None:
 calls: list[tuple[str, str | None]] = []
 
 
-def stub_run(prompt: str, session_name: str, cancel=None) -> str:
+def stub_run(prompt: str, session_name: str, cancel=None, progress=None) -> str:
     calls.append((prompt, session_name))
+    # A real run reports its steps here; the trace itself is covered by
+    # verify_hermes_activity.py, so this only has to accept the argument.
+    if progress is not None:
+        progress({"tool": "terminal", "detail": "stubbed step"})
     return f"reply {len(calls)}"
 
 
-def failing_run(prompt: str, session_name: str, cancel=None) -> str:
+def failing_run(prompt: str, session_name: str, cancel=None, progress=None) -> str:
     calls.append((prompt, session_name))
     raise executor.ExecutorError("browser exploded")
 
 
-def blocking_run(prompt: str, session_name: str, cancel=None) -> str:
+def blocking_run(prompt: str, session_name: str, cancel=None, progress=None) -> str:
     """Stands in for a long agent run: returns only once cancelled."""
     calls.append((prompt, session_name))
+    if progress is not None:
+        progress({"tool": "browser_exec", "detail": "https://slow.test"})
     for _ in range(200):
         if cancel is not None and cancel.cancelled:
             raise executor.ExecutorCancelled("Stopped.")
@@ -158,6 +164,12 @@ def main() -> None:
     started = client.post("/todos/t1/ask-ai", json={"message": "Take your time."}).get_json()
     check("a long turn reports as running", started["status"] == "running")
 
+    # The trace is what the user watches instead of the Hermes app. It has to
+    # be readable mid-run, and must never end up in the log that gets persisted.
+    live = client.get("/todos/t1/run").get_json()
+    check("a run in flight exposes the steps taken so far",
+          live["activity"] == [{"tool": "browser_exec", "detail": "https://slow.test"}])
+
     check("a second start does not launch a second agent",
           client.post("/todos/t1/ask-ai", json={"message": "again"}).get_json()["run_id"]
           == started["run_id"])
@@ -175,9 +187,13 @@ def main() -> None:
     check("stopping a finished run reports nothing to stop",
           client.post("/todos/t1/run/stop").get_json()["stopped"] is False)
 
+    check("the trace is not mistaken for conversation",
+          all("slow.test" not in m["content"] for m in data["thread"]))
+
     ai_thread, after = row(conn, "t1")
     check("stopped turn did not advance the log", len(json.loads(ai_thread)) == 4)
     check("stopped turn left the session name alone", after == session_name)
+    check("the trace is never persisted", "slow.test" not in ai_thread)
 
     # ---- stop actually kills the CLI process -------------------------------
     # The stub above proves the plumbing; this proves the signal reaches a real

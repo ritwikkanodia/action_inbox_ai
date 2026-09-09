@@ -10,6 +10,10 @@ back into the agent, so `state` is ignored on the way in and None on the way out
 `cancel` is accepted and ignored: Runner.run_sync owns the loop and there is no
 subprocess to signal, so a stop can only detach the UI from a run that keeps
 going. Only `hermes` can actually be interrupted.
+
+`progress` is accepted and ignored for the same reason: run_sync surfaces
+nothing until it returns, so a run on this executor shows the plain "Working…"
+state rather than a live trace.
 """
 
 from agent.resolver import resolve_todo
@@ -22,5 +26,6 @@ def resolve(
     user_id: str,
     state: str | None,
     cancel=None,
+    progress=None,
 ) -> tuple[list, None]:
     return resolve_todo(todo, thread, user_message, user_id), None

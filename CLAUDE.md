@@ -32,6 +32,7 @@ python scripts/verify/verify_cursors.py
 python scripts/verify/verify_web.py
 python scripts/verify/verify_executor.py    # stubs the Hermes CLI; no API spend
 python scripts/verify/verify_actions.py     # stubs the OpenAI call; no API spend
+python scripts/verify/verify_hermes_activity.py  # stubs Hermes' state.db; no CLI, no spend
 ```
 
 ## Architecture
@@ -136,7 +137,8 @@ same path. Options are generated on first open of a todo's detail pane and cache
 nothing about which one is configured. The contract:
 
 ```
-resolve(todo, thread, user_message, user_id, state, cancel=None) -> (thread, state)
+resolve(todo, thread, user_message, user_id, state,
+        cancel=None, progress=None) -> (thread, state)
 ```
 
 `thread` is the display log (`{role, content}` bubbles — also a valid Agents-SDK input list, so
@@ -148,6 +150,12 @@ lazily, so picking one never pays for the other's dependencies.
 attaches its subprocess to the token, so a stop kills it (and its process group — the CLI drives
 a browser, and killing only the parent would leave it holding the pipes the run is blocked on).
 `agents_sdk` has nothing to interrupt and ignores it.
+
+`progress` is an optional callback taking one `{tool, detail}` event, so the UI can show what
+the agent is doing before it has finished doing it. Best-effort in the same way: Hermes tails
+its own session store (see below) to produce events, `agents_sdk` reports nothing because
+`Runner.run_sync` surfaces nothing until it returns. **No events is normal, not a stalled run** —
+the UI must still read as working with an empty trace.
 
 **Turns run in the background** (`agent/runs.py`). Resolution used to happen inline in the
 ask-ai request, which left no handle on a run in flight — the only thing connected to it was
@@ -178,7 +186,8 @@ reliable.
 
 Adding an executor means one module implementing `resolve` plus a branch in `executor._load`.
 
-- `agent/hermes_runner.py` is the *only* file that knows about Hermes. It runs
+- `agent/hermes_runner.py` and `agent/hermes_activity.py` are the only files that know about
+  Hermes (plus `hermes_prompt.py`, which builds the text). The runner runs
   `hermes chat -q <prompt> -Q --yolo -c <session-name> --create-if-missing`. `-Q` keeps stdout
   to the final reply alone, and `--create-if-missing` lets the first turn open the thread.
   **Not** the top-level `-z` one-shot: `-z` accepts `--resume` but does not restore the
@@ -188,6 +197,27 @@ Adding an executor means one module implementing `resolve` plus a branch in `exe
   id, message count growing. Set `HERMES_BIN` if the binary isn't on `PATH`,
   `HERMES_TIMEOUT_SECONDS` (default 600) to bound a wedged run, and `HERMES_YOLO=0` to fall
   back to Hermes' approval rules (expect blocked runs — there is no TTY to approve at).
+- **The browser is headed by default.** `AGENT_BROWSER_HEADED=1` is set on the subprocess, so
+  the agent's Chrome is a window you can watch rather than the headless one Hermes defaults to.
+  It's set in the environment rather than in `~/.hermes/config.yaml` so it applies to Action
+  Inbox runs and nothing else. `HERMES_BROWSER_HEADED=0` restores headless. Two things about
+  this are Hermes' behavior, not ours: `browser.use_real_profile` (on in the user's config)
+  means the window is a *copy* of the real Chrome profile — same logins, and the copy can only
+  be refreshed while Chrome isn't holding the profile lock; and a browser surviving from an
+  earlier run is re-attached to rather than relaunched, so a headless one left over from other
+  Hermes use makes the next run invisible until it ages out (`browser.inactivity_timeout`,
+  120s).
+- **Live tool activity comes from Hermes' own database, not stdout.** `-Q` suppresses tool
+  previews, but nothing needs to be streamed: Hermes writes each message of a turn to
+  `~/.hermes/state.db` *while the turn runs* — verified by polling `messages` against a live
+  session with `sessions.ended_at` still NULL. `agent/hermes_activity.py` tails that read-only
+  and reports `{tool, detail}` events through the executor contract's optional `progress`
+  callback; `agent/runs.py` buffers them on the run, and `GET /todos/<id>/run` returns them
+  alongside `thread`. Only tool calls are reported — the same rows carry the model's reasoning,
+  which is long and would bury the trace. The trace is **never persisted**: it describes one
+  turn in flight, and a stopped or failed turn must leave nothing behind. Every failure in the
+  watcher is swallowed on purpose — it is a progress indicator reading another program's
+  private schema, and must never be able to take down the resolution itself.
 - **`--yolo` is deliberate and load-bearing.** A run with no TTY that stops for an approval
   prompt blocks until the timeout. It also means a full-access agent acts on prompts built
   from email content, which is attacker-controlled text; this is an accepted risk of the

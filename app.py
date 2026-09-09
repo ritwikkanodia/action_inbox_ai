@@ -371,10 +371,11 @@ def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, 
         shown.append({"role": "assistant", "content": text})
         return shown
 
-    def work(cancel):
+    def work(cancel, progress):
         try:
             final, new_state = resolve(
-                todo, thread, user_message, user_id, state, cancel=cancel
+                todo, thread, user_message, user_id, state,
+                cancel=cancel, progress=progress,
             )
         except ExecutorCancelled:
             # Not persisted. The agent may already have sent mail or submitted a
@@ -475,6 +476,7 @@ def ask_ai(todo_id):
                 "status": runs.RUNNING,
                 "run_id": active.run_id,
                 "thread": _thread_for_client(active.thread),
+                "activity": active.activity_snapshot(),
             }
         )
 
@@ -500,6 +502,7 @@ def ask_ai(todo_id):
             "status": run.status,
             "run_id": run.run_id,
             "thread": _thread_for_client(run.thread),
+            "activity": run.activity_snapshot(),
         }
     )
 
@@ -518,6 +521,7 @@ def todo_run(todo_id):
             "status": run.status,
             "run_id": run.run_id,
             "thread": _thread_for_client(run.thread),
+            "activity": run.activity_snapshot(),
         }
     )
 

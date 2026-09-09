@@ -119,9 +119,29 @@ class Run:
         self.thread = list(thread or [])
         self.token = CancelToken()
         self.finished_at: float | None = None
+        # Tool calls the executor has reported so far, appended from its own
+        # watcher thread while the run is in flight. Deliberately kept off
+        # `thread`: this is a live trace of one turn, not conversation, and only
+        # the thread is ever persisted.
+        self.activity: list[dict] = []
+        self._activity_lock = threading.Lock()
+
+    def record_activity(self, event: dict) -> None:
+        with self._activity_lock:
+            self.activity.append(event)
+
+    def activity_snapshot(self) -> list[dict]:
+        """A copy, so a poll can serialise it while the watcher keeps appending."""
+        with self._activity_lock:
+            return list(self.activity)
 
     def as_dict(self) -> dict:
-        return {"run_id": self.run_id, "status": self.status, "thread": self.thread}
+        return {
+            "run_id": self.run_id,
+            "status": self.status,
+            "thread": self.thread,
+            "activity": self.activity_snapshot(),
+        }
 
 
 _runs: dict[tuple[str, str], Run] = {}
@@ -141,11 +161,14 @@ def get(user_id: str, todo_id: str) -> Run | None:
 
 
 def start(user_id: str, todo_id: str, thread: list, work) -> Run:
-    """Run `work(token)` on a background thread and register it.
+    """Run `work(token, progress)` on a background thread and register it.
 
     `work` returns `(thread, status)` and is expected to render its own failures
     into the thread — this registry stays ignorant of what executors can go
     wrong, and only backstops an unexpected exception.
+
+    `progress` is the run's own `record_activity`, handed down so an executor
+    that can report its steps has somewhere to put them.
     """
     run = Run(uuid.uuid4().hex, todo_id, user_id, thread)
 
@@ -158,7 +181,7 @@ def start(user_id: str, todo_id: str, thread: list, work) -> Run:
 
     def target():
         try:
-            final_thread, status = work(run.token)
+            final_thread, status = work(run.token, run.record_activity)
             run.thread = final_thread
             run.status = status
         except Exception as exc:
