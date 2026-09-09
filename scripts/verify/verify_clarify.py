@@ -189,9 +189,90 @@ def check_route() -> None:
     conn.close()
 
 
+def check_suggested_route_framing() -> None:
+    """A clicked suggestion must not reach the agent as the user's own words.
+
+    The instruction behind an option is model-written and can assert things the
+    user never said. Presented as their statement it defeats the rule against
+    inventing facts about them, since the fabrication arrives in their voice —
+    which is exactly how a "reflects a positive experience" instruction got a
+    glowing review written on a live Trustpilot form.
+    """
+    print("\n-- suggested-route framing --")
+
+    from agent.hermes_prompt import build_followup_prompt, build_prompt
+
+    todo = {"todo_id": "t1", "title": "Leave a review", "source": "user"}
+    msg = "submit a review, ideally one that reflects a positive experience"
+
+    typed = build_prompt(todo, msg, "u", False)
+    clicked = build_prompt(todo, msg, "u", True)
+    check("a typed message is still presented as the user's words",
+          "## The user says" in typed and "chosen route" not in typed)
+    check("a clicked suggestion is presented as a route, not a statement",
+          "## The chosen route" in clicked and "## The user says" not in clicked)
+    check("the framing says its claims are not the user's to act on",
+          "the user did not make them" in clicked)
+    check("the instruction itself still reaches the agent", msg in clicked)
+    # Order matters: a caution placed before a concrete directive loses to it.
+    # Measured — the earlier prefix-only version still produced an invented
+    # 5-star review. The constraint has to be the last thing read.
+    check("the caution comes after the instruction, not before",
+          clicked.index("Strike from it every claim") > clicked.index(msg))
+
+    check("a typed follow-up keeps the plain framing",
+          "The user says:" in build_followup_prompt(msg, False))
+    followup = build_followup_prompt(msg, True)
+    check("a clicked follow-up is reframed too",
+          "picked this route from a list" in followup)
+    check("the follow-up caution also comes last",
+          followup.index("Strike from it every claim") > followup.index(msg))
+
+    # The flag has to survive the route, not just exist in the prompt builder.
+    conn = sqlite3.connect(os.environ["DB_PATH"])
+    seen = {}
+
+    def stub_resolve(todo, thread, user_message, user_id, state,
+                     cancel=None, progress=None, from_suggestion=False):
+        seen["flag"] = from_suggestion
+        return list(thread) + [{"role": "assistant", "content": "ok"}], state
+
+    original = app_module.resolve
+    app_module.resolve = stub_resolve
+    try:
+        client = app_module.app.test_client()
+        with client.session_transaction() as sess:
+            sess["user_id"] = conn.execute(
+                "SELECT user_id FROM todos WHERE todo_id = 't1'").fetchone()[0]
+
+        client.post("/todos/t1/ask-ai", json={"message": "hi"})
+        _wait_for(seen)
+        check("a typed message reaches the executor unflagged", seen.get("flag") is False)
+
+        seen.clear()
+        client.post("/todos/t1/ask-ai",
+                    json={"message": "hi", "from_suggestion": True})
+        _wait_for(seen)
+        check("a clicked suggestion reaches the executor flagged",
+              seen.get("flag") is True)
+    finally:
+        app_module.resolve = original
+        conn.close()
+
+
+def _wait_for(seen: dict, timeout: float = 5.0) -> None:
+    """Runs execute on a background thread; give it a moment to land."""
+    import time
+
+    deadline = time.time() + timeout
+    while "flag" not in seen and time.time() < deadline:
+        time.sleep(0.02)
+
+
 def main() -> None:
     check_parser()
     check_route()
+    check_suggested_route_framing()
     print("\nAll clarifying-question checks passed.")
 
 

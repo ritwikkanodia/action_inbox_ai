@@ -373,7 +373,8 @@ def _persist_resolution(todo_id: str, user_id: str, thread: list, state) -> None
         conn.close()
 
 
-def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, state):
+def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, state,
+                     from_suggestion: bool = False):
     """Build the callable `agent.runs.start` will execute on its own thread.
 
     Renders its own failures into the thread rather than raising: the frontend
@@ -393,7 +394,7 @@ def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, 
         try:
             final, new_state = resolve(
                 todo, thread, user_message, user_id, state,
-                cancel=cancel, progress=progress,
+                cancel=cancel, progress=progress, from_suggestion=from_suggestion,
             )
         except ExecutorCancelled:
             # Not persisted. The agent may already have sent mail or submitted a
@@ -485,6 +486,10 @@ def ask_ai(todo_id):
 
     data = request.get_json(force=True, silent=True) or {}
     user_message = (data.get("message") or "").strip()
+    # Set when the message is a suggested action the user clicked rather than
+    # something they typed. The executor needs the difference: they consented
+    # to a short label, not to the generated sentence behind it.
+    from_suggestion = bool(data.get("from_suggestion"))
 
     active = runs.get(user_id, todo_id)
     if active is not None and active.status == runs.RUNNING:
@@ -513,7 +518,8 @@ def ask_ai(todo_id):
         user_id,
         todo_id,
         seeded,
-        _resolution_work(todo, thread, user_message, user_id, row["executor_state"]),
+        _resolution_work(todo, thread, user_message, user_id, row["executor_state"],
+                         from_suggestion),
     )
     return jsonify(
         {

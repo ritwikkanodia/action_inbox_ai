@@ -156,13 +156,23 @@ nothing about which one is configured. The contract:
 
 ```
 resolve(todo, thread, user_message, user_id, state,
-        cancel=None, progress=None) -> (thread, state)
+        cancel=None, progress=None, from_suggestion=False) -> (thread, state)
 ```
 
 `thread` is the display log (`{role, content}` bubbles — also a valid Agents-SDK input list, so
 executors can read each other's threads). `state` is an opaque per-executor string persisted in
 `todos.executor_state`; nothing outside the executor interprets it. Implementations are imported
 lazily, so picking one never pays for the other's dependencies.
+
+`from_suggestion` says the message came from clicking an inferred option rather than being
+typed. It exists because the user consented to a four-word label, not to the model-written
+sentence behind it: an instruction that asserts something about them ("reflects a positive
+experience") would otherwise reach the agent as their own words and defeat the rule against
+inventing facts about the user. Executors that build a prompt frame such a turn as a route,
+not a statement. **Treat this as defence in depth, not a guarantee** — measured against a
+deliberately poisoned instruction, the framing lost to the concrete directive every time, in
+three different placements. The load-bearing fix is that `agent/action_options.py` does not
+generate presumptuous instructions in the first place.
 
 `cancel` is an `agent.runs.CancelToken` — honouring it is best-effort and per-executor. Hermes
 attaches its subprocess to the token, so a stop kills it (and its process group — the CLI drives

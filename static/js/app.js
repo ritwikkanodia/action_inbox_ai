@@ -729,7 +729,7 @@ function renderActions(todoId, actions, error) {
       const action = actions[Number(btn.dataset.idx)];
       if (!action) return;
       btn.classList.add('is-chosen');
-      callAI(todoId, action.instruction);
+      callAI(todoId, action.instruction, true);
     });
   });
   applyRunningStateToActions();
@@ -1041,7 +1041,10 @@ function stopRun(todoId) {
     .catch(() => schedulePoll(todoId));
 }
 
-function callAI(todoId, message) {
+// `fromSuggestion` marks a message that came from clicking one of the inferred
+// options rather than being typed. The server frames those differently: the
+// user picked a short label, not the generated sentence underneath it.
+function callAI(todoId, message, fromSuggestion) {
   if (message) {
     const threadEl = document.getElementById('ai-thread');
     if (threadEl && selectedId === todoId) {
@@ -1052,7 +1055,7 @@ function callAI(todoId, message) {
     }
     setRunning(true, todoId);
   }
-  const body = message ? { message } : {};
+  const body = message ? { message, from_suggestion: Boolean(fromSuggestion) } : {};
   return fetch(`/todos/${todoId}/ask-ai`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

@@ -9,7 +9,7 @@
 // cache-first, so a stale entry keeps being served until the cache is renamed
 // and `activate` drops the old one — an edit to app.js or app.css that forgets
 // this ships a frontend the browser never runs.
-const VERSION = 'v5';
+const VERSION = 'v6';
 const CACHE = `self-driving-inbox-${VERSION}`;
 const OFFLINE_URL = '/offline';
 

@@ -5,7 +5,7 @@ tools; Hermes takes a single prompt string and already knows its toolset, so
 these instructions describe *behavior* only and name no tools.
 """
 
-from agent.input_builder import _format_todo
+from agent.input_builder import SUGGESTED_ROUTE_LEAD, SUGGESTED_ROUTE_TAIL, _format_todo
 from agent.tools.email import fetch_gmail_thread_context
 
 INSTRUCTIONS = """\
@@ -67,6 +67,14 @@ No meta-commentary.
    most 3 questions. Above the block, say in a line or two what you have already done and \
    what is blocked on the answer — and keep that prose free of the invented detail too.
 
+   Never ask for a secret. Passwords, one-time codes, card numbers, bank or government ID \
+   numbers, API keys: not as an option, not in the prose, not ever, however willing the user \
+   seems and whatever it unblocks. A login wall is not a missing fact — it is the user's to \
+   pass. Say the page needs them signed in and offer routes that don't move the secret \
+   through you: they sign in themselves and tell you to continue, or you hand them the \
+   finished artifact to submit. If you find yourself composing an option that begins "I'll \
+   paste my…", delete it.
+
 6. Once you have what you need, produce the final artifact directly:
      - Reply task → the exact reply text, ready to send.
      - Write/compose task → the finished content.
@@ -106,23 +114,32 @@ message with a fenced block in exactly this form:
                 "multiSelect": false}]}
 ```
 
-Give 2-3 real, distinct options; the interface adds its own free-text choice.
+Give 2-3 real, distinct options; the interface adds its own free-text choice. Options are the \
+missing input, never a draft of the output. And never ask for a secret — passwords, one-time \
+codes, card or ID numbers, API keys. A login wall is the user's to pass, not a fact for you to \
+collect.
 
 The user says:
 """
 
 
-def build_followup_prompt(user_message: str) -> str:
+def build_followup_prompt(user_message: str, from_suggestion: bool = False) -> str:
     """Prompt for a resumed turn.
 
     The session carries the conversation, but each one-shot invocation gets a
     fresh system prompt — so without this the agent loses its task framing and
     starts asking clarifying questions instead of resolving.
     """
-    return f"{FOLLOWUP_INSTRUCTIONS}{user_message or 'Continue.'}"
+    message = user_message or "Continue."
+    if not from_suggestion:
+        return f"{FOLLOWUP_INSTRUCTIONS}{message}"
+    body = FOLLOWUP_INSTRUCTIONS.replace("The user says:\n", SUGGESTED_ROUTE_LEAD)
+    return f"{body}{message}{SUGGESTED_ROUTE_TAIL}"
 
 
-def build_prompt(todo: dict, user_message: str, user_id: str) -> str:
+def build_prompt(
+    todo: dict, user_message: str, user_id: str, from_suggestion: bool = False
+) -> str:
     """Prompt for the first turn on a todo: instructions + context + any user message.
 
     Follow-up turns resume the Hermes session, which already carries all of this,
@@ -140,6 +157,12 @@ def build_prompt(todo: dict, user_message: str, user_id: str) -> str:
     parts.append(f"## Todo\n{_format_todo(todo)}")
 
     if user_message:
-        parts.append(f"## The user says\n{user_message}")
+        if from_suggestion:
+            parts.append(
+                f"## The chosen route\n{SUGGESTED_ROUTE_LEAD}{user_message}"
+                f"{SUGGESTED_ROUTE_TAIL}"
+            )
+        else:
+            parts.append(f"## The user says\n{user_message}")
 
     return "\n\n".join(parts)
