@@ -777,9 +777,55 @@ function addLoadingBubble() {
   const div = document.createElement('div');
   div.className = 'ai-bubble loading';
   div.id = 'ai-loading-bubble';
-  div.textContent = 'Working…';
+  const label = document.createElement('div');
+  label.className = 'ai-activity-label';
+  label.textContent = 'Working…';
+  div.appendChild(label);
+  // Filled by renderActivity on each poll. Empty until the agent's first tool
+  // call, and permanently empty on an executor that reports nothing — so the
+  // bubble has to read as "working" on its own, without any steps under it.
+  const list = document.createElement('ol');
+  list.className = 'ai-activity';
+  list.id = 'ai-activity';
+  div.appendChild(list);
   threadEl.appendChild(div);
   threadEl.scrollTop = threadEl.scrollHeight;
+}
+
+// The steps the agent has taken so far this turn. Re-rendered wholesale rather
+// than appended to: a poll can miss a tick, or land after the thread was
+// redrawn, and the server's list is always the whole truth.
+function renderActivity(activity) {
+  const listEl = document.getElementById('ai-activity');
+  if (!listEl) return;
+  const steps = activity || [];
+  if (listEl.childElementCount === steps.length) return;
+
+  const threadEl = document.getElementById('ai-thread');
+  const pinned = !threadEl ||
+    threadEl.scrollHeight - threadEl.scrollTop - threadEl.clientHeight < 40;
+
+  listEl.innerHTML = '';
+  steps.forEach((step, i) => {
+    const li = document.createElement('li');
+    // Only the newest step is still in progress; the rest have returned.
+    li.className = i === steps.length - 1 ? 'activity-step current' : 'activity-step';
+    const tool = document.createElement('span');
+    tool.className = 'activity-tool';
+    tool.textContent = step.tool || 'working';
+    li.appendChild(tool);
+    if (step.detail) {
+      const detail = document.createElement('span');
+      detail.className = 'activity-detail';
+      // textContent, not innerHTML: these are tool arguments the agent built
+      // out of email content, which is attacker-controlled text.
+      detail.textContent = step.detail;
+      li.appendChild(detail);
+    }
+    listEl.appendChild(li);
+  });
+  // Follow the trace down, unless the user has scrolled up to read something.
+  if (pinned && threadEl) threadEl.scrollTop = threadEl.scrollHeight;
 }
 
 function removeLoadingBubble() {
@@ -831,7 +877,12 @@ function applyRunState(todoId, data) {
     if (selectedId === todoId) renderThread(data.thread);
   }
   if (data.status === 'running') {
-    if (selectedId === todoId) setRunning(true, todoId);
+    if (selectedId === todoId) {
+      // setRunning first: renderThread above wiped the loading bubble, and
+      // renderActivity needs it back before it has anywhere to draw.
+      setRunning(true, todoId);
+      renderActivity(data.activity);
+    }
     schedulePoll(todoId);
     return;
   }

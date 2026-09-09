@@ -5,7 +5,11 @@
 // auth-gated, so they always go to the network — a cached copy could be shown
 // to the wrong session or long after it went stale.
 
-const VERSION = 'v2';
+// Bump on every change to a precached asset. The fetch handler below is
+// cache-first, so a stale entry keeps being served until the cache is renamed
+// and `activate` drops the old one — an edit to app.js or app.css that forgets
+// this ships a frontend the browser never runs.
+const VERSION = 'v3';
 const CACHE = `self-driving-inbox-${VERSION}`;
 const OFFLINE_URL = '/offline';
 

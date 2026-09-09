@@ -13,6 +13,7 @@ import subprocess
 import uuid
 
 from agent.executor import ExecutorCancelled, ExecutorError
+from agent.hermes_activity import ActivityWatcher
 from agent.hermes_prompt import build_followup_prompt, build_prompt
 
 HERMES_BIN = os.environ.get("HERMES_BIN", "hermes")
@@ -27,8 +28,18 @@ TIMEOUT_SECONDS = int(os.environ.get("HERMES_TIMEOUT_SECONDS", "600"))
 # to Hermes' own approval rules (expect blocked runs unless you've allowlisted).
 YOLO = os.environ.get("HERMES_YOLO", "1").strip().lower() not in {"0", "false", "no"}
 
+# Show the browser. Hermes runs it headless by default — sensible for a
+# background capability, wrong here, where the whole point is watching the agent
+# work. `browser.use_real_profile` is already on, so the window it opens is a
+# copy of the user's own Chrome profile, signed in to what they are signed in
+# to. Set HERMES_BROWSER_HEADED=0 to get the headless behaviour back; the
+# deployed container has no display and runs `agents_sdk` anyway.
+HEADED = os.environ.get("HERMES_BROWSER_HEADED", "1").strip().lower() not in {
+    "0", "false", "no",
+}
 
-def _run(prompt: str, session_name: str, cancel=None) -> str:
+
+def _run(prompt: str, session_name: str, cancel=None, progress=None) -> str:
     """Invoke the CLI once against a named session. Returns the reply text.
 
     `hermes chat -q … -Q` rather than the top-level `-z` one-shot. `-z` accepts
@@ -45,11 +56,25 @@ def _run(prompt: str, session_name: str, cancel=None) -> str:
     Spawned with Popen rather than `subprocess.run` so the process handle can be
     attached to `cancel`: a stop from the UI has to reach the child, since this
     call is blocked on it for as long as the agent takes.
+
+    `-Q` is also why `progress` cannot come from stdout. It doesn't need to:
+    Hermes writes each tool call to its own session store as the turn runs, so
+    an `ActivityWatcher` tails that instead. The watcher is built *before* the
+    process starts, so it knows which messages predate this turn.
     """
     cmd = [HERMES_BIN, "chat", "-q", prompt, "-Q", "-c", session_name,
            "--create-if-missing"]
     if YOLO:
         cmd.append("--yolo")
+
+    env = dict(os.environ)
+    if HEADED:
+        # Read straight from the environment by Hermes' browser tool, so this
+        # opts one run into a visible window without touching the user's
+        # ~/.hermes/config.yaml, where it would apply to every other use too.
+        env["AGENT_BROWSER_HEADED"] = "1"
+
+    watcher = ActivityWatcher(session_name, progress)
 
     try:
         proc = subprocess.Popen(
@@ -57,6 +82,7 @@ def _run(prompt: str, session_name: str, cancel=None) -> str:
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            env=env,
             # Own process group, so a stop can signal the browser and any
             # other children Hermes spawned rather than just the CLI.
             start_new_session=True,
@@ -67,6 +93,7 @@ def _run(prompt: str, session_name: str, cancel=None) -> str:
             "Set HERMES_BIN if it lives elsewhere."
         ) from None
 
+    watcher.start()
     if cancel is not None:
         cancel.attach_process(proc)
     try:
@@ -79,6 +106,9 @@ def _run(prompt: str, session_name: str, cancel=None) -> str:
                 f"Hermes did not finish within {TIMEOUT_SECONDS}s and was stopped."
             ) from None
     finally:
+        # Stopped before `cancel` is detached: the watcher drains once on the
+        # way out, and the steps it is draining are this process's.
+        watcher.stop()
         if cancel is not None:
             cancel.detach_process()
 
@@ -119,6 +149,7 @@ def resolve(
     user_id: str,
     session_name: str | None,
     cancel=None,
+    progress=None,
 ) -> tuple[list, str | None]:
     """Run one turn and append it to `thread`.
 
@@ -147,7 +178,7 @@ def resolve(
         session_name = _new_session_name(todo["todo_id"])
         prompt = build_prompt(todo, user_message, user_id)
 
-    reply = _run(prompt, session_name, cancel)
+    reply = _run(prompt, session_name, cancel, progress)
 
     thread = list(thread or [])
     if user_message:

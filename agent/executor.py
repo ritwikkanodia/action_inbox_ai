@@ -6,7 +6,8 @@ here and nowhere else.
 
 The contract every executor implements:
 
-    resolve(todo, thread, user_message, user_id, state, cancel=None) -> (thread, state)
+    resolve(todo, thread, user_message, user_id, state,
+            cancel=None, progress=None) -> (thread, state)
 
 `thread` is the display log: a list of {role, content} bubbles, which is also a
 valid Agents-SDK input list, so the two executors can read each other's threads.
@@ -20,6 +21,12 @@ interprets it.
 stoppable, and None otherwise. Honouring it is best-effort and per-executor:
 Hermes attaches its subprocess to the token so a stop kills it outright, while
 the in-process Agents-SDK loop has nothing to interrupt and ignores it.
+
+`progress` is an optional callback taking one `{tool, detail}` event, so the UI
+can show what the agent is doing before it is finished doing it. Best-effort and
+per-executor in the same way: Hermes tails its own session store to produce
+events, the Agents-SDK loop reports nothing. Callers must treat "no events" as
+normal, never as a stalled run.
 
 Set TODO_EXECUTOR to pick one. `hermes` needs the CLI on the host, so the
 deployed container — which has no such binary — wants `agents_sdk`.
@@ -67,8 +74,9 @@ def resolve(
     user_id: str,
     state: str | None,
     cancel=None,
+    progress=None,
 ) -> tuple[list, str | None]:
     """Run one turn on the configured executor."""
     return _load(current_executor())(
-        todo, thread, user_message, user_id, state, cancel=cancel
+        todo, thread, user_message, user_id, state, cancel=cancel, progress=progress
     )

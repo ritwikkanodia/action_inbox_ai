@@ -942,6 +942,45 @@
       color: var(--ink-3);
       align-self: flex-start;
       border-bottom-left-radius: 3px;
+      max-width: 100%;
+    }
+    .ai-activity-label { font-size: 13px; }
+    /* The live trace of what the agent is doing. Empty until its first tool
+       call, and always empty on an executor that reports no steps, so it must
+       collapse to nothing rather than leave a gap under the label. */
+    .ai-activity { list-style: none; margin: 0; padding: 0; }
+    .ai-activity:not(:empty) { margin-top: 8px; }
+    .activity-step {
+      display: flex; align-items: baseline; gap: 8px;
+      font-size: 12.5px; line-height: 1.5;
+      padding: 3px 0 3px 14px;
+      position: relative;
+      color: var(--ink-3);
+    }
+    .activity-step::before {
+      content: ''; position: absolute; left: 0; top: 9px;
+      width: 5px; height: 5px; border-radius: 50%;
+      background: var(--rule-strong);
+    }
+    .activity-step.current { color: var(--ink-2); }
+    .activity-step.current::before {
+      background: var(--accent);
+      animation: activityPulse 1.4s ease-in-out infinite;
+    }
+    .activity-tool {
+      font-family: var(--mono); font-size: 11.5px;
+      color: var(--ink-2); flex-shrink: 0;
+    }
+    .activity-detail {
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      min-width: 0;
+    }
+    @keyframes activityPulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.35; transform: scale(0.7); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .activity-step.current::before { animation: none; }
     }
     #ai-input-area {
       display: flex; gap: 12px; align-items: flex-end;
