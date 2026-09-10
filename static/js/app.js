@@ -465,6 +465,9 @@ function wireDetailHandlers(t) {
     if (!msg) return;
     followup.value = '';
     followup.style.height = 'auto';
+    // "Something else…" borrows the placeholder to show which question is
+    // being answered; put it back once that answer is on its way.
+    followup.placeholder = 'Or type your own instruction…';
     callAI(t.todo_id, msg);
   });
 
@@ -726,7 +729,7 @@ function renderActions(todoId, actions, error) {
       const action = actions[Number(btn.dataset.idx)];
       if (!action) return;
       btn.classList.add('is-chosen');
-      callAI(todoId, action.instruction);
+      callAI(todoId, action.instruction, true);
     });
   });
   applyRunningStateToActions();
@@ -761,14 +764,140 @@ function renderThread(thread) {
   const threadEl = document.getElementById('ai-thread');
   if (!threadEl) return;
   threadEl.innerHTML = '';
-  thread.forEach(msg => {
-    const div = document.createElement('div');
-    div.className = `ai-bubble ${msg.role}`;
-    if (msg.role === 'assistant') div.innerHTML = marked.parse(msg.content);
-    else div.textContent = msg.content;
-    threadEl.appendChild(div);
+  thread.forEach((msg, i) => {
+    if (msg.content) {
+      const div = document.createElement('div');
+      div.className = `ai-bubble ${msg.role}`;
+      if (msg.role === 'assistant') div.innerHTML = marked.parse(msg.content);
+      else div.textContent = msg.content;
+      threadEl.appendChild(div);
+    }
+    // Only the newest question is still open; earlier ones were answered by
+    // the messages below them, so re-offering their chips would invite the
+    // user to answer the same question twice.
+    if (msg.questions && i === thread.length - 1) {
+      threadEl.appendChild(renderQuestions(msg.questions));
+    }
   });
   threadEl.scrollTop = threadEl.scrollHeight;
+}
+
+// The agent asked for something only the user knows. Rendering it as choices
+// rather than prose is the whole point: answering costs one click instead of
+// composing a sentence, which is what makes stopping to ask cheap enough that
+// the agent can prefer it over guessing.
+function renderQuestions(questions) {
+  const wrap = document.createElement('div');
+  wrap.className = 'ai-questions';
+
+  // Questions in one block are answered together, so a single Send covers them.
+  const picked = new Map();
+  const send = document.createElement('button');
+
+  questions.forEach((q, qi) => {
+    const block = document.createElement('div');
+    block.className = 'ai-question';
+
+    if (q.header) {
+      const tag = document.createElement('span');
+      tag.className = 'ai-question-header';
+      tag.textContent = q.header;
+      block.appendChild(tag);
+    }
+
+    const text = document.createElement('div');
+    text.className = 'ai-question-text';
+    text.textContent = q.question;
+    block.appendChild(text);
+
+    // Some answers have no menu — "paste the sentence you want posted". The
+    // agent is allowed to ask those, so they get a field rather than chips,
+    // and still travel with the rest under one Send.
+    if (!q.options || !q.options.length) {
+      const field = document.createElement('textarea');
+      field.className = 'ai-question-field';
+      field.rows = 2;
+      field.placeholder = 'Type your answer…';
+      field.addEventListener('input', () => {
+        const value = field.value.trim();
+        if (value) picked.set(qi, [value]);
+        else picked.delete(qi);
+        send.disabled = !picked.size;
+      });
+      block.appendChild(field);
+      wrap.appendChild(block);
+      return;
+    }
+
+    const list = document.createElement('div');
+    list.className = 'ai-question-options';
+
+    q.options.forEach(opt => {
+      const btn = document.createElement('button');
+      btn.className = 'ai-option';
+      const label = document.createElement('span');
+      label.className = 'ai-option-label';
+      label.textContent = opt.label;
+      btn.appendChild(label);
+      if (opt.detail) {
+        const detail = document.createElement('span');
+        detail.className = 'ai-option-detail';
+        detail.textContent = opt.detail;
+        btn.appendChild(detail);
+      }
+
+      btn.addEventListener('click', () => {
+        if (runningTodoId) return;
+        const wasOn = btn.classList.contains('is-picked');
+        if (!q.multiSelect) {
+          list.querySelectorAll('.ai-option').forEach(b => b.classList.remove('is-picked'));
+        }
+        btn.classList.toggle('is-picked', !wasOn);
+
+        const chosen = [...list.querySelectorAll('.ai-option.is-picked')]
+          .map(b => b.querySelector('.ai-option-label').textContent);
+        if (chosen.length) picked.set(qi, chosen);
+        else picked.delete(qi);
+        send.disabled = !picked.size;
+      });
+      list.appendChild(btn);
+    });
+
+    // The escape hatch, always last: none of the options fit, or the real
+    // answer needs a sentence. It hands off to the composer that was already
+    // there rather than introducing a second place to type.
+    const other = document.createElement('button');
+    other.className = 'ai-option ai-option-other';
+    other.textContent = 'Something else…';
+    other.addEventListener('click', () => {
+      const followup = document.getElementById('ai-followup');
+      if (!followup || followup.disabled) return;
+      followup.placeholder = q.question;
+      followup.focus();
+    });
+    list.appendChild(other);
+
+    block.appendChild(list);
+    wrap.appendChild(block);
+  });
+
+  send.className = 'ai-question-send';
+  send.textContent = 'Send answer';
+  send.disabled = true;
+  send.addEventListener('click', () => {
+    if (runningTodoId || !picked.size) return;
+    // Phrased back as a sentence per question, so the agent receives the same
+    // shape it would have had the user typed the answer themselves.
+    const answer = questions
+      .map((q, qi) => picked.has(qi) ? `${q.question} ${picked.get(qi).join('; ')}` : null)
+      .filter(Boolean)
+      .join('\n');
+    wrap.classList.add('is-sent');
+    callAI(selectedId, answer);
+  });
+  wrap.appendChild(send);
+
+  return wrap;
 }
 
 function addLoadingBubble() {
@@ -912,7 +1041,10 @@ function stopRun(todoId) {
     .catch(() => schedulePoll(todoId));
 }
 
-function callAI(todoId, message) {
+// `fromSuggestion` marks a message that came from clicking one of the inferred
+// options rather than being typed. The server frames those differently: the
+// user picked a short label, not the generated sentence underneath it.
+function callAI(todoId, message, fromSuggestion) {
   if (message) {
     const threadEl = document.getElementById('ai-thread');
     if (threadEl && selectedId === todoId) {
@@ -923,7 +1055,7 @@ function callAI(todoId, message) {
     }
     setRunning(true, todoId);
   }
-  const body = message ? { message } : {};
+  const body = message ? { message, from_suggestion: Boolean(fromSuggestion) } : {};
   return fetch(`/todos/${todoId}/ask-ai`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

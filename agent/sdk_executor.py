@@ -27,5 +27,6 @@ def resolve(
     state: str | None,
     cancel=None,
     progress=None,
+    from_suggestion: bool = False,
 ) -> tuple[list, None]:
-    return resolve_todo(todo, thread, user_message, user_id), None
+    return resolve_todo(todo, thread, user_message, user_id, from_suggestion), None

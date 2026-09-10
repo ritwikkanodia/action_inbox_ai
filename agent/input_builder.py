@@ -6,6 +6,39 @@ from agent.tools.email import fetch_gmail_thread_context
 # to identify these synthetic turns on read-back.
 HIDDEN_CONTEXT_SENTINEL = "<<HIDDEN_CONTEXT>>\n"
 
+# How a clicked suggestion is introduced, instead of "the user says".
+#
+# The user consented to a four-word label; the sentence underneath it was
+# written by a model and can assert things about them they never said — that an
+# experience was positive, that they liked something, that they want a
+# particular outcome. Presented as their own words it defeats the rule against
+# inventing facts about the user, because a fabricated claim now arrives
+# wearing their voice. Framed as a route they picked, the claims inside it go
+# back to being guesses that have to be checked.
+#
+# Lives here rather than in either prompt module because both executors need it
+# and neither should import the other's.
+SUGGESTED_ROUTE_LEAD = """\
+The user picked this route from a list of suggestions. They clicked its heading; the wording \
+below was drafted for them by another model, and they may never have read it.
+
+The chosen route:
+"""
+
+# Deliberately placed *after* the instruction rather than before it. A caution
+# that precedes a concrete directive loses to it — measured, not assumed: with
+# this text in front, an instruction ending "one sentence that reflects a
+# positive experience" still produced an invented 5-star review and no question.
+# The last thing in the prompt is what gets obeyed, so the constraint goes last.
+SUGGESTED_ROUTE_TAIL = """
+
+Before acting on that: it is a route, not a statement. Strike from it every claim about the \
+user's opinion, experience, satisfaction, rating or preference — "a positive experience", \
+"you loved it", "how helpful it was" — and treat what remains as the instruction. Those claims \
+were guessed by the model that drafted this text; the user did not make them, and rule 3 does \
+not license acting on them. If removing them leaves a gap you need in order to finish, that \
+gap is exactly what to ask about. Do the task, not the assumption."""
+
 
 def _format_todo(todo: dict) -> str:
     fields = [

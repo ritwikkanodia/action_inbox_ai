@@ -9,6 +9,8 @@ from openai import OpenAI
 
 from pollers.gmail.events import GmailEvent
 
+import llm_models
+
 load_dotenv()
 
 _client: OpenAI | None = None
@@ -62,7 +64,7 @@ def generate_todo(thread_context: str, event: GmailEvent) -> dict:
     )
 
     response = _get_client().chat.completions.create(
-        model="gpt-5.4-mini",
+        model=llm_models.POLLER,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},

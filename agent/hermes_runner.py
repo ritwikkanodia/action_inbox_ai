@@ -150,6 +150,7 @@ def resolve(
     session_name: str | None,
     cancel=None,
     progress=None,
+    from_suggestion: bool = False,
 ) -> tuple[list, str | None]:
     """Run one turn and append it to `thread`.
 
@@ -173,10 +174,10 @@ def resolve(
     if session_name:
         # The session carries the conversation, but not the task framing — each
         # invocation gets a fresh system prompt.
-        prompt = build_followup_prompt(user_message)
+        prompt = build_followup_prompt(user_message, from_suggestion)
     else:
         session_name = _new_session_name(todo["todo_id"])
-        prompt = build_prompt(todo, user_message, user_id)
+        prompt = build_prompt(todo, user_message, user_id, from_suggestion)
 
     reply = _run(prompt, session_name, cancel, progress)
 

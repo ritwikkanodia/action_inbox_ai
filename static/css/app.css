@@ -1106,6 +1106,99 @@
     }
     .action-option:hover:not(:disabled) .action-option-go { opacity: 1; color: var(--accent); }
 
+    /* A clarifying question the agent stopped to ask. It sits inside the
+       thread, aligned with the assistant bubbles it belongs to, and reads as
+       something awaiting the user rather than another message to scroll past. */
+    .ai-questions {
+      align-self: flex-start;
+      max-width: 90%;
+      display: flex; flex-direction: column; gap: 14px;
+      padding: 14px;
+      border: 1px solid var(--rule-strong);
+      border-radius: 10px;
+      border-bottom-left-radius: 3px;
+      background: var(--paper-deep);
+    }
+    .ai-questions.is-sent { opacity: 0.45; pointer-events: none; }
+
+    .ai-question { display: flex; flex-direction: column; gap: 8px; }
+
+    .ai-question-header {
+      align-self: flex-start;
+      font-family: var(--mono);
+      font-size: 9.5px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      border: 1px solid var(--rule-strong);
+      border-radius: 5px;
+      padding: 2px 6px;
+    }
+    .ai-question-text {
+      font-family: var(--sans);
+      font-size: 14px;
+      font-weight: 500;
+      line-height: 1.5;
+      color: var(--ink);
+    }
+
+    .ai-question-options { display: flex; flex-direction: column; gap: 6px; }
+
+    .ai-option {
+      display: flex; flex-direction: column; gap: 3px;
+      width: 100%;
+      text-align: left;
+      background: var(--panel);
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      padding: 9px 12px;
+      cursor: pointer;
+      font-family: var(--sans);
+      color: var(--ink);
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .ai-option:hover { border-color: var(--accent); }
+    .ai-option.is-picked { border-color: var(--accent); background: var(--accent-soft); }
+    .ai-option-label { font-size: 14px; font-weight: 500; line-height: 1.4; }
+    .ai-option-detail { font-size: 12.5px; line-height: 1.5; color: var(--ink-2); }
+    .ai-option-other {
+      font-size: 13px;
+      color: var(--ink-3);
+      border-style: dashed;
+    }
+    .ai-option-other:hover { color: var(--accent); }
+
+    /* A question with no menu — the answer is whatever the user types. */
+    .ai-question-field {
+      width: 100%;
+      background: var(--panel);
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      padding: 9px 12px;
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--ink);
+      resize: vertical;
+    }
+    .ai-question-field:focus { outline: none; border-color: var(--accent); }
+    .ai-question-field::placeholder { color: var(--ink-3); }
+
+    .ai-question-send {
+      align-self: flex-start;
+      font-family: var(--sans);
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--paper);
+      background: var(--accent);
+      border: none;
+      border-radius: 7px;
+      padding: 7px 14px;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .ai-question-send:disabled { opacity: 0.3; cursor: default; }
+
     .ai-thread-header { margin-top: 32px; }
 
     /* Settings modal */

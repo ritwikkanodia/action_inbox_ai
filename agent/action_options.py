@@ -15,12 +15,13 @@ import os
 
 from openai import OpenAI
 
+import llm_models
 from agent.input_builder import _format_todo
 from agent.tools.email import fetch_gmail_thread_context
 
 log = logging.getLogger(__name__)
 
-MODEL = "gpt-5.4-mini"
+MODEL = llm_models.ACTIONS
 OPTION_COUNT = 3
 
 _client: OpenAI | None = None
@@ -55,7 +56,13 @@ depth (do it now vs. gather the missing piece first).
 - Every option must be something that closes the item on its own. Never propose "think about \
 it", "decide later", or asking the user a question — those do not close anything.
 - Order them by what the context most supports: the option you'd bet on first.
-- Be specific. Use names, dates, amounts, and links from the context rather than placeholders.
+- Be specific. Use names, dates, amounts, and links from the context rather than placeholders. \
+Specific means grounded, not invented: every detail must come from the todo or the thread.
+- Never assert something about the user that the context does not say — their opinion, rating, \
+sentiment, satisfaction, reasons, or what an experience was like for them. "Submit a positive \
+review" presumes the verdict; "Submit a review of Pocket" does not. Where an option depends on \
+a fact only the user holds, the instruction must tell the agent to get it from the user rather \
+than to assume it.
 - "instruction" is read by an agent with email, web, browser and file tools and no other \
 knowledge of this conversation, so restate the specifics it needs. Do not name tools.
 - Return exactly {OPTION_COUNT} actions.

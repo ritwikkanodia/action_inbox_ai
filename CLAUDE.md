@@ -33,6 +33,7 @@ python scripts/verify/verify_web.py
 python scripts/verify/verify_executor.py    # stubs the Hermes CLI; no API spend
 python scripts/verify/verify_actions.py     # stubs the OpenAI call; no API spend
 python scripts/verify/verify_hermes_activity.py  # stubs Hermes' state.db; no CLI, no spend
+python scripts/verify/verify_clarify.py     # clarifying-question parsing; no CLI, no spend
 ```
 
 ## Architecture
@@ -119,10 +120,17 @@ the `save_*` helpers. Keep both in sync when adding an enum value.
 
 ## LLM usage
 
-Every OpenAI call in the repo uses **`gpt-5.4-mini`** — `pollers/gmail/todo_generator.py`,
-`pollers/browser/generator.py`, `pollers/system/generator.py`, `agent/action_options.py`, and
-`agent/resolver.py`. The generators use Chat Completions with
-`response_format={"type": "json_object"}`.
+Model choice is per call site, in **`llm_models.py`**, because the five sites differ in both
+volume and blast radius. `POLLER` (`gpt-5.6-luna`) is used by `pollers/gmail/todo_generator.py`,
+`pollers/browser/generator.py` and `pollers/system/generator.py` — it runs on every item the
+pollers see and only decides "is there a todo here", so it wants the cheapest current model.
+`ACTIONS` (`gpt-5.6-terra`) is `agent/action_options.py`: one cached call per todo, whose output
+becomes an agent's marching orders, so judgement there is cheap to buy and expensive to skip.
+`AGENT` (`gpt-6-astra`) is `agent/resolver.py`, the Agents-SDK loop the deployed container runs;
+it is also where spend can run away, since every tool result re-enters the context. Override any
+of them with `OPENAI_MODEL_POLLER` / `OPENAI_MODEL_ACTIONS` / `OPENAI_MODEL_AGENT`. They are read
+at import time, so `load_dotenv` has to have run first — it does, at the top of both entrypoints.
+The generators use Chat Completions with `response_format={"type": "json_object"}`.
 
 **Todo generation** (`pollers/gmail/todo_generator.py`): thread context + sender → JSON with a
 `should_generate_todo` boolean and a `reasoning` sentence. Returning `false` is a first-class
@@ -136,19 +144,48 @@ to `/ask-ai` as the user message, so a suggested action and a hand-typed one tak
 same path. Options are generated on first open of a todo's detail pane and cached in
 `todos.action_options`, so reopening costs nothing.
 
+**Clarifying questions** (`agent/clarify.py`). The resolution prompts forbid inventing a fact
+about the user — a rating, an opinion, an experience, a figure — and require the agent to stop
+before any irreversible act whose inputs it inferred rather than confirmed. That only works if
+asking is cheap, so an agent that needs something appends a fenced ` ```ask_user ` block to its
+reply holding `{questions: [{question, header, options: [{label, detail}], multiSelect}]}`.
+`app._thread_for_client` splits that off the prose at **read** time and hands it to the frontend
+as a `questions` field on the bubble; `static/js/app.js` renders the options as chips and always
+adds its own "Something else…" that focuses the composer, so the prompts ask for 2-3 options,
+never a free-text one. Parsing on read rather than on write is what makes the chips survive a
+reload — the raw block stays in `todos.ai_thread`, so every read re-derives them and no column
+was added. Every parse failure degrades to the untouched reply: a malformed block must cost the
+user chips, never the answer. Both executors get this, since neither knows the protocol exists.
+
 **Discovery and execution are decoupled.** The pollers generate todos; resolution runs on a
 *selectable executor* behind `agent/executor.py`. `app.py` calls `executor.resolve` and knows
 nothing about which one is configured. The contract:
 
 ```
 resolve(todo, thread, user_message, user_id, state,
-        cancel=None, progress=None) -> (thread, state)
+        cancel=None, progress=None, from_suggestion=False) -> (thread, state)
 ```
 
 `thread` is the display log (`{role, content}` bubbles — also a valid Agents-SDK input list, so
 executors can read each other's threads). `state` is an opaque per-executor string persisted in
 `todos.executor_state`; nothing outside the executor interprets it. Implementations are imported
 lazily, so picking one never pays for the other's dependencies.
+
+`from_suggestion` says the message came from clicking an inferred option rather than being
+typed. It exists because the user consented to a four-word label, not to the model-written
+sentence behind it: an instruction that asserts something about them ("reflects a positive
+experience") would otherwise reach the agent as their own words and defeat the rule against
+inventing facts about the user. Executors that build a prompt frame such a turn as a route,
+not a statement.
+
+**How well that holds depends on the model.** Measured against a deliberately poisoned
+instruction ("...one sentence that reflects a positive experience"), a `gpt-5-mini`-class agent
+ignored the framing in all three placements tried and wrote an invented 5-star review; a
+`gpt-6-astra` one stripped the presumption and asked "how would you rate *your own* experience",
+offering "no product-use experience to review" as an option. Weaker models follow the concrete
+directive and drop the abstract constraint. Treat the framing as real but model-dependent, and
+keep `agent/action_options.py` not generating presumptuous instructions in the first place —
+that is the fix that does not depend on which model is behind the executor.
 
 `cancel` is an `agent.runs.CancelToken` — honouring it is best-effort and per-executor. Hermes
 attaches its subprocess to the token, so a stop kills it (and its process group — the CLI drives
