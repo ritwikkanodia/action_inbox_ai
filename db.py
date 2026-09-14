@@ -109,7 +109,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             relevant_link          TEXT,
             reasoning              TEXT,
             status                 TEXT NOT NULL DEFAULT 'open'
-                                       CHECK (status IN ('open','ongoing','closed')),
+                                       CHECK (status IN ('open','ongoing','closed','archived')),
             decision               TEXT CHECK (decision IS NULL OR decision IN ('accepted','rejected')),
             ai_thread              TEXT,
             executor_state         TEXT,
@@ -303,6 +303,53 @@ def init_db(conn: sqlite3.Connection) -> None:
                 (legacy_user_id, key, row[0]),
             )
             conn.execute("DELETE FROM state WHERE key = ?", (key,))
+
+    # ---- Archived status ---------------------------------------------------
+    # 'archived' is a fourth status, for todos the user never wants to process.
+    # SQLite can't widen a CHECK in place, so a database created with the
+    # three-value constraint needs a table rebuild or every archive write fails
+    # it. (Databases with no CHECK rely on the Python-side enum instead.) Runs
+    # after the column migrations above so the rebuild carries every column, and
+    # before the index block, which recreates the indexes the drop takes away.
+    # The carried column list comes from the old table, since ALTER TABLE ADD
+    # COLUMN leaves it in a different physical order than the fresh schema.
+    todos_ddl_row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'todos'"
+    ).fetchone()
+    todos_ddl = (todos_ddl_row[0] or "") if todos_ddl_row else ""
+    if "CHECK (status IN" in todos_ddl and "'archived'" not in todos_ddl:
+        carried = ", ".join(
+            row[1] for row in conn.execute("PRAGMA table_info(todos)").fetchall()
+        )
+        conn.executescript("""
+            CREATE TABLE todos_new (
+                todo_id                TEXT PRIMARY KEY,
+                user_id                TEXT,
+                source                 TEXT NOT NULL
+                                           CHECK (source IN ('gmail','fathom','browser_history','system','user')),
+                account_id             TEXT,
+                dedup_key              TEXT,
+                title                  TEXT,
+                suggested_action       TEXT,
+                importance             TEXT CHECK (importance IS NULL OR importance IN ('low','medium','high')),
+                estimated_time_minutes INTEGER,
+                due_date               TEXT,
+                relevant_link          TEXT,
+                reasoning              TEXT,
+                status                 TEXT NOT NULL DEFAULT 'open'
+                                           CHECK (status IN ('open','ongoing','closed','archived')),
+                decision               TEXT CHECK (decision IS NULL OR decision IN ('accepted','rejected')),
+                ai_thread              TEXT,
+                executor_state         TEXT,
+                action_options         TEXT,
+                source_meta            TEXT,
+                created_at             TEXT NOT NULL,
+                updated_at             TEXT NOT NULL
+            );
+        """)
+        conn.execute(f"INSERT INTO todos_new ({carried}) SELECT {carried} FROM todos")
+        conn.execute("DROP TABLE todos")
+        conn.execute("ALTER TABLE todos_new RENAME TO todos")
 
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS page_views (
@@ -619,6 +666,8 @@ def set_system_last_polled_at(conn: sqlite3.Connection, user_id: str, ts: str) -
 # ---------------------------------------------------------------------------
 
 _VALID_IMPORTANCE = {"low", "medium", "high"}
+_VALID_STATUS = {"open", "ongoing", "closed", "archived"}
+_VALID_DECISION = {"accepted", "rejected"}
 
 
 def _save_todo(
