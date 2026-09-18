@@ -187,13 +187,28 @@ def main() -> None:
     check("stopping a finished run reports nothing to stop",
           client.post("/todos/t1/run/stop").get_json()["stopped"] is False)
 
-    check("the trace is not mistaken for conversation",
-          all("slow.test" not in m["content"] for m in data["thread"]))
+    # The agent had acted before the stop (one browser_exec), so the turn is
+    # recorded rather than discarded: a stop that lands after a send or a
+    # submit must leave a trace of it in the app. The record is a bubble that
+    # names what ran, the user's message stays with it, and the session is
+    # kept so the next turn's agent remembers the same tool calls.
+    check("a stop after the agent acted records what it ran",
+          "slow.test" in data["thread"][-1]["content"])
+    check("the record says something may already have happened",
+          "may already have been sent or submitted" in data["thread"][-1]["content"])
 
     ai_thread, after = row(conn, "t1")
-    check("stopped turn did not advance the log", len(json.loads(ai_thread)) == 4)
+    persisted = json.loads(ai_thread)
+    check("a stopped turn that acted advances the log", len(persisted) == 6)
+    check("the persisted record names the tool call", "slow.test" in ai_thread)
+    check("the user's message is kept with the record",
+          persisted[-2] == {"role": "user", "content": "Take your time."})
     check("stopped turn left the session name alone", after == session_name)
-    check("the trace is never persisted", "slow.test" not in ai_thread)
+    # The failed turn earlier in this script reported no activity and was
+    # discarded (its log-length check above); together the two cases pin the
+    # rule down: acted → recorded, didn't → dropped.
+    check("the live trace itself is still not persisted",
+          not any(m.get("tool") for m in persisted))
 
     # ---- stop actually kills the CLI process -------------------------------
     # The stub above proves the plumbing; this proves the signal reaches a real

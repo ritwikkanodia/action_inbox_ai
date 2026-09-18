@@ -768,8 +768,18 @@ function renderThread(thread) {
     if (msg.content) {
       const div = document.createElement('div');
       div.className = `ai-bubble ${msg.role}`;
-      if (msg.role === 'assistant') div.innerHTML = marked.parse(msg.content);
-      else div.textContent = msg.content;
+      if (msg.role === 'assistant') {
+        div.innerHTML = marked.parse(msg.content);
+        // A link in a reply is usually a handoff — "sign in here, then click
+        // continue". It has to open beside the app, not in place of it: the
+        // chips the user comes back to click live on this page.
+        div.querySelectorAll('a[href]').forEach(a => {
+          a.target = '_blank';
+          a.rel = 'noopener';
+        });
+      } else {
+        div.textContent = msg.content;
+      }
       threadEl.appendChild(div);
     }
     // Only the newest question is still open; earlier ones were answered by

@@ -373,6 +373,26 @@ def _persist_resolution(todo_id: str, user_id: str, thread: list, state) -> None
         conn.close()
 
 
+def _acted_summary(events: list[dict]) -> str:
+    """Render what an interrupted turn had already done, for its record bubble.
+
+    Empty when nothing ran, so the notice reads as it always did. Otherwise a
+    markdown list of tool calls in order — the same `{tool, detail}` events the
+    live trace shows, kept whole because the point is a complete account of
+    the turn, not a progress indicator.
+    """
+    if not events:
+        return ""
+    lines = [
+        f"- `{e.get('tool') or '?'}` — {e.get('detail') or ''}".rstrip(" —")
+        for e in events
+    ]
+    return (
+        f"\n\nBefore that, the agent had run {len(events)} tool call(s), so "
+        "something may already have been sent or submitted:\n\n" + "\n".join(lines)
+    )
+
+
 def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, state,
                      from_suggestion: bool = False):
     """Build the callable `agent.runs.start` will execute on its own thread.
@@ -391,34 +411,57 @@ def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, 
         return shown
 
     def work(cancel, progress):
+        # Every tool call the executor reports, kept here as well as on the
+        # run. The run's copy is a live trace and dies with it; this one is
+        # what a stopped or failed turn is judged by — see `record`.
+        acted: list[dict] = []
+
+        def observe(event):
+            acted.append(event)
+            if progress is not None:
+                progress(event)
+
+        def record(text: str, exc) -> list:
+            """Persist an interrupted turn if — and only if — the agent acted.
+
+            A turn that stops before its first tool call left nothing behind,
+            and discarding it keeps the log honest. A turn that stops *after*
+            one may have sent mail or submitted a form, and discarding that is
+            how a Booth deposit run once emailed admissions with no trace of it
+            anywhere in the app. So the record lists what ran, and the session
+            name is kept when the executor supplies it, so the next turn's
+            agent remembers what it did too.
+            """
+            shown = notice(text + _acted_summary(acted))
+            if acted:
+                _persist_resolution(
+                    todo_id, user_id, shown, getattr(exc, "state", None) or state
+                )
+            return shown
+
         try:
             final, new_state = resolve(
                 todo, thread, user_message, user_id, state,
-                cancel=cancel, progress=progress, from_suggestion=from_suggestion,
+                cancel=cancel, progress=observe, from_suggestion=from_suggestion,
             )
-        except ExecutorCancelled:
-            # Not persisted. The agent may already have sent mail or submitted a
-            # form before the stop landed, so neither the log nor the session id
-            # should advance as if the turn had completed.
-            #
-            # Logged because a discarded turn is otherwise invisible: nothing
-            # reaches the database, and the thread on screen stays continuous,
-            # so a user reporting "it lost my conversation" leaves no evidence
-            # behind to check. `state` is the session the *next* turn will
-            # resume — unchanged by this one.
+        except ExecutorCancelled as exc:
             app.logger.warning(
                 "Resolution stopped: todo=%s user=%s executor=%s state=%s "
-                "(turn discarded; state unchanged)",
-                todo_id, user_id, current_executor(), state,
+                "after %d tool call(s) (%s)",
+                todo_id, user_id, current_executor(), state, len(acted),
+                "recorded" if acted else "turn discarded; state unchanged",
             )
-            return notice("⏹ Stopped. Anything already done before the stop stands."), runs.CANCELLED
+            return record(
+                "⏹ Stopped. Anything already done before the stop stands.", exc
+            ), runs.CANCELLED
         except ExecutorError as exc:
             app.logger.warning(
                 "Resolution failed: todo=%s user=%s executor=%s state=%s: %s "
-                "(turn discarded; state unchanged)",
-                todo_id, user_id, current_executor(), state, exc,
+                "after %d tool call(s) (%s)",
+                todo_id, user_id, current_executor(), state, exc, len(acted),
+                "recorded" if acted else "turn discarded; state unchanged",
             )
-            return notice(f"⚠️ Resolution failed: {exc}"), runs.ERROR
+            return record(f"⚠️ Resolution failed: {exc}", exc), runs.ERROR
 
         _persist_resolution(todo_id, user_id, final, new_state)
         return final, runs.DONE
