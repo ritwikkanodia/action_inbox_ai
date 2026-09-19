@@ -23,7 +23,6 @@ from pollers.browser import poller as browser_history_poller
 from pollers.system import poller as system_poller
 from pollers.digest import poller as digest_poller
 from db import init_db, list_active_users, list_all_users, list_gmail_accounts, save_todo
-from notify import notify_new_todo
 
 DB_PATH = os.environ.get("DB_PATH", "gmail_events.db")
 POLL_INTERVAL_SECONDS = 30
@@ -101,7 +100,6 @@ def _poll_gmail_account(conn: sqlite3.Connection, user_id: str, account_id: str)
         if saved:
             counts["todo"] += 1
             print(f"{prefix} → TODO[{todo.get('importance')}] {_truncate(todo['title'], 60)}")
-            notify_new_todo(todo["title"], "gmail", todo.get("importance"))
         else:
             counts["dup"] += 1
             print(f"{prefix} → dup")

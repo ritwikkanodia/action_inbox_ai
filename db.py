@@ -638,7 +638,7 @@ def _save_todo(
     reasoning: str | None = "",
     source_meta: dict | None = None,
     decision: str | None = None,
-) -> bool:
+) -> str | None:
     if importance not in _VALID_IMPORTANCE:
         importance = None
     now = _now()
@@ -659,7 +659,7 @@ def _save_todo(
         ),
     )
     conn.commit()
-    return conn.total_changes > before
+    return todo_id if conn.total_changes > before else None
 
 
 def get_open_browser_history_titles(
@@ -676,13 +676,13 @@ def get_open_browser_history_titles(
 
 def save_browser_history_todo(
     conn: sqlite3.Connection, user_id: str, todo: dict
-) -> bool:
+) -> str | None:
     title = (todo.get("title") or "").strip()
     if not title:
-        return False
+        return None
     norm = _normalize_url(todo.get("relevant_link"))
     if not norm:
-        return False
+        return None
     # Fuzzy-match guard against any browser_history todo (any status) in last 30d
     # for THIS user.
     cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
@@ -693,7 +693,7 @@ def save_browser_history_todo(
     ).fetchall()
     for (et,) in existing:
         if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.80:
-            return False
+            return None
     dedup = hashlib.sha1(norm.encode()).hexdigest()[:12]
     return _save_todo(
         conn,
@@ -712,7 +712,7 @@ def save_browser_history_todo(
 
 def save_fathom_todo(
     conn: sqlite3.Connection, user_id: str, meeting: dict, idx: int, item: dict
-) -> bool:
+) -> str | None:
     recording_id = str(meeting.get("recording_id", ""))
     dedup = f"{recording_id}_{idx}"
     meeting_title = meeting.get("meeting_title") or meeting.get("title", "")
@@ -792,11 +792,11 @@ def save_todo(
     result: dict,
     user_id: str,
     account_id: str = "",
-) -> bool:
+) -> str | None:
     todo = result.get("todo") or {}
     title = (todo.get("title") or "").strip()
     if not title:
-        return False
+        return None
     cutoff = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
     existing = conn.execute(
         "SELECT title FROM todos "
@@ -805,7 +805,7 @@ def save_todo(
     ).fetchall()
     for (et,) in existing:
         if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.80:
-            return False
+            return None
     relevant_link = todo.get("relevant_link") or gmail_thread_url(thread_id, account_id)
     return _save_todo(
         conn,
@@ -930,10 +930,10 @@ def get_open_system_todos(
     return [r[0] for r in rows if r[0]]
 
 
-def save_system_todo(conn: sqlite3.Connection, user_id: str, todo: dict) -> bool:
+def save_system_todo(conn: sqlite3.Connection, user_id: str, todo: dict) -> str | None:
     title = (todo.get("title") or "").strip()
     if not title:
-        return False
+        return None
     cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
     existing = conn.execute(
         "SELECT title FROM todos "
@@ -942,7 +942,7 @@ def save_system_todo(conn: sqlite3.Connection, user_id: str, todo: dict) -> bool
     ).fetchall()
     for (et,) in existing:
         if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.60:
-            return False
+            return None
     uid = uuid.uuid4().hex[:12]
     return _save_todo(
         conn,
