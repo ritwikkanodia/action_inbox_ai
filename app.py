@@ -526,6 +526,22 @@ def ask_ai(todo_id):
     # to a short label, not to the generated sentence behind it.
     from_suggestion = bool(data.get("from_suggestion"))
 
+    # A notification button sends the option's index, never its text, so the
+    # instruction that runs is always the one this server cached.
+    if "action_index" in data:
+        idx = data["action_index"]
+        try:
+            options = json.loads(row["action_options"] or "null")
+        except ValueError:
+            options = None
+        if not isinstance(idx, int) or isinstance(idx, bool) or not isinstance(options, list) \
+                or not 0 <= idx < len(options):
+            return jsonify({"error": "no such action"}), 400
+        user_message = (options[idx].get("instruction") or "").strip()
+        if not user_message:
+            return jsonify({"error": "no such action"}), 400
+        from_suggestion = True
+
     active = runs.get(user_id, todo_id)
     if active is not None and active.status == runs.RUNNING:
         # Don't start a second agent on the same todo behind the user's back.

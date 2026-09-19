@@ -297,12 +297,47 @@ def test_push_routes() -> None:
           anon.get("/push/vapid-public-key").status_code == 401)
 
 
+def test_ask_ai_action_index() -> None:
+    import app as app_module
+    from agent import runs
+    conn = sqlite3.connect(os.environ["DB_PATH"])
+    init_db(conn)
+    uid, _ = upsert_user(conn, "dev@example.com")
+    tid = save_todo(conn, "e9", "m9", "th9", _gmail_result("Book the Booth deposit"), uid, "a@x.com")
+    conn.close()
+    client = _client(uid)
+
+    r = client.post(f"/todos/{tid}/ask-ai", json={"action_index": 0})
+    check("no cache → 400", r.status_code == 400)
+
+    conn = sqlite3.connect(os.environ["DB_PATH"])
+    conn.execute("UPDATE todos SET action_options = ? WHERE todo_id = ?", (json.dumps(ACTIONS), tid))
+    conn.commit()
+    conn.close()
+
+    r = client.post(f"/todos/{tid}/ask-ai", json={"action_index": 5})
+    check("out-of-range index → 400", r.status_code == 400)
+    r = client.post(f"/todos/{tid}/ask-ai", json={"action_index": "1"})
+    check("non-integer index → 400", r.status_code == 400)
+
+    fake_run = mock.Mock(status="running", run_id="r1", thread=[], activity_snapshot=lambda: [])
+    with mock.patch.object(app_module, "_resolution_work", return_value=lambda *a, **k: None) as work, \
+         mock.patch.object(runs, "start", return_value=fake_run) as start:
+        r = client.post(f"/todos/{tid}/ask-ai", json={"action_index": 1})
+        check("valid index starts a run", r.status_code == 200 and start.call_count == 1)
+        check("run seeded with the cached instruction",
+              start.call_args.args[2][-1] == {"role": "user", "content": ACTIONS[1]["instruction"]})
+        check("instruction passed to the executor as a suggestion",
+              work.call_args.args[2] == ACTIONS[1]["instruction"] and work.call_args.args[5] is True)
+
+
 def main() -> None:
     test_save_helpers_return_ids()
     test_subscription_helpers()
     test_ensure_action_options()
     test_push_notify()
     test_push_routes()
+    test_ask_ai_action_index()
     print("All checks passed.")
 
 
