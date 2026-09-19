@@ -34,6 +34,7 @@ python scripts/verify/verify_executor.py    # stubs the Hermes CLI; no API spend
 python scripts/verify/verify_actions.py     # stubs the OpenAI call; no API spend
 python scripts/verify/verify_hermes_activity.py  # stubs Hermes' state.db; no CLI, no spend
 python scripts/verify/verify_clarify.py     # clarifying-question parsing; no CLI, no spend
+python scripts/verify/verify_push.py       # stubs pywebpush + the OpenAI call; no spend
 ```
 
 ## Architecture
@@ -46,6 +47,22 @@ one failing source never kills the cycle. Sources are gated by `ENABLED_SOURCES`
 set is `gmail,fathom,morning_digest`. `browser_history` and `system` are macOS-only and opt-in.
 The morning digest is the exception to the per-source loop: it iterates `list_all_users`, not
 just connected ones, so unconnected users get a "connect Gmail" nudge instead of nothing.
+
+**Push notifications** (`push_notify.py`): each poller calls `notify_new_todo(conn, user_id,
+todo_id)` right where it branches on the `save_*_todo` return value (which is the `todo_id`,
+or `None` on a dedup), so only a real insert notifies. It returns before any LLM call when the
+user has no push subscription — eager action inference is paid for only when someone will see
+the buttons — otherwise `agent.action_options.ensure_action_options` fills the same cache the
+detail pane reads, and the payload (labels and indices, never instructions) goes out via
+`pywebpush` to every browser the user enrolled from Settings. `static/js/sw.js` shows up to
+`Notification.maxActions` of them (2 on Chrome/macOS, 0 on Safari) as buttons; a click POSTs
+`{action_index}` to `/ask-ai`, which runs the instruction *it* cached with
+`from_suggestion=True` — a push can't put words in the agent's mouth. Then it focuses the app
+at `#todo/<id>` so the live trace is in front of the user. Subscriptions live in
+`push_subscriptions` keyed on the push endpoint; a 404/410 from the push service prunes the
+row. Needs `VAPID_PRIVATE_KEY`/`VAPID_PUBLIC_KEY`/`VAPID_SUBJECT` (`scripts/gen_vapid_keys.py`);
+unset ⇒ Settings says so and the poller logs once and skips. Every failure is swallowed — a
+notification must never cost a poll cycle.
 
 **Web UI (`app.py`)** — Flask, multi-user, every route behind `@login_required` except
 `/login`, the OAuth callbacks, `/digest/preview`, `/stats`, and the PWA routes
