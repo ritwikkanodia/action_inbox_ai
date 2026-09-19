@@ -12,6 +12,7 @@ import os
 import subprocess
 import uuid
 
+from agent import agent_browser, chrome_profile
 from agent.executor import ExecutorCancelled, ExecutorError
 from agent.hermes_activity import ActivityWatcher
 from agent.hermes_prompt import build_followup_prompt, build_prompt
@@ -76,56 +77,75 @@ def _run(prompt: str, session_name: str, cancel=None, progress=None) -> str:
 
     watcher = ActivityWatcher(session_name, progress)
 
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env,
-            # Own process group, so a stop can signal the browser and any
-            # other children Hermes spawned rather than just the CLI.
-            start_new_session=True,
-        )
-    except FileNotFoundError:
-        raise ExecutorError(
-            f"Hermes CLI not found (looked for {HERMES_BIN!r}). "
-            "Set HERMES_BIN if it lives elsewhere."
-        ) from None
+    # Two ways to give the agent a browser that carries the user's logins.
+    # Preferred: a Chrome of our own already running on Hermes' profile copy,
+    # which Hermes attaches to and leaves alive — no snapshot, so no need to
+    # touch the user's Chrome, and a login the window acquires survives to
+    # the next turn (`agent.agent_browser`). Fallback: let Hermes launch and
+    # snapshot as it normally would; that needs the user's Chrome closed,
+    # since it holds the profile's password databases locked, so close it
+    # first (opt-in; `agent.chrome_profile`) and hand it back in the `finally`
+    # below whatever the turn does.
+    closed_chrome = False
+    if not agent_browser.ensure_running():
+        closed_chrome = chrome_profile.close_for_run()
 
-    watcher.start()
-    if cancel is not None:
-        cancel.attach_process(proc)
     try:
         try:
-            stdout, stderr = proc.communicate(timeout=TIMEOUT_SECONDS)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.communicate()
+            proc = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                env=env,
+                # Own process group, so a stop can signal the browser and any
+                # other children Hermes spawned rather than just the CLI.
+                start_new_session=True,
+            )
+        except FileNotFoundError:
             raise ExecutorError(
-                f"Hermes did not finish within {TIMEOUT_SECONDS}s and was stopped."
+                f"Hermes CLI not found (looked for {HERMES_BIN!r}). "
+                "Set HERMES_BIN if it lives elsewhere."
             ) from None
-    finally:
-        # Stopped before `cancel` is detached: the watcher drains once on the
-        # way out, and the steps it is draining are this process's.
-        watcher.stop()
+
+        watcher.start()
         if cancel is not None:
-            cancel.detach_process()
+            cancel.attach_process(proc)
+        try:
+            try:
+                stdout, stderr = proc.communicate(timeout=TIMEOUT_SECONDS)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.communicate()
+                raise ExecutorError(
+                    f"Hermes did not finish within {TIMEOUT_SECONDS}s and was stopped."
+                ) from None
+        finally:
+            # Stopped before `cancel` is detached: the watcher drains once on
+            # the way out, and the steps it is draining are this process's.
+            watcher.stop()
+            if cancel is not None:
+                cancel.detach_process()
 
-    # A cancelled run also comes back with a non-zero status, so check the
-    # token before reading the exit code as a failure.
-    if cancel is not None and cancel.cancelled:
-        raise ExecutorCancelled("Stopped.")
+        # A cancelled run also comes back with a non-zero status, so check the
+        # token before reading the exit code as a failure.
+        if cancel is not None and cancel.cancelled:
+            raise ExecutorCancelled("Stopped.")
 
-    if proc.returncode != 0:
-        detail = (stderr or stdout or "").strip()
-        raise ExecutorError(detail or f"Hermes exited with status {proc.returncode}.")
+        if proc.returncode != 0:
+            detail = (stderr or stdout or "").strip()
+            raise ExecutorError(detail or f"Hermes exited with status {proc.returncode}.")
 
-    reply = (stdout or "").strip()
-    if not reply:
-        raise ExecutorError("Hermes returned an empty reply.")
+        reply = (stdout or "").strip()
+        if not reply:
+            raise ExecutorError("Hermes returned an empty reply.")
 
-    return reply
+        return reply
+    finally:
+        # Every exit counts — a clean reply, a timeout, a stop, even a missing
+        # binary. The browser was taken away to run this turn; it goes back.
+        if closed_chrome:
+            chrome_profile.restore()
 
 
 SESSION_PREFIX = "aib-"
@@ -179,7 +199,14 @@ def resolve(
         session_name = _new_session_name(todo["todo_id"])
         prompt = build_prompt(todo, user_message, user_id, from_suggestion)
 
-    reply = _run(prompt, session_name, cancel, progress)
+    try:
+        reply = _run(prompt, session_name, cancel, progress)
+    except ExecutorError as exc:
+        # The session exists from the first tool call onward, whatever happens
+        # after. Name it, so a stopped first turn still resumes the session
+        # that holds what the agent did in it.
+        exc.state = session_name
+        raise
 
     thread = list(thread or [])
     if user_message:

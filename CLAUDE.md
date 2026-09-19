@@ -202,12 +202,18 @@ the UI must still read as working with an empty trace.
 ask-ai request, which left no handle on a run in flight — the only thing connected to it was
 the request blocking on it, so "stop" had nothing to talk to. `POST /ask-ai` now registers a run
 on a background thread and returns at once; the client polls `GET /run` and can `POST /run/stop`.
-The registry is per-process and deliberately not persisted: only *completed* runs are written to
-the database, so a restart (including the debug reloader) simply leaves the todo where it was.
-At most one run exists per (user, todo). A stopped run is treated like a failed one — the log
-does not advance, since the agent may already have sent mail or submitted a form before
-the stop landed. The session name is unchanged either way, so the next message continues
-the same Hermes session, simply without the discarded turn in it.
+The registry is per-process and deliberately not persisted: a restart (including the debug
+reloader) kills the run with it and leaves the todo where it was. At most one run exists per
+(user, todo). **What a stopped or failed run leaves behind depends on whether the agent had
+acted.** A turn interrupted before its first tool call is discarded — nothing happened, and
+dropping it keeps the log honest. A turn interrupted *after* one is recorded: the user's
+message plus a bubble listing every tool call the turn made, persisted to `ai_thread`, and the
+Hermes session name kept (the executor tags it onto the `ExecutorError`), so the next turn's
+agent remembers the same calls. The reason is a Booth deposit run that composed and clicked
+Send on an email to admissions two seconds before the user hit Stop: under the old
+"stopped turns leave nothing behind" rule the app held no record of it anywhere. The agent
+may already have sent mail or submitted a form before a stop lands — that is precisely why
+the record exists, not a reason to omit it.
 
 Returning immediately also gets the turn out from under gunicorn's request timeout, which a
 600s Hermes run would otherwise blow through. The flip side is that the registry lives in one
@@ -243,11 +249,52 @@ Adding an executor means one module implementing `resolve` plus a branch in `exe
   It's set in the environment rather than in `~/.hermes/config.yaml` so it applies to Action
   Inbox runs and nothing else. `HERMES_BROWSER_HEADED=0` restores headless. Two things about
   this are Hermes' behavior, not ours: `browser.use_real_profile` (on in the user's config)
-  means the window is a *copy* of the real Chrome profile — same logins, and the copy can only
-  be refreshed while Chrome isn't holding the profile lock; and a browser surviving from an
-  earlier run is re-attached to rather than relaunched, so a headless one left over from other
-  Hermes use makes the next run invisible until it ages out (`browser.inactivity_timeout`,
-  120s).
+  means the window is a *copy* of the real Chrome profile — same logins; and a browser
+  surviving from an earlier run is re-attached to rather than relaunched, so a headless one
+  left over from other Hermes use makes the next run invisible until it ages out
+  (`browser.inactivity_timeout`, 120s).
+- **By default, a login the agent's window acquires does not survive the turn.** Each turn
+  is its own `hermes chat` process, and Hermes terminates the real-profile Chrome from an
+  `atexit` hook when that process ends. The next turn relaunches it and re-mirrors the *auth*
+  databases — cookies, login data — out of the user's real Chrome over the copy, on every
+  launch, not only when the full tree is first copied. So the only sign-in the agent ever has
+  is the one the user's own Chrome has; signing in inside the agent's window is erased before
+  the next turn can use it. Telling the agent otherwise is what first stranded a Trustpilot
+  todo mid-resolution. A login wall should still be *tried* first ("Continue with Google")
+  rather than reported on sight, since the copied profile usually carries the session.
+- **That re-mirror is also why the browser may refuse to launch at all.** Hermes backs up
+  each auth database with SQLite, and a *running* Chrome holds `Login Data`, `Login Data For
+  Account` and `Web Data` (passwords and autofill) with a write lock; `Cookies` — the one that
+  actually carries sessions — copies fine. Hermes fails closed on any locked one
+  ("never launch a silently signed-out session"), has no knob to relax that, and deliberately
+  will not quit the browser itself. `HERMES_AUTOCLOSE_CHROME=1` (`agent/chrome_profile.py`)
+  makes that decision once instead of per run: a graceful AppleScript quit of the user's
+  Chrome before the turn, `open -n` relaunch after. Never a force-kill — a Chrome that will
+  not quit (an unsaved-changes prompt) is left alone and the run proceeds to Hermes' own
+  error. The relaunch needs `-n` because the agent's browser is the *same Chrome binary* on a
+  different profile, and a plain `open -a` just raises that instead. The same-bundle fact
+  also means the agent must never `open <url>` or `tell application "Google Chrome"` to put
+  a page in front of the user: macOS routes both to *its own* window, the title it reads
+  back confirms nothing, and the page dies with the turn. The prompt says so.
+- **`HERMES_PERSISTENT_BROWSER=1` makes both of the above mostly moot** (`agent/agent_browser.py`).
+  Before launching, Hermes looks for a Chrome *already running* on its profile copy
+  (`DevToolsActivePort` + `/json/version` handshake); if it finds one it attaches, **skips the
+  snapshot** (its own comment marks overlaying a live profile as never-do), and does not
+  terminate it on exit — no `Popen` handle, "not ours to terminate, by design". So the runner
+  launches that Chrome itself, detached, and keeps it: no per-turn snapshot, so the user's
+  Chrome is never touched; and a sign-in done in the agent's window **does** persist to the
+  next turn. The login-handoff paragraph in `hermes_prompt.py` is selected by this flag, since
+  the right instruction inverts: ephemeral → "sign in in your own browser, here is a link";
+  persistent → "sign in in my window, it stays open". The trade is freshness — the copy no
+  longer re-mirrors from the real Chrome each turn, so a site the user logs into there is not
+  seen here; `agent_browser.refresh_snapshot()` is the manual reset, and the autoclose is
+  what bootstraps the very first snapshot. Measured on the Trustpilot todo: 4 turns, user's
+  Chrome untouched throughout, one-time sign-up in the agent's window, review submitted and
+  verified at its permanent URL.
+- **Don't edit a `.py` file while a turn is live under `flask --debug`.** The reloader
+  restarts the web process; the run registry is in-memory, so the reply has nowhere to land,
+  and a `finally` (the Chrome restore, say) never runs. Hermes, in its own process group,
+  finishes as an orphan. It looks like a mysterious failure; it is a self-inflicted one.
 - **Live tool activity comes from Hermes' own database, not stdout.** `-Q` suppresses tool
   previews, but nothing needs to be streamed: Hermes writes each message of a turn to
   `~/.hermes/state.db` *while the turn runs* — verified by polling `messages` against a live
@@ -255,10 +302,14 @@ Adding an executor means one module implementing `resolve` plus a branch in `exe
   and reports `{tool, detail}` events through the executor contract's optional `progress`
   callback; `agent/runs.py` buffers them on the run, and `GET /todos/<id>/run` returns them
   alongside `thread`. Only tool calls are reported — the same rows carry the model's reasoning,
-  which is long and would bury the trace. The trace is **never persisted**: it describes one
-  turn in flight, and a stopped or failed turn must leave nothing behind. Every failure in the
-  watcher is swallowed on purpose — it is a progress indicator reading another program's
-  private schema, and must never be able to take down the resolution itself.
+  which is long and would bury the trace. The live trace itself is **not persisted** — it is
+  a progress indicator for one turn in flight — but `app._resolution_work` keeps its own copy
+  of the same events, and that copy is what gets rendered into the record bubble when a turn
+  is stopped or fails after acting (see the background-runs section). Every failure in the
+  watcher is swallowed on purpose — it is reading another program's private schema, and must
+  never be able to take down the resolution itself. That also means the record is only as
+  complete as the watcher was: a stop that lands before the watcher's next poll can miss the
+  last call, so treat the record as "at least this" rather than "exactly this".
 - **`--yolo` is deliberate and load-bearing.** A run with no TTY that stops for an approval
   prompt blocks until the timeout. It also means a full-access agent acts on prompts built
   from email content, which is attacker-controlled text; this is an accepted risk of the

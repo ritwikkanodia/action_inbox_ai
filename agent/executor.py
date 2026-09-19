@@ -45,7 +45,16 @@ DEFAULT_EXECUTOR = "hermes"
 
 
 class ExecutorError(RuntimeError):
-    """An executor failed to produce a reply. Message is safe to show the user."""
+    """An executor failed to produce a reply. Message is safe to show the user.
+
+    `state` is the executor state the turn was running under, when the executor
+    knows it — a first turn opens its session before anything can go wrong, and
+    a stop halfway through should not forget that session, or the next turn's
+    agent would have no memory of what it had already done. `None` means the
+    caller keeps whatever state it had.
+    """
+
+    state: str | None = None
 
 
 class ExecutorCancelled(ExecutorError):
