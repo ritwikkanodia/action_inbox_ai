@@ -96,9 +96,62 @@ def test_subscription_helpers() -> None:
     check("unscoped delete removes by endpoint", count_push_subscriptions(conn, other) == 0)
 
 
+ACTIONS = [
+    {"label": "Reply with dates", "detail": "Offer two slots", "instruction": "Reply proposing Tue or Thu"},
+    {"label": "Decline politely", "detail": "", "instruction": "Reply declining"},
+    {"label": "Forward to Sam", "detail": "", "instruction": "Forward the thread to sam@x.com"},
+]
+
+
+def _todo_row(conn, todo_id):
+    row = conn.execute(
+        "SELECT todo_id, title, suggested_action, reasoning, importance, due_date, source, "
+        "account_id, action_options, source_meta FROM todos WHERE todo_id = ?", (todo_id,)
+    ).fetchone()
+    cols = ["todo_id", "title", "suggested_action", "reasoning", "importance", "due_date",
+            "source", "account_id", "action_options", "source_meta"]
+    return dict(zip(cols, row))
+
+
+def test_ensure_action_options() -> None:
+    from agent import action_options as ao
+    conn = sqlite3.connect(":memory:")
+    init_db(conn)
+    uid, _ = upsert_user(conn, "dev@example.com")
+    tid = save_todo(conn, "e1", "m1", "th1", _gmail_result("Reply to Bob"), uid, "a@x.com")
+
+    with mock.patch.object(ao, "generate_action_options", return_value=ACTIONS) as gen:
+        got = ao.ensure_action_options(conn, _todo_row(conn, tid), uid)
+        check("generates when no cache", gen.call_count == 1 and got == ACTIONS)
+        cached = conn.execute("SELECT action_options FROM todos WHERE todo_id = ?", (tid,)).fetchone()[0]
+        check("writes the cache", json.loads(cached) == ACTIONS)
+
+        got = ao.ensure_action_options(conn, _todo_row(conn, tid), uid)
+        check("cache hit skips generation", gen.call_count == 1 and got == ACTIONS)
+
+        ao.ensure_action_options(conn, _todo_row(conn, tid), uid, refresh=True)
+        check("refresh regenerates", gen.call_count == 2)
+
+    conn.execute("UPDATE todos SET action_options = 'not json' WHERE todo_id = ?", (tid,))
+    conn.commit()
+    with mock.patch.object(ao, "generate_action_options", return_value=ACTIONS) as gen:
+        ao.ensure_action_options(conn, _todo_row(conn, tid), uid)
+        check("corrupt cache regenerates", gen.call_count == 1)
+
+    with mock.patch.object(ao, "generate_action_options", side_effect=RuntimeError("boom")):
+        conn.execute("UPDATE todos SET action_options = NULL WHERE todo_id = ?", (tid,))
+        conn.commit()
+        try:
+            ao.ensure_action_options(conn, _todo_row(conn, tid), uid)
+            check("generation failure propagates", False)
+        except RuntimeError:
+            check("generation failure propagates", True)
+
+
 def main() -> None:
     test_save_helpers_return_ids()
     test_subscription_helpers()
+    test_ensure_action_options()
     print("All checks passed.")
 
 

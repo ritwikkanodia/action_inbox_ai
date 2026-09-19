@@ -12,6 +12,8 @@ opening a todo repeatedly costs nothing after the first time.
 import json
 import logging
 import os
+import sqlite3
+from datetime import datetime, timezone
 
 from openai import OpenAI
 
@@ -123,3 +125,32 @@ def generate_action_options(todo: dict, user_id: str) -> list[dict]:
     options = _coerce(raw)
     log.debug("Generated %d action options for todo", len(options))
     return options
+
+
+def ensure_action_options(
+    conn: sqlite3.Connection, todo: dict, user_id: str, refresh: bool = False
+) -> list[dict]:
+    """The cached options for `todo`, generating and caching them if needed.
+
+    Shared by the detail-pane route and the poller's push notification so the
+    inference is paid for once per todo whichever side asks first. `todo` is a
+    row dict carrying `todo_id` and the raw `action_options` column. Raises on
+    generation failure; the caller decides how to surface that.
+    """
+    if todo.get("action_options") and not refresh:
+        try:
+            cached = json.loads(todo["action_options"])
+            if isinstance(cached, list):
+                return cached
+        except ValueError:
+            pass  # Corrupt cache — fall through and regenerate.
+
+    actions = generate_action_options(todo, user_id)
+    conn.execute(
+        "UPDATE todos SET action_options = ?, updated_at = ? "
+        "WHERE todo_id = ? AND user_id = ?",
+        (json.dumps(actions), datetime.now(timezone.utc).isoformat(),
+         todo["todo_id"], user_id),
+    )
+    conn.commit()
+    return actions

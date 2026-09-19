@@ -484,31 +484,20 @@ def todo_action_options(todo_id):
     if row is None:
         return jsonify({"error": "not found"}), 404
 
-    if row["action_options"] and request.args.get("refresh") != "1":
-        try:
-            return jsonify({"actions": json.loads(row["action_options"])})
-        except ValueError:
-            pass  # Corrupt cache — fall through and regenerate.
-
     # Imported lazily so the OpenAI client is only built by workers that use it.
-    from agent.action_options import generate_action_options
+    from agent.action_options import ensure_action_options
 
     todo = dict(row)
     todo["todo_id"] = todo_id
     try:
-        actions = generate_action_options(todo, user_id)
+        actions = ensure_action_options(
+            db, todo, user_id, refresh=request.args.get("refresh") == "1"
+        )
     except Exception as exc:
         app.logger.exception("Failed to generate action options")
         # 200 with an error field: the pane renders this inline next to a retry,
         # which is more useful than a silent empty section.
         return jsonify({"actions": [], "error": str(exc)})
-
-    db.execute(
-        "UPDATE todos SET action_options = ?, updated_at = ? "
-        "WHERE todo_id = ? AND user_id = ?",
-        (json.dumps(actions), datetime.now(timezone.utc).isoformat(), todo_id, user_id),
-    )
-    db.commit()
     return jsonify({"actions": actions})
 
 
