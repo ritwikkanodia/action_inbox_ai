@@ -9,7 +9,7 @@
 // cache-first, so a stale entry keeps being served until the cache is renamed
 // and `activate` drops the old one — an edit to app.js or app.css that forgets
 // this ships a frontend the browser never runs.
-const VERSION = 'v10';
+const VERSION = 'v11';
 const CACHE = `self-driving-inbox-${VERSION}`;
 const OFFLINE_URL = '/offline';
 
@@ -80,9 +80,18 @@ self.addEventListener('fetch', (event) => {
 // the label travels; a button click sends the index back and the server runs
 // the instruction it cached, so a payload can't put words in the agent's mouth.
 
+// Tell open pages what the push handler did, so a stalled delivery can be
+// told apart from a failed showNotification without chrome:// internals.
+function report(stage, detail) {
+  return self.clients.matchAll({ type: 'window' })
+    .then((wins) => wins.forEach((w) => w.postMessage({ type: 'push-debug', stage, detail })))
+    .catch(() => null);
+}
+
 self.addEventListener('push', (event) => {
   let payload = null;
   try { payload = event.data ? event.data.json() : null; } catch (e) { payload = null; }
+  event.waitUntil(report('received', payload && payload.title));
   if (!payload || typeof payload !== 'object') {
     payload = { title: 'New todo', body: '', url: '/', actions: [] };
   }
@@ -106,7 +115,7 @@ self.addEventListener('push', (event) => {
     requireInteraction: actions.length > 0,
     data: payload,
     actions,
-  }));
+  }).then(() => report('shown', payload.title), (e) => report('error', String(e))));
 });
 
 self.addEventListener('notificationclick', (event) => {

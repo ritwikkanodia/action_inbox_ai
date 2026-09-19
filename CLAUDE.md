@@ -62,7 +62,17 @@ at `#todo/<id>` so the live trace is in front of the user. Subscriptions live in
 `push_subscriptions` keyed on the push endpoint; a 404/410 from the push service prunes the
 row. Needs `VAPID_PRIVATE_KEY`/`VAPID_PUBLIC_KEY`/`VAPID_SUBJECT` (`scripts/gen_vapid_keys.py`);
 unset ⇒ Settings says so and the poller logs once and skips. Every failure is swallowed — a
-notification must never cost a poll cycle.
+notification must never cost a poll cycle. Three things learned getting this to work on
+macOS, none of them ours to fix: Chrome shows the action buttons under the alert's
+**Options** menu, and only stays on screen long enough to use them when Chrome's alert style
+is *Persistent* (System Settings → Notifications → Google Chrome) — `requireInteraction` is
+set, but *Temporary* ignores it; a re-push under the same `tag` only alerts because
+`renotify` is set, otherwise macOS updates the Notification Centre entry silently; and
+Chrome's background push channel can go stale — FCM keeps answering 201 and queueing while
+nothing reaches the service worker, even on a fresh subscription — and only a full Chrome
+restart (⌘Q) reconnects it, at which point the queue drains. The service worker posts a
+`push-debug` message to open pages at each stage (`received`/`shown`/`error`) so that
+last case can be told apart from a broken handler without chrome:// internals.
 
 **Web UI (`app.py`)** — Flask, multi-user, every route behind `@login_required` except
 `/login`, the OAuth callbacks, `/digest/preview`, `/stats`, and the PWA routes
