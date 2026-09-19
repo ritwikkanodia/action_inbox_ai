@@ -1270,6 +1270,7 @@ function openSettingsModal() {
     const { fathom, gmail } = data.sources;
     setSourceConnected('fathom', fathom.connected, fathom.api_key_preview);
     renderGmailAccounts(gmail.accounts || []);
+    renderPushCard(data.notifications || { configured: false, subscription_count: 0 });
   });
 }
 document.getElementById('openSettingsBtn').addEventListener('click', openSettingsModal);
@@ -1296,6 +1297,108 @@ document.getElementById('fathom-disconnect-btn').addEventListener('click', () =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ disconnect: true }),
   }).then(r => r.json()).then(data => { if (data.ok) setSourceConnected('fathom', false); });
+});
+
+// ---------------- Browser notifications ----------------
+// Enrolment is per browser: the subscription lives in this browser's push
+// manager and a copy on the server. State is read from the browser, not the
+// server, so a subscription revoked elsewhere never shows as "on" here.
+
+function urlBase64ToUint8Array(base64) {
+  const padding = '='.repeat((4 - (base64.length % 4)) % 4);
+  const raw = atob((base64 + padding).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(raw, c => c.charCodeAt(0));
+}
+
+async function currentPushSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return null;
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+
+function setPushState(on, hint) {
+  const status = document.getElementById('push-status');
+  status.textContent = on ? 'On' : 'Off';
+  status.className = `source-connected-badge ${on ? 'on' : 'off'}`;
+  document.getElementById('push-connect-row').style.display = on ? 'none' : 'flex';
+  document.getElementById('push-connected-row').style.display = on ? 'flex' : 'none';
+  if (hint !== undefined) document.getElementById('push-hint').textContent = hint;
+}
+
+async function renderPushCard(info) {
+  const supported = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  if (!info.configured || !supported) {
+    setPushState(false, !info.configured
+      ? 'Not configured on this server (VAPID keys missing).'
+      : 'This browser does not support push notifications.');
+    document.getElementById('push-connect-row').style.display = 'none';
+    return;
+  }
+  if (Notification.permission === 'denied') {
+    setPushState(false, 'Blocked in browser settings — allow notifications for this site to enable.');
+    document.getElementById('push-connect-row').style.display = 'none';
+    return;
+  }
+  const sub = await currentPushSubscription();
+  setPushState(!!sub, sub
+    ? 'This browser is enrolled. New todos arrive as notifications with their suggested actions.'
+    : 'Get a notification for every new todo, with its suggested actions as buttons.');
+}
+
+document.getElementById('push-enable-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('push-enable-btn');
+  btn.disabled = true;
+  try {
+    const permission = await Notification.requestPermission();
+    if (permission !== 'granted') {
+      renderPushCard({ configured: true });
+      return;
+    }
+    const { key } = await fetch('/push/vapid-public-key').then(r => r.json());
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(key),
+    });
+    const r = await fetch('/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(sub.toJSON()),
+    });
+    if (!r.ok) throw new Error((await r.json()).error || 'subscribe failed');
+    await renderPushCard({ configured: true });
+  } catch (err) {
+    alert(`Couldn't enable notifications: ${err.message || err}`);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+document.getElementById('push-disable-btn').addEventListener('click', async () => {
+  const sub = await currentPushSubscription();
+  if (sub) {
+    const endpoint = sub.endpoint;
+    await sub.unsubscribe().catch(() => null);
+    await fetch('/push/subscribe', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ endpoint }),
+    }).catch(() => null);
+  }
+  await renderPushCard({ configured: true });
+});
+
+document.getElementById('push-test-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('push-test-btn');
+  btn.disabled = true;
+  try {
+    const { sent } = await fetch('/push/test', { method: 'POST' }).then(r => r.json());
+    document.getElementById('push-hint').textContent = sent
+      ? 'Test sent — it should appear in a moment.'
+      : 'Nothing sent — this browser may have unsubscribed. Disable and enable again.';
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 document.getElementById('gmail-connect-btn').addEventListener('click', () => {
