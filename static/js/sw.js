@@ -9,7 +9,7 @@
 // cache-first, so a stale entry keeps being served until the cache is renamed
 // and `activate` drops the old one — an edit to app.js or app.css that forgets
 // this ships a frontend the browser never runs.
-const VERSION = 'v9';
+const VERSION = 'v10';
 const CACHE = `self-driving-inbox-${VERSION}`;
 const OFFLINE_URL = '/offline';
 
@@ -97,6 +97,9 @@ self.addEventListener('push', (event) => {
     badge: '/static/icons/icon-192.png',
     // Same todo re-pushed replaces its banner instead of stacking a second one.
     tag: payload.todo_id || 'action-inbox',
+    // ...but a replacement must still alert; without this macOS updates the
+    // entry in Notification Centre silently and nothing appears on screen.
+    renotify: true,
     // A banner whose point is its buttons must not slide away after 5s. On
     // macOS this only takes effect in Chrome's "Alerts" style; "Banners"
     // still auto-dismiss and hide the buttons behind a hover chevron.
