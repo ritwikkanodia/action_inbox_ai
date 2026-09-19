@@ -148,10 +148,107 @@ def test_ensure_action_options() -> None:
             check("generation failure propagates", True)
 
 
+VAPID_ENV = {
+    "VAPID_PRIVATE_KEY": "x" * 43,
+    "VAPID_PUBLIC_KEY": "y" * 87,
+    "VAPID_SUBJECT": "mailto:dev@example.com",
+}
+NO_VAPID = {"VAPID_PRIVATE_KEY": "", "VAPID_PUBLIC_KEY": "", "VAPID_SUBJECT": ""}
+
+
+class _PushError(Exception):
+    def __init__(self, status):
+        self.response = mock.Mock(status_code=status)
+
+
+def test_push_notify() -> None:
+    import push_notify
+    from agent import action_options as ao
+
+    with mock.patch.dict(os.environ, NO_VAPID):
+        check("not configured without keys", push_notify.configured() is False)
+    with mock.patch.dict(os.environ, VAPID_ENV):
+        check("configured with all three", push_notify.configured() is True)
+
+    conn = sqlite3.connect(":memory:")
+    init_db(conn)
+    uid, _ = upsert_user(conn, "dev@example.com")
+    tid = save_todo(conn, "e1", "m1", "th1", _gmail_result("Reply to Bob about the Q4 deck"), uid, "a@x.com")
+
+    payload = push_notify.build_payload(_todo_row(conn, tid), ACTIONS)
+    check("payload title names the source", payload["title"] == "New todo · gmail")
+    check("payload body flags high importance", payload["body"] == "[high] Reply to Bob about the Q4 deck")
+    check("payload url deep-links the todo", payload["url"] == f"/#todo/{tid}")
+    check("payload actions carry index and label only",
+          payload["actions"] == [{"index": i, "label": a["label"]} for i, a in enumerate(ACTIONS)])
+    check("payload never carries instructions", "instruction" not in json.dumps(payload))
+
+    # No subscription: nothing generated, nothing sent.
+    with mock.patch.dict(os.environ, VAPID_ENV), \
+         mock.patch.object(ao, "generate_action_options", return_value=ACTIONS) as gen, \
+         mock.patch.object(push_notify, "webpush") as wp:
+        check("no subscription → 0 sends", push_notify.notify_new_todo(conn, uid, tid) == 0)
+        check("no subscription → no LLM call", gen.call_count == 0)
+        check("no subscription → no webpush", wp.call_count == 0)
+
+    save_push_subscription(conn, uid, SUB_A, "Chrome")
+    with mock.patch.dict(os.environ, VAPID_ENV), \
+         mock.patch.object(ao, "generate_action_options", return_value=ACTIONS) as gen, \
+         mock.patch.object(push_notify, "webpush") as wp:
+        check("one subscription → 1 send", push_notify.notify_new_todo(conn, uid, tid) == 1)
+        check("actions generated once", gen.call_count == 1)
+        sent = json.loads(wp.call_args.kwargs["data"])
+        check("sent payload is the todo's", sent["todo_id"] == tid and len(sent["actions"]) == 3)
+        check("subscription info passed through",
+              wp.call_args.kwargs["subscription_info"]["endpoint"] == SUB_A["endpoint"])
+        check("ttl is a day", wp.call_args.kwargs["ttl"] == 86400)
+        cached = conn.execute("SELECT action_options FROM todos WHERE todo_id = ?", (tid,)).fetchone()[0]
+        check("actions cached for the detail pane", json.loads(cached) == ACTIONS)
+
+        push_notify.notify_new_todo(conn, uid, tid)
+        check("second notify uses the cache", gen.call_count == 1)
+
+    # Generation failure: still notify, without buttons.
+    conn.execute("UPDATE todos SET action_options = NULL WHERE todo_id = ?", (tid,))
+    conn.commit()
+    with mock.patch.dict(os.environ, VAPID_ENV), \
+         mock.patch.object(ao, "generate_action_options", side_effect=RuntimeError("boom")), \
+         mock.patch.object(push_notify, "webpush") as wp:
+        check("generator failure still sends", push_notify.notify_new_todo(conn, uid, tid) == 1)
+        check("…with no actions", json.loads(wp.call_args.kwargs["data"])["actions"] == [])
+
+    # Push-service responses.
+    with mock.patch.dict(os.environ, VAPID_ENV), \
+         mock.patch.object(push_notify, "WebPushException", _PushError), \
+         mock.patch.object(push_notify, "webpush", side_effect=_PushError(410)):
+        check("410 → 0 sends", push_notify.send_to_user(conn, uid, payload) == 0)
+        check("410 prunes the subscription", count_push_subscriptions(conn, uid) == 0)
+
+    save_push_subscription(conn, uid, SUB_A, "Chrome")
+    with mock.patch.dict(os.environ, VAPID_ENV), \
+         mock.patch.object(push_notify, "WebPushException", _PushError), \
+         mock.patch.object(push_notify, "webpush", side_effect=_PushError(500)):
+        check("500 → 0 sends", push_notify.send_to_user(conn, uid, payload) == 0)
+        check("500 keeps the subscription", count_push_subscriptions(conn, uid) == 1)
+
+    with mock.patch.dict(os.environ, VAPID_ENV), \
+         mock.patch.object(push_notify, "webpush", side_effect=OSError("network down")):
+        check("unexpected error is swallowed", push_notify.send_to_user(conn, uid, payload) == 0)
+
+    with mock.patch.dict(os.environ, NO_VAPID), \
+         mock.patch.object(push_notify, "webpush") as wp:
+        check("unconfigured → nothing sent", push_notify.notify_new_todo(conn, uid, tid) == 0)
+        check("unconfigured → webpush never called", wp.call_count == 0)
+
+    with mock.patch.dict(os.environ, VAPID_ENV):
+        check("unknown todo is a no-op", push_notify.notify_new_todo(conn, uid, "todo_nope") == 0)
+
+
 def main() -> None:
     test_save_helpers_return_ids()
     test_subscription_helpers()
     test_ensure_action_options()
+    test_push_notify()
     print("All checks passed.")
 
 
