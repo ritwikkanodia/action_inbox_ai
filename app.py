@@ -38,6 +38,9 @@ from db import (
     list_gmail_accounts,
     gmail_state_key,
     gmail_thread_url,
+    save_push_subscription,
+    delete_push_subscription,
+    count_push_subscriptions,
 )
 from pollers.gmail.poller import BACKFILL_PENDING_SUFFIX, BACKFILLED_SUFFIX
 from pollers.digest import poller as digest_poller
@@ -738,6 +741,7 @@ def get_settings():
     fathom = get_source_connection(db, user_id, "fathom")
     fathom_key = (fathom or {}).get("credentials", {}).get("api_key", "") if fathom else None
     accounts = list_gmail_accounts(db, user_id)
+    import push_notify
     return jsonify({
         "sources": {
             "fathom": {
@@ -751,7 +755,11 @@ def get_settings():
                 ],
                 "auth_url": url_for("gmail_auth"),
             },
-        }
+        },
+        "notifications": {
+            "configured": push_notify.configured(),
+            "subscription_count": count_push_subscriptions(db, user_id),
+        },
     })
 
 
@@ -873,6 +881,65 @@ def update_source_settings(source: str):
             })
         return jsonify({"error": "use /settings/sources/gmail/auth to connect"}), 400
     return jsonify({"error": "unhandled"}), 500
+
+
+# ---------------------------------------------------------------------------
+# Push notifications — per-browser enrollment. The poller does the sending
+# (push_notify.notify_new_todo); these routes only manage subscriptions.
+# ---------------------------------------------------------------------------
+
+
+@app.route("/push/vapid-public-key", methods=["GET"])
+@login_required
+def push_public_key():
+    import push_notify
+    if not push_notify.configured():
+        return jsonify({"error": "push notifications are not configured on this server"}), 503
+    return jsonify({"key": push_notify.public_key()})
+
+
+@app.route("/push/subscribe", methods=["POST"])
+@login_required
+def push_subscribe():
+    import push_notify
+    if not push_notify.configured():
+        return jsonify({"error": "push notifications are not configured on this server"}), 503
+    data = request.get_json(force=True, silent=True) or {}
+    keys = data.get("keys") or {}
+    if not all(isinstance(v, str) and v for v in (data.get("endpoint"), keys.get("p256dh"), keys.get("auth"))):
+        return jsonify({"error": "invalid subscription"}), 400
+    user_id = current_user_id()
+    assert user_id
+    save_push_subscription(get_db(), user_id, data, request.headers.get("User-Agent"))
+    return jsonify({"ok": True})
+
+
+@app.route("/push/subscribe", methods=["DELETE"])
+@login_required
+def push_unsubscribe():
+    data = request.get_json(force=True, silent=True) or {}
+    endpoint = data.get("endpoint")
+    user_id = current_user_id()
+    assert user_id
+    if isinstance(endpoint, str) and endpoint:
+        delete_push_subscription(get_db(), endpoint, user_id=user_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/push/test", methods=["POST"])
+@login_required
+def push_test():
+    """Send a sample notification so the user can confirm the pipe end to end."""
+    import push_notify
+    user_id = current_user_id()
+    assert user_id
+    payload = {
+        "title": "Action Inbox",
+        "body": "Notifications are working. New todos will show up here.",
+        "url": "/",
+        "actions": [],
+    }
+    return jsonify({"sent": push_notify.send_to_user(get_db(), user_id, payload)})
 
 
 @app.route("/stats")

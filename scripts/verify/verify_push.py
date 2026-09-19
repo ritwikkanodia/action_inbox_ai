@@ -244,11 +244,65 @@ def test_push_notify() -> None:
         check("unknown todo is a no-op", push_notify.notify_new_todo(conn, uid, "todo_nope") == 0)
 
 
+def _client(uid):
+    import app as app_module
+    app_module.app.config["TESTING"] = True
+    client = app_module.app.test_client()
+    with client.session_transaction() as sess:
+        sess["user_id"] = uid
+        sess["user_email"] = "dev@example.com"
+    return client
+
+
+def test_push_routes() -> None:
+    import push_notify
+    import app as app_module
+    conn = sqlite3.connect(os.environ["DB_PATH"])
+    init_db(conn)
+    uid, _ = upsert_user(conn, "dev@example.com")
+    conn.close()
+    client = _client(uid)
+
+    with mock.patch.dict(os.environ, NO_VAPID):
+        check("public key 503 when unconfigured", client.get("/push/vapid-public-key").status_code == 503)
+        check("subscribe 503 when unconfigured",
+              client.post("/push/subscribe", json=SUB_A).status_code == 503)
+        s = client.get("/settings").get_json()["notifications"]
+        check("settings reports unconfigured", s == {"configured": False, "subscription_count": 0})
+
+    with mock.patch.dict(os.environ, VAPID_ENV):
+        r = client.get("/push/vapid-public-key")
+        check("public key served", r.status_code == 200 and r.get_json()["key"] == VAPID_ENV["VAPID_PUBLIC_KEY"])
+        check("subscribe rejects a bad body",
+              client.post("/push/subscribe", json={"endpoint": "x"}).status_code == 400)
+        r = client.post("/push/subscribe", json=SUB_A, headers={"User-Agent": "Chrome/T"})
+        check("subscribe stores", r.status_code == 200 and r.get_json()["ok"] is True)
+        s = client.get("/settings").get_json()["notifications"]
+        check("settings counts the subscription", s == {"configured": True, "subscription_count": 1})
+
+        with mock.patch.object(push_notify, "webpush") as wp:
+            r = client.post("/push/test")
+            check("test sends to the caller", r.get_json()["sent"] == 1)
+            sent = json.loads(wp.call_args.kwargs["data"])
+            check("test payload has no todo and no actions",
+                  sent["url"] == "/" and sent["actions"] == [] and "todo_id" not in sent)
+
+        r = client.delete("/push/subscribe", json={"endpoint": SUB_A["endpoint"]})
+        check("unsubscribe ok", r.get_json()["ok"] is True)
+        s = client.get("/settings").get_json()["notifications"]
+        check("settings back to zero", s["subscription_count"] == 0)
+
+    anon = app_module.app.test_client()
+    check("public key is JSON-401 when logged out",
+          anon.get("/push/vapid-public-key").status_code == 401)
+
+
 def main() -> None:
     test_save_helpers_return_ids()
     test_subscription_helpers()
     test_ensure_action_options()
     test_push_notify()
+    test_push_routes()
     print("All checks passed.")
 
 

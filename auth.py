@@ -190,9 +190,9 @@ def _wants_json_response() -> bool:
     # Non-GET requests are always API-shaped (PATCH/POST from fetch()).
     if request.method != "GET":
         return True
-    # GET endpoints called by fetch() in the SPA — currently only /settings.
+    # GET endpoints called by fetch() in the SPA.
     # /settings/sources/gmail/auth is a redirect flow, NOT JSON.
-    if request.path == "/settings":
+    if request.path in ("/settings", "/push/vapid-public-key"):
         return True
     return False
 
