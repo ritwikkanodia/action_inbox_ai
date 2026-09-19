@@ -23,7 +23,12 @@ os.environ.setdefault("OPENAI_API_KEY", "verify-only")
 from db import (  # noqa: E402
     init_db, upsert_user, save_todo, save_fathom_todo,
     save_browser_history_todo, save_system_todo,
+    save_push_subscription, list_push_subscriptions,
+    delete_push_subscription, count_push_subscriptions,
 )
+
+SUB_A = {"endpoint": "https://push.example/a", "keys": {"p256dh": "PA", "auth": "AA"}}
+SUB_B = {"endpoint": "https://push.example/b", "keys": {"p256dh": "PB", "auth": "AB"}}
 
 
 def check(label: str, condition: bool) -> None:
@@ -66,8 +71,34 @@ def test_save_helpers_return_ids() -> None:
     check("save_system_todo returns None on dup", save_system_todo(conn, uid, st) is None)
 
 
+def test_subscription_helpers() -> None:
+    conn = sqlite3.connect(":memory:")
+    init_db(conn)
+    uid, _ = upsert_user(conn, "dev@example.com")
+    other, _ = upsert_user(conn, "other@example.com")
+
+    check("no subscriptions initially", count_push_subscriptions(conn, uid) == 0)
+    save_push_subscription(conn, uid, SUB_A, "Chrome/1")
+    save_push_subscription(conn, uid, SUB_A, "Chrome/2")  # same endpoint → upsert
+    check("same endpoint twice is one row", count_push_subscriptions(conn, uid) == 1)
+    rows = list_push_subscriptions(conn, uid)
+    check("row carries keys", rows[0]["p256dh"] == "PA" and rows[0]["auth"] == "AA")
+    check("upsert keeps the latest user agent", rows[0]["user_agent"] == "Chrome/2")
+
+    save_push_subscription(conn, other, SUB_B)
+    check("list is per user", [r["endpoint"] for r in list_push_subscriptions(conn, uid)] == [SUB_A["endpoint"]])
+
+    delete_push_subscription(conn, SUB_A["endpoint"], user_id=other)
+    check("delete scoped to another user is a no-op", count_push_subscriptions(conn, uid) == 1)
+    delete_push_subscription(conn, SUB_A["endpoint"], user_id=uid)
+    check("delete removes the owner's row", count_push_subscriptions(conn, uid) == 0)
+    delete_push_subscription(conn, SUB_B["endpoint"])
+    check("unscoped delete removes by endpoint", count_push_subscriptions(conn, other) == 0)
+
+
 def main() -> None:
     test_save_helpers_return_ids()
+    test_subscription_helpers()
     print("All checks passed.")
 
 
