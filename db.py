@@ -712,7 +712,7 @@ def save_browser_history_todo(
 
 def save_fathom_todo(
     conn: sqlite3.Connection, user_id: str, meeting: dict, idx: int, item: dict
-) -> None:
+) -> bool:
     recording_id = str(meeting.get("recording_id", ""))
     dedup = f"{recording_id}_{idx}"
     meeting_title = meeting.get("meeting_title") or meeting.get("title", "")
@@ -720,7 +720,7 @@ def save_fathom_todo(
     reasoning = f"Action item from Fathom meeting: {meeting_title}"
     if assignee.get("name"):
         reasoning += f" — assigned to {assignee['name']}"
-    _save_todo(
+    return _save_todo(
         conn,
         user_id=user_id,
         todo_id=f"todo_fathom_{user_id[:8]}_{dedup}",

@@ -34,6 +34,7 @@ python scripts/verify/verify_executor.py    # stubs the Hermes CLI; no API spend
 python scripts/verify/verify_actions.py     # stubs the OpenAI call; no API spend
 python scripts/verify/verify_hermes_activity.py  # stubs Hermes' state.db; no CLI, no spend
 python scripts/verify/verify_clarify.py     # clarifying-question parsing; no CLI, no spend
+python scripts/verify/verify_notify.py      # stubs osascript; no banner
 ```
 
 ## Architecture
@@ -46,6 +47,12 @@ one failing source never kills the cycle. Sources are gated by `ENABLED_SOURCES`
 set is `gmail,fathom,morning_digest`. `browser_history` and `system` are macOS-only and opt-in.
 The morning digest is the exception to the per-source loop: it iterates `list_all_users`, not
 just connected ones, so unconnected users get a "connect Gmail" nudge instead of nothing.
+
+**Desktop notifications** (`notify.py`): each poller calls `notify_new_todo` right where it
+already branches on the `save_*_todo` return value, so only a real insert — never a dedup
+hit — pops a banner. It shells out to `osascript`, is a no-op off macOS, and is silenced by
+`NOTIFY_NEW_TODOS=0`. User-entered todos (`POST /todos`) and onboarding seeds don't notify.
+Every failure is swallowed; a notification must never cost a poll cycle.
 
 **Web UI (`app.py`)** — Flask, multi-user, every route behind `@login_required` except
 `/login`, the OAuth callbacks, `/digest/preview`, `/stats`, and the PWA routes

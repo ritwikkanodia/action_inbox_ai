@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from pollers.browser import generator as browser_history_generator
+from notify import notify_new_todo
 from db import (
     _normalize_url,
     get_browser_history_last_polled_at,
@@ -242,6 +243,7 @@ def _save_todos_from_digest(
         if save_browser_history_todo(conn, user_id, todo):
             saved += 1
             log.info("saved: %r | reasoning: %s", title, reasoning)
+            notify_new_todo(title, "browser_history", todo.get("importance"))
         else:
             log.info("skipped (duplicate): %r", title)
     return saved
