@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 from pollers.system import generator as system_generator
 from pollers.system import snapshot as system_snapshot
+from push_notify import notify_new_todo
 from db import (
     get_open_system_todos,
     get_system_last_polled_at,
@@ -44,9 +45,11 @@ def poll(conn: sqlite3.Connection, user_id: str) -> int:
 
     saved = 0
     for todo in todos:
-        if save_system_todo(conn, user_id, todo):
+        todo_id = save_system_todo(conn, user_id, todo)
+        if todo_id:
             saved += 1
             print(f"[system] saved: {todo.get('title')!r}")
+            notify_new_todo(conn, user_id, todo_id)
 
     set_user_state(conn, user_id, "system_snapshot_hash", snapshot_hash)
     set_system_last_polled_at(conn, user_id, now.isoformat())

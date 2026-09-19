@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import requests
 
 from db import get_fathom_last_polled_at, set_fathom_last_polled_at, save_fathom_todo, get_source_connection
+from push_notify import notify_new_todo
 
 FATHOM_API_URL = "https://api.fathom.ai/external/v1/meetings"
 
@@ -39,7 +40,9 @@ def poll(conn: sqlite3.Connection, user_id: str) -> int:
             print(f"[fathom] {meeting.get('title')!r} — no action items, skipping")
             continue
         for idx, item in enumerate(action_items):
-            save_fathom_todo(conn, user_id, meeting, idx, item)
+            todo_id = save_fathom_todo(conn, user_id, meeting, idx, item)
+            if todo_id:
+                notify_new_todo(conn, user_id, todo_id)
             saved += 1
         print(f"[fathom] {meeting.get('title')!r} — saved {len(action_items)} action item(s)")
 
