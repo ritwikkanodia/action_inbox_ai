@@ -41,10 +41,12 @@ def check(label: str, condition: bool) -> None:
 
 
 calls: list[tuple[str, str | None]] = []
+seen_bindings: list = []
 
 
-def stub_run(prompt: str, session_name: str, cancel=None, progress=None) -> str:
+def stub_run(prompt: str, session_name: str, cancel=None, progress=None, binding=None) -> str:
     calls.append((prompt, session_name))
+    seen_bindings.append(binding)
     # A real run reports its steps here; the trace itself is covered by
     # verify_hermes_activity.py, so this only has to accept the argument.
     if progress is not None:
@@ -52,12 +54,12 @@ def stub_run(prompt: str, session_name: str, cancel=None, progress=None) -> str:
     return f"reply {len(calls)}"
 
 
-def failing_run(prompt: str, session_name: str, cancel=None, progress=None) -> str:
+def failing_run(prompt: str, session_name: str, cancel=None, progress=None, binding=None) -> str:
     calls.append((prompt, session_name))
     raise executor.ExecutorError("browser exploded")
 
 
-def blocking_run(prompt: str, session_name: str, cancel=None, progress=None) -> str:
+def blocking_run(prompt: str, session_name: str, cancel=None, progress=None, binding=None) -> str:
     """Stands in for a long agent run: returns only once cancelled."""
     calls.append((prompt, session_name))
     if progress is not None:
@@ -122,6 +124,19 @@ def main() -> None:
           "Book a dentist appointment" in calls[0][0])
     check("first turn prompt carries the chosen action",
           "Sort this out." in calls[0][0])
+
+    print("\n-- google tools binding --")
+    b = seen_bindings[-1]
+    check("resolve passes the binding to _run", isinstance(b, dict))
+    check("binding names the user", b.get("AIB_USER_ID") == user_id)
+    check("binding names the todo's account or empty", "AIB_ACCOUNT_ID" in b)
+    check("binding carries an absolute db path", os.path.isabs(b.get("AIB_DB_PATH", "")))
+    os.environ["HERMES_GOOGLE_TOOLS"] = "0"
+    check("HERMES_GOOGLE_TOOLS=0 yields no binding", hermes_runner._google_binding_env(user_id, "x") == {})
+    os.environ.pop("HERMES_GOOGLE_TOOLS")
+    check("default yields the three variables",
+          set(hermes_runner._google_binding_env(user_id, None)) == {"AIB_USER_ID", "AIB_ACCOUNT_ID", "AIB_DB_PATH"}
+          and hermes_runner._google_binding_env(user_id, None)["AIB_ACCOUNT_ID"] == "")
 
     ai_thread, session_name = row(conn, "t1")
     check("session name persisted", session_name == calls[0][1])
