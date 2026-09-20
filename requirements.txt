@@ -12,3 +12,5 @@ pymupdf>=1.24
 html2text>=2024.2.26
 resend>=2.0
 pywebpush>=2.0
+pyyaml>=6.0
+mcp>=2,<3

@@ -39,8 +39,37 @@ HEADED = os.environ.get("HERMES_BROWSER_HEADED", "1").strip().lower() not in {
     "0", "false", "no",
 }
 
+# Hand the Google Workspace MCP server (agent/google_mcp) the user and account
+# this turn is for. The server is registered once in ~/.hermes/config.yaml with
+# `${AIB_*}` references in its env block; Hermes expands them from *this*
+# process's environment at launch. No token crosses here — the server reads
+# credentials from the app's database. Set HERMES_GOOGLE_TOOLS=0 to blank the
+# binding, which makes the server serve zero tools without a config edit.
+def _google_tools_enabled() -> bool:
+    # Read per call, not at import: the verify script toggles it at runtime.
+    return os.environ.get("HERMES_GOOGLE_TOOLS", "1").strip().lower() not in {
+        "0", "false", "no",
+    }
 
-def _run(prompt: str, session_name: str, cancel=None, progress=None) -> str:
+
+def _google_binding_env(user_id: str, account_id: str | None) -> dict[str, str]:
+    if not _google_tools_enabled():
+        # Explicit blanks, not {}: the subprocess env is `dict(os.environ)`
+        # with this merged in, so an empty dict would let a value this Flask
+        # process happened to have exported (e.g. from a manual `hermes mcp
+        # test` run) leak through to the child unchanged. Blank strings
+        # override that inheritance, and `binding_from_env` in the MCP server
+        # already treats a blank AIB_USER_ID as no binding.
+        return {"AIB_USER_ID": "", "AIB_ACCOUNT_ID": "", "AIB_DB_PATH": ""}
+    from agent.db import DB_PATH
+    return {
+        "AIB_USER_ID": user_id,
+        "AIB_ACCOUNT_ID": (account_id or "").strip().lower(),
+        "AIB_DB_PATH": os.path.abspath(DB_PATH),
+    }
+
+
+def _run(prompt: str, session_name: str, cancel=None, progress=None, binding=None) -> str:
     """Invoke the CLI once against a named session. Returns the reply text.
 
     `hermes chat -q … -Q` rather than the top-level `-z` one-shot. `-z` accepts
@@ -69,6 +98,7 @@ def _run(prompt: str, session_name: str, cancel=None, progress=None) -> str:
         cmd.append("--yolo")
 
     env = dict(os.environ)
+    env.update(binding or {})
     if HEADED:
         # Read straight from the environment by Hermes' browser tool, so this
         # opts one run into a visible window without touching the user's
@@ -200,7 +230,8 @@ def resolve(
         prompt = build_prompt(todo, user_message, user_id, from_suggestion)
 
     try:
-        reply = _run(prompt, session_name, cancel, progress)
+        reply = _run(prompt, session_name, cancel, progress,
+                     binding=_google_binding_env(user_id, todo.get("account_id")))
     except ExecutorError as exc:
         # The session exists from the first tool call onward, whatever happens
         # after. Name it, so a stopped first turn still resumes the session

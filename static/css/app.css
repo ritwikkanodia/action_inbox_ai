@@ -1533,6 +1533,10 @@
       white-space: nowrap;
     }
     #gmail-accounts { margin-bottom: 8px; }
+    .gmail-agent-access { font-size: 0.85em; margin: 0 0.75rem; }
+    .gmail-agent-access.on { color: var(--ok, #2e7d32); }
+    .gmail-agent-access.off { color: var(--muted, #777); }
+    .gmail-agent-access a { text-decoration: underline; }
     .account-badge {
       font-size: 11px;
       padding: 1px 6px;

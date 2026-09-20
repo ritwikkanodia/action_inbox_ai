@@ -35,6 +35,8 @@ python scripts/verify/verify_actions.py     # stubs the OpenAI call; no API spen
 python scripts/verify/verify_hermes_activity.py  # stubs Hermes' state.db; no CLI, no spend
 python scripts/verify/verify_clarify.py     # clarifying-question parsing; no CLI, no spend
 python scripts/verify/verify_push.py       # stubs pywebpush + the OpenAI call; no spend
+python scripts/verify/verify_google_scopes.py  # scope set + credential refresh; no network
+python scripts/verify/verify_google_mcp.py     # Google MCP server against fake clients; no network
 ```
 
 ## Architecture
@@ -107,6 +109,14 @@ single-connection sources. A user can connect several Gmail accounts; each has
 its own credentials, its own poll cursor, and its own place in the poll loop,
 so one revoked token never disturbs the others. Fathom is an API key the user
 pastes into Settings; there is no global fallback key.
+
+The grant requested at sign-in and on reconnect is Workspace-wide (`google_scopes.py`:
+Gmail modify, Drive, Docs, Sheets, Calendar events, Contacts) so the Hermes agent's
+Google tools can use it. Accounts connected before that carry only `gmail.readonly` and
+keep polling — refresh always uses the scopes stored on the token, never the requested
+list, because google-auth raises when the requested set exceeds the granted one. Settings
+shows per account whether agent access is granted, with a Grant link that re-consents
+with `login_hint` and `include_granted_scopes`.
 
 Redirect URIs are computed per request from the browser's own hostname to avoid PKCE/state
 mismatches between `localhost` and `127.0.0.1`. `ProxyFix` is applied so this works behind a
@@ -318,6 +328,21 @@ Adding an executor means one module implementing `resolve` plus a branch in `exe
   what bootstraps the very first snapshot. Measured on the Trustpilot todo: 4 turns, user's
   Chrome untouched throughout, one-time sign-up in the agent's window, review submitted and
   verified at its permanent URL.
+- **Google is reached over the API, not the browser** (`agent/google_mcp/`). A stdio MCP
+  server in this repo serves Gmail/Drive/Docs/Sheets/Calendar/Contacts tools backed by the
+  app's own per-account tokens in `source_connections`. Register it once with
+  `python scripts/install_hermes_google_mcp.py` (writes `mcp_servers.action_inbox_google`
+  into `~/.hermes/config.yaml` with `${AIB_*}` env references); the runner then sets
+  `AIB_USER_ID`, `AIB_ACCOUNT_ID` and `AIB_DB_PATH` on each `hermes chat` subprocess and
+  Hermes expands them into the server's env at launch. No token crosses the environment —
+  the server reads and refreshes credentials from the database itself. With no binding
+  (any Hermes run that isn't ours, or `HERMES_GOOGLE_TOOLS=0`, which blanks the three
+  `AIB_*` variables on the subprocess env rather than omitting them, so a value this
+  process happened to have inherited can't leak through) it serves zero tools.
+  Every tool returns a string and turns failures into an `Error:` line, so Hermes' loop
+  guardrails see ordinary results; a missing scope says so and points at Settings. The
+  server's stdout is the protocol channel — log to stderr only. Hermes' single-query mode
+  waits up to 15s for MCP servers to come up, which covers the Google client imports.
 - **Don't edit a `.py` file while a turn is live under `flask --debug`.** The reloader
   restarts the web process; the run registry is in-memory, so the reply has nowhere to land,
   and a `finally` (the Chrome restore, say) never runs. Hermes, in its own process group,
@@ -340,7 +365,11 @@ Adding an executor means one module implementing `resolve` plus a branch in `exe
 - **`--yolo` is deliberate and load-bearing.** A run with no TTY that stops for an approval
   prompt blocks until the timeout. It also means a full-access agent acts on prompts built
   from email content, which is attacker-controlled text; this is an accepted risk of the
-  local POC, not an oversight.
+  local POC, not an oversight. With the Google tools registered the same agent holds
+  send-mail, Drive-write, Docs/Sheets-write and Calendar-create over the API, so an
+  instruction smuggled in an email is one `gmail_send` away from acting rather than a
+  multi-step browser sequence; `HERMES_GOOGLE_TOOLS=0` blanks the binding for a run where
+  that is not acceptable.
 - **Sessions are the conversation.** `todos.executor_state` holds the Hermes session *name*
   (`aib-<todo_id>-<nonce>`), not an id, and it is stable for the life of the thread — every
   turn continues the same session. `todos.ai_thread` is just a display log of

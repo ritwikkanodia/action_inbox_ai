@@ -43,7 +43,15 @@ POLL_SECONDS = float(os.environ.get("HERMES_ACTIVITY_POLL_SECONDS", "2"))
 _DETAIL_KEYS = (
     "url", "command", "query", "q", "path", "file_path", "to", "subject",
     "text", "prompt", "name", "code",
+    # Google tools (agent/google_mcp): the id or title is what identifies the
+    # call, never the `account` argument that would otherwise win as the first
+    # string value.
+    "thread_id", "file_id", "document_id", "spreadsheet_id", "summary", "find",
+    "title", "range", "time_min",
 )
+
+# Never worth showing on its own.
+_DETAIL_SKIP = {"account"}
 
 _DETAIL_MAX = 140
 
@@ -92,7 +100,9 @@ def _summarise(arguments) -> str:
         if isinstance(value, str) and value.strip():
             return _clip(value.strip())
 
-    for value in parsed.values():
+    for key, value in parsed.items():
+        if key in _DETAIL_SKIP:
+            continue
         if isinstance(value, str) and value.strip():
             return _clip(value.strip())
     return ""
@@ -122,7 +132,42 @@ def _events(row_tool_calls: str | None) -> list[dict]:
         name = (fn.get("name") or call.get("name") or "").strip()
         if not name:
             continue
+        if name == _MCP_META_TOOL:
+            inner = _mcp_events(fn.get("arguments"))
+            if inner:
+                events.extend(inner)
+                continue
         events.append({"tool": name, "detail": _summarise(fn.get("arguments"))})
+    return events
+
+
+# Hermes does not call an MCP tool directly: the model calls a `tool_call`
+# meta-tool whose arguments carry a `calls` list, each naming the real tool as
+# `mcp__<server>__<tool>`. Shown as-is the trace reads `tool_call`, `tool_call`,
+# `tool_call` with no detail, which is exactly the run it is supposed to make
+# legible. Unwrap it: one event per inner call, named by the tool.
+_MCP_META_TOOL = "tool_call"
+_MCP_PREFIX = "mcp__action_inbox_google__"
+
+
+def _mcp_events(arguments) -> list[dict]:
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except (ValueError, TypeError):
+            return []
+    if not isinstance(arguments, dict) or not isinstance(arguments.get("calls"), list):
+        return []
+    events = []
+    for inner in arguments["calls"]:
+        if not isinstance(inner, dict):
+            continue
+        name = (inner.get("name") or "").strip()
+        if not name:
+            continue
+        if name.startswith(_MCP_PREFIX):
+            name = name[len(_MCP_PREFIX):]
+        events.append({"tool": name, "detail": _summarise(inner.get("arguments"))})
     return events
 
 
