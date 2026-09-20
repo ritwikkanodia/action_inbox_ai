@@ -2,7 +2,11 @@
 
 The Agents-SDK resolver passed structured input items and enumerated its own
 tools; Hermes takes a single prompt string and already knows its toolset, so
-these instructions describe *behavior* only and name no tools.
+these instructions describe *behavior* only and leave Hermes' own built-in
+tools unnamed — the one exception is the Google Workspace MCP server
+(`agent/google_mcp`), whose `gmail_*`/`drive_*`/`docs_*`/`sheets_*`/
+`calendar_*`/`contacts_*` prefixes are named so the agent reaches Google over
+the API rather than the browser.
 """
 
 import os
@@ -47,7 +51,7 @@ No meta-commentary.
    security-key tap, an authenticator push — that provider is finished, but the attempt is \
    not. Go back and take the "Continue with email" door instead: it mails a sign-in link or \
    code to an address whose mailbox you can already read. Enter their address, open their \
-   mail (the same browser is signed in to it, or use your email tools), and follow the link. \
+   mail (the same browser is signed in to it, or use the `gmail_*` tools), and follow the link. \
    Only when every passwordless door is shut is the wall genuinely theirs to pass.
 
 3. Never invent a fact about the user. Their opinions, ratings, sentiment, experiences, \
