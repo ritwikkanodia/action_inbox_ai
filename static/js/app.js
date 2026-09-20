@@ -1241,9 +1241,15 @@ function renderGmailAccounts(accounts) {
   status.className = `source-connected-badge ${count ? 'on' : 'off'}`;
   connectBtn.textContent = count ? 'Connect another account' : 'Connect with Google';
 
+  const grantTemplate = (window.__settings && window.__settings.gmailGrantUrlTemplate) || '/settings/sources/gmail/auth?login_hint=';
   container.innerHTML = accounts.map(a => `
     <div class="gmail-account-row" data-email="${escapeHtml(a.email)}">
       <span class="gmail-account-email">${escapeHtml(a.email)}</span>
+      <span class="gmail-agent-access ${a.agent_access ? 'on' : 'off'}">
+        ${a.agent_access
+          ? 'Agent access: granted'
+          : `Agent access not granted · <a href="${grantTemplate}${encodeURIComponent(a.email)}">Grant</a>`}
+      </span>
       <button class="btn-disconnect gmail-account-disconnect">Disconnect</button>
     </div>`).join('');
 
@@ -1269,6 +1275,7 @@ function openSettingsModal() {
   fetch('/settings').then(r => r.json()).then(data => {
     const { fathom, gmail } = data.sources;
     setSourceConnected('fathom', fathom.connected, fathom.api_key_preview);
+    window.__settings = { gmailGrantUrlTemplate: gmail.grant_url_template };
     renderGmailAccounts(gmail.accounts || []);
     renderPushCard(data.notifications || { configured: false, subscription_count: 0 });
   });

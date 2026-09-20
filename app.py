@@ -748,6 +748,13 @@ def digest_preview():
 # ---------------------------------------------------------------------------
 
 
+def _account_has_agent_access(db, user_id: str, account_id: str) -> bool:
+    """Whether the stored token for one account carries every agent scope."""
+    from google_scopes import has_agent_access
+    row = get_source_connection(db, user_id, "gmail", account_id)
+    return bool(row) and has_agent_access(row["credentials"].get("scopes") or [])
+
+
 @app.route("/settings", methods=["GET"])
 @login_required
 def get_settings():
@@ -766,10 +773,16 @@ def get_settings():
             },
             "gmail": {
                 "accounts": [
-                    {"email": a["account_id"], "connected_at": a["connected_at"]}
+                    {
+                        "email": a["account_id"],
+                        "connected_at": a["connected_at"],
+                        "agent_access": _account_has_agent_access(db, user_id, a["account_id"]),
+                    }
                     for a in accounts
                 ],
                 "auth_url": url_for("gmail_auth"),
+                # The front end appends the account's address so Google preselects it.
+                "grant_url_template": url_for("gmail_auth") + "?login_hint=",
             },
         },
         "notifications": {
@@ -784,12 +797,21 @@ def get_settings():
 def gmail_auth():
     redirect_uri = request.url_root.rstrip("/") + "/oauth/gmail/callback"
     flow = get_auth_flow(redirect_uri)
+    extra = {}
+    login_hint = (request.args.get("login_hint") or "").strip()
+    if login_hint:
+        # "Grant agent access" on one account: preselect it at Google.
+        extra["login_hint"] = login_hint
     auth_url, state = flow.authorization_url(
         access_type="offline",
         # `select_account` is required for multi-account: with `consent` alone
         # Google silently reuses the already signed-in account, making it
         # impossible to add a second mailbox from the browser.
         prompt="select_account consent",
+        # Extend an existing grant rather than replace it, so re-consenting for
+        # the agent scopes keeps whatever the token already had.
+        include_granted_scopes="true",
+        **extra,
     )
     session["gmail_oauth_state"] = state
     session["gmail_oauth_code_verifier"] = flow.code_verifier
@@ -891,7 +913,11 @@ def update_source_settings(source: str):
             return jsonify({
                 "ok": True,
                 "accounts": [
-                    {"email": a["account_id"], "connected_at": a["connected_at"]}
+                    {
+                        "email": a["account_id"],
+                        "connected_at": a["connected_at"],
+                        "agent_access": _account_has_agent_access(db, user_id, a["account_id"]),
+                    }
                     for a in list_gmail_accounts(db, user_id)
                 ],
             })

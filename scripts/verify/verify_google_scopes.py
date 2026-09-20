@@ -141,7 +141,41 @@ def check_credentials() -> None:
     conn.close()
 
 
+def check_settings() -> None:
+    print("\n-- /settings --")
+    import app as app_module
+    from db import init_db as _init
+    client = app_module.app.test_client()
+    conn = sqlite3.connect(os.environ["DB_PATH"])
+    conn.row_factory = sqlite3.Row
+    _init(conn)
+    user_id, _ = upsert_user(conn, email="settings@example.com", name="S", picture_url=None)
+    set_source_credentials(conn, user_id, "gmail", "oauth2",
+                           stored_creds([READONLY], expired=False), account_id="ro@example.com")
+    set_source_credentials(conn, user_id, "gmail", "oauth2",
+                           stored_creds(google_scopes.ALL_SCOPES, expired=False),
+                           account_id="full@example.com")
+    conn.close()
+
+    with client.session_transaction() as sess:
+        sess["user_id"] = user_id
+        sess["user_email"] = "settings@example.com"
+    payload = client.get("/settings").get_json()
+    by_email = {a["email"]: a for a in payload["sources"]["gmail"]["accounts"]}
+    check("readonly account reports agent_access False", by_email["ro@example.com"]["agent_access"] is False)
+    check("full account reports agent_access True", by_email["full@example.com"]["agent_access"] is True)
+    check("grant_url_template ends with login_hint=",
+          payload["sources"]["gmail"]["grant_url_template"].endswith("login_hint="))
+
+    resp = client.get("/settings/sources/gmail/auth?login_hint=ro%40example.com")
+    check("gmail auth redirects to Google", resp.status_code == 302 and "accounts.google.com" in resp.headers["Location"])
+    check("login_hint forwarded to Google", "login_hint=ro%40example.com" in resp.headers["Location"])
+    check("include_granted_scopes requested", "include_granted_scopes=true" in resp.headers["Location"])
+    check("consent still requested", "prompt=select_account" in resp.headers["Location"])
+
+
 if __name__ == "__main__":
     check_scopes()
     check_credentials()
+    check_settings()
     print("\nAll checks passed.")

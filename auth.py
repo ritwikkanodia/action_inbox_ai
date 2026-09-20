@@ -77,6 +77,7 @@ def start_login(redirect_uri: str):
     auth_url, state = flow.authorization_url(
         access_type="offline",
         prompt="consent",
+        include_granted_scopes="true",
     )
     session["login_oauth_state"] = state
     session["login_oauth_code_verifier"] = flow.code_verifier
