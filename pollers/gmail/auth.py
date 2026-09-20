@@ -9,8 +9,9 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
 from db import clear_source_connection, get_source_connection, set_source_credentials
+from google_scopes import ALL_SCOPES
 
-SCOPES = ["https://www.googleapis.com/auth/gmail.readonly"]
+SCOPES = ALL_SCOPES
 
 
 def _client_config() -> dict:
@@ -46,13 +47,20 @@ def get_auth_flow(
     )
 
 
-def get_gmail_service(
+def get_google_credentials(
     conn: sqlite3.Connection, user_id: str, account_id: str | None = None
-):
-    """Build a Gmail client for one connected account.
+) -> tuple[Credentials, set[str], str]:
+    """Valid credentials for one connected Google account.
 
-    account_id=None resolves to the user's first connected account, which is
-    the fallback for todos created before per-account provenance existed.
+    Returns (credentials, granted scopes, resolved account id). account_id=None
+    resolves to the user's first connected account, which is the fallback for
+    todos created before per-account provenance existed.
+
+    Refresh is done against the scopes *stored on the token*, not `SCOPES`:
+    google-auth raises RefreshError when the requested set is not a subset of
+    what Google returns, and every account connected before the Workspace scopes
+    were added carries only gmail.readonly. The granted set is returned so callers
+    can gate on it instead of guessing.
     """
     row = get_source_connection(conn, user_id, "gmail", account_id)
     if not row:
@@ -64,7 +72,9 @@ def get_gmail_service(
     # Resolve the concrete account so revocation clears only this row, never
     # every account the user has connected.
     resolved = row["account_id"]
-    creds = Credentials.from_authorized_user_info(row["credentials"], SCOPES)
+    info = row["credentials"]
+    stored_scopes = list(info.get("scopes") or [])
+    creds = Credentials.from_authorized_user_info(info, stored_scopes)
 
     if not creds.valid:
         if creds.expired and creds.refresh_token:
@@ -80,9 +90,11 @@ def get_gmail_service(
                     f"Gmail access revoked by Google for {resolved or 'this account'}. "
                     "Reconnect it in settings."
                 ) from e
+            refreshed = json.loads(creds.to_json())
+            # to_json drops keys it doesn't own; keep ours (connected_email).
+            refreshed = {**info, **refreshed}
             set_source_credentials(
-                conn, user_id, "gmail", "oauth2",
-                json.loads(creds.to_json()), account_id=resolved,
+                conn, user_id, "gmail", "oauth2", refreshed, account_id=resolved,
             )
         else:
             clear_source_connection(conn, user_id, "gmail", resolved)
@@ -91,4 +103,12 @@ def get_gmail_service(
                 "Re-authorize via the settings page."
             )
 
+    return creds, set(stored_scopes), resolved
+
+
+def get_gmail_service(
+    conn: sqlite3.Connection, user_id: str, account_id: str | None = None
+):
+    """Build a Gmail client for one connected account (see get_google_credentials)."""
+    creds, _, _ = get_google_credentials(conn, user_id, account_id)
     return build("gmail", "v1", credentials=creds)

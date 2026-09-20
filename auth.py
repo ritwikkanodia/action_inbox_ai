@@ -18,20 +18,18 @@ from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build as google_build
 
 from db import seed_onboarding_todos, upsert_user, set_source_credentials
+from google_scopes import ALL_SCOPES
 
 
 LOGIN_SCOPES = [
     "openid",
     "https://www.googleapis.com/auth/userinfo.email",
     "https://www.googleapis.com/auth/userinfo.profile",
-    # Request Gmail read access during initial sign-in so we can persist
-    # credentials in a single roundtrip when the user grants consent.
-    "https://www.googleapis.com/auth/gmail.readonly",
+    # The full Workspace grant is requested at sign-in so credentials persist in a
+    # single roundtrip. Declining any box leaves a narrower token; Settings shows
+    # per account whether the agent tools have what they need.
+    *ALL_SCOPES,
 ]
-
-# Google sometimes echoes scopes back in a different order/form; the strict
-# default makes oauthlib raise. Relaxing it is standard for openid logins.
-os.environ.setdefault("OAUTHLIB_RELAX_TOKEN_SCOPE", "1")
 
 
 def _client_config() -> dict:
