@@ -133,11 +133,11 @@ def _events(row_tool_calls: str | None) -> list[dict]:
 
 # Hermes does not call an MCP tool directly: the model calls a `tool_call`
 # meta-tool whose arguments carry a `calls` list, each naming the real tool as
-# `mcp__<server>_<tool>`. Shown as-is the trace reads `tool_call`, `tool_call`,
+# `mcp__<server>__<tool>`. Shown as-is the trace reads `tool_call`, `tool_call`,
 # `tool_call` with no detail, which is exactly the run it is supposed to make
 # legible. Unwrap it: one event per inner call, named by the tool.
 _MCP_META_TOOL = "tool_call"
-_MCP_PREFIX = "mcp__action_inbox_google_"
+_MCP_PREFIX = "mcp__action_inbox_google__"
 
 
 def _mcp_events(arguments) -> list[dict]:

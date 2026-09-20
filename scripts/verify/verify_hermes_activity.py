@@ -130,9 +130,9 @@ def main() -> None:
     )
     check("no arguments is not an error", hermes_activity._summarise(None) == "")
     meta = json.dumps([{"function": {"name": "tool_call", "arguments": json.dumps({"calls": [
-        {"name": "mcp__action_inbox_google_gmail_search_threads",
+        {"name": "mcp__action_inbox_google__gmail_search_threads",
          "arguments": {"query": "in:inbox", "max_results": 3, "account": "a@example.com"}},
-        {"name": "mcp__action_inbox_google_gmail_create_draft",
+        {"name": "mcp__action_inbox_google__gmail_create_draft",
          "arguments": {"to": "b@example.com", "subject": "Hi", "body": "..."}},
     ]})}}])
     check(
