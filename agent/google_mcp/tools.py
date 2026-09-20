@@ -302,6 +302,104 @@ def build_tools(svc: Services) -> list[Callable]:
         count = replies[0].get("replaceAllText", {}).get("occurrencesChanged", 0)
         return f"Replaced {count} occurrence(s) in {_doc_url(document_id)}"
 
-    # Task 6 adds the Sheets/Calendar/Contacts tools here.
+    # -- Sheets -------------------------------------------------------------
+
+    @register
+    def sheets_read_range(spreadsheet_id: str, range: str, account: str | None = None) -> str:
+        """Read a range (A1 notation, e.g. 'Sheet1!A1:D20') from a Google Sheet. Returns rows."""
+        acct = svc.require("sheets", account)
+        resp = svc.sheets(acct).spreadsheets().values().get(
+            spreadsheetId=spreadsheet_id, range=range).execute()
+        return _dumps(resp.get("values", []))
+
+    @register
+    def sheets_write_range(spreadsheet_id: str, range: str, values: list[list[str]],
+                           account: str | None = None) -> str:
+        """Overwrite a range of a Google Sheet with rows of values (entered as a user would type them)."""
+        acct = svc.require("sheets", account)
+        resp = svc.sheets(acct).spreadsheets().values().update(
+            spreadsheetId=spreadsheet_id, range=range, valueInputOption="USER_ENTERED",
+            body={"values": values}).execute()
+        return f"Updated {resp.get('updatedCells', 0)} cell(s) in {range}"
+
+    @register
+    def sheets_append_rows(spreadsheet_id: str, range: str, rows: list[list[str]],
+                           account: str | None = None) -> str:
+        """Append rows after the last row of the table that `range` points at."""
+        acct = svc.require("sheets", account)
+        resp = svc.sheets(acct).spreadsheets().values().append(
+            spreadsheetId=spreadsheet_id, range=range, valueInputOption="USER_ENTERED",
+            insertDataOption="INSERT_ROWS", body={"values": rows}).execute()
+        return f"Appended {resp.get('updates', {}).get('updatedRows', len(rows))} row(s)"
+
+    # -- Calendar -----------------------------------------------------------
+
+    def _when(value: str) -> dict:
+        """An all-day date ('2026-09-22') or a dateTime (RFC 3339) as the API wants it."""
+        return {"date": value} if len(value) == 10 else {"dateTime": value}
+
+    @register
+    def calendar_list_events(time_min: str, time_max: str, query: str | None = None,
+                             calendar_id: str = "primary", account: str | None = None) -> str:
+        """List the user's calendar events between two RFC 3339 times, optionally matching
+        a search string. Returns id, summary, start, end, attendees and htmlLink."""
+        acct = svc.require("calendar", account)
+        kwargs = dict(calendarId=calendar_id, timeMin=time_min, timeMax=time_max,
+                      singleEvents=True, orderBy="startTime", maxResults=50)
+        if query:
+            kwargs["q"] = query
+        resp = svc.calendar(acct).events().list(**kwargs).execute()
+        return _dumps([{
+            "id": e.get("id"), "summary": e.get("summary"),
+            "start": e.get("start", {}).get("dateTime") or e.get("start", {}).get("date"),
+            "end": e.get("end", {}).get("dateTime") or e.get("end", {}).get("date"),
+            "attendees": [a.get("email") for a in e.get("attendees", [])],
+            "location": e.get("location"), "htmlLink": e.get("htmlLink"),
+        } for e in resp.get("items", [])])
+
+    @register
+    def calendar_create_event(summary: str, start: str, end: str,
+                              attendees: list[str] | None = None, description: str | None = None,
+                              location: str | None = None, calendar_id: str = "primary",
+                              account: str | None = None) -> str:
+        """Create a calendar event. start/end are RFC 3339 datetimes with offset, or plain
+        dates for an all-day event. Attendees are emailed an invitation. Irreversible:
+        only with confirmed inputs."""
+        acct = svc.require("calendar", account)
+        body: dict = {"summary": summary, "start": _when(start), "end": _when(end)}
+        if description:
+            body["description"] = description
+        if location:
+            body["location"] = location
+        if attendees:
+            body["attendees"] = [{"email": a} for a in attendees]
+        created = svc.calendar(acct).events().insert(
+            calendarId=calendar_id, body=body,
+            sendUpdates="all" if attendees else "none").execute()
+        return _dumps({"id": created["id"], "htmlLink": created.get("htmlLink")})
+
+    # -- Contacts -----------------------------------------------------------
+
+    @register
+    def contacts_search(query: str, max_results: int = 10, account: str | None = None) -> str:
+        """Find a person's email address by name or partial address, across the user's
+        contacts and the people they have corresponded with."""
+        acct = svc.require("contacts", account)
+        people = svc.people(acct)
+        mask = "names,emailAddresses"
+        # The People API requires a warm-up request before search results are complete.
+        people.people().searchContacts(query="", readMask=mask, pageSize=1).execute()
+        found: dict[str, str] = {}
+        for call in (
+            lambda: people.people().searchContacts(query=query, readMask=mask, pageSize=max_results).execute(),
+            lambda: people.otherContacts().search(query=query, readMask=mask, pageSize=max_results).execute(),
+        ):
+            for r in call().get("results", []):
+                person = r.get("person", {})
+                name = (person.get("names") or [{}])[0].get("displayName", "")
+                for e in person.get("emailAddresses") or []:
+                    if e.get("value") and e["value"] not in found:
+                        found[e["value"]] = name
+        return _dumps([{"name": n, "email": e} for e, n in found.items()][:max_results * 2])
 
     return tools

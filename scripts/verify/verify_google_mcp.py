@@ -293,10 +293,66 @@ def check_drive_docs() -> None:
     check("replace is case-sensitive and counts", rep["containsText"]["matchCase"] is True and "3" in out)
 
 
+def check_sheets_calendar_contacts() -> None:
+    print("\n-- sheets / calendar / contacts --")
+    sheets = Fake(responses={"get": {"values": [["a", "b"], ["1", "2"]]},
+                             "update": {"updatedCells": 4},
+                             "append": {"updates": {"updatedRows": 2}}})
+    cal = Fake(responses={"list": {"items": [{"id": "e1", "summary": "Standup",
+                                              "start": {"dateTime": "2026-09-21T09:00:00+05:30"},
+                                              "end": {"dateTime": "2026-09-21T09:15:00+05:30"},
+                                              "attendees": [{"email": "x@example.com"}],
+                                              "htmlLink": "https://cal/e1"}]},
+                          "insert": {"id": "e2", "htmlLink": "https://cal/e2"}})
+    people = Fake(responses={
+        "searchContacts": {"results": [{"person": {"names": [{"displayName": "Alice A"}],
+                                                   "emailAddresses": [{"value": "alice@example.com"}]}}]},
+        "search": {"results": [{"person": {"names": [{"displayName": "Bob"}],
+                                           "emailAddresses": [{"value": "bob@example.com"}]}}]},
+    })
+    svc, _ = make_services({"b@example.com": FULL}, {("sheets", "b@example.com"): sheets,
+                                                     ("calendar", "b@example.com"): cal,
+                                                     ("people", "b@example.com"): people})
+    t = tools_for(svc)
+
+    out = json.loads(t["sheets_read_range"]("sid", "Sheet1!A1:B2"))
+    check("sheets_read_range returns rows", out == [["a", "b"], ["1", "2"]])
+    t["sheets_write_range"]("sid", "Sheet1!A1:B2", [["x", "y"], ["3", "4"]])
+    kw = sheets.last("update")
+    check("write uses USER_ENTERED", kw["valueInputOption"] == "USER_ENTERED" and kw["body"]["values"][0] == ["x", "y"])
+    t["sheets_append_rows"]("sid", "Sheet1!A:B", [["5", "6"]])
+    kw = sheets.last("append")
+    check("append inserts rows", kw["insertDataOption"] == "INSERT_ROWS" and kw["valueInputOption"] == "USER_ENTERED")
+
+    out = json.loads(t["calendar_list_events"]("2026-09-21T00:00:00Z", "2026-09-22T00:00:00Z", query="stand"))
+    kw = cal.last("list")
+    check("list_events bounds, query, single expanded events",
+          kw["timeMin"].startswith("2026-09-21") and kw["q"] == "stand" and kw["singleEvents"] is True)
+    check("list_events shape", out[0]["id"] == "e1" and out[0]["attendees"] == ["x@example.com"])
+
+    out = json.loads(t["calendar_create_event"]("Coffee", "2026-09-22T10:00:00+05:30", "2026-09-22T10:30:00+05:30",
+                                                attendees=["x@example.com"], location="Cafe"))
+    kw = cal.last("insert")
+    check("create_event body and invitations",
+          kw["body"]["summary"] == "Coffee" and kw["body"]["attendees"] == [{"email": "x@example.com"}]
+          and kw["sendUpdates"] == "all" and out["id"] == "e2")
+    t["calendar_create_event"]("Solo", "2026-09-22", "2026-09-23")
+    kw = cal.last("insert")
+    check("all-day event uses date, no invitations",
+          kw["body"]["start"] == {"date": "2026-09-22"} and kw["sendUpdates"] == "none")
+
+    out = json.loads(t["contacts_search"]("ali"))
+    check("contacts merges contacts and other contacts",
+          {c["email"] for c in out} == {"alice@example.com", "bob@example.com"})
+    check("contacts warmed the cache first", people.calls[0][0] == "people" and people.calls[1][0] == "searchContacts"
+          and people.calls[1][1]["query"] == "")
+
+
 if __name__ == "__main__":
     check_binding()
     check_server_shape()
     check_accounts_and_gating()
     check_gmail()
     check_drive_docs()
+    check_sheets_calendar_contacts()
     print("\nAll checks passed.")
