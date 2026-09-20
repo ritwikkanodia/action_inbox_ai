@@ -142,6 +142,12 @@ def main() -> None:
             {"tool": "gmail_create_draft", "detail": "b@example.com"},
         ],
     )
+    check(
+        "a Google call shows its identifying argument, not the account",
+        hermes_activity._summarise({"account": "a@example.com", "document_id": "doc123", "text": "x"}) == "x"
+        and hermes_activity._summarise({"account": "a@example.com", "file_id": "f1"}) == "f1"
+        and hermes_activity._summarise({"account": "a@example.com"}) == "",
+    )
     bare = json.dumps([{"function": {"name": "tool_call", "arguments": "not json"}}])
     check(
         "a meta-call whose arguments cannot be read still shows as tool_call",

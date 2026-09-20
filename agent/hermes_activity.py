@@ -43,7 +43,15 @@ POLL_SECONDS = float(os.environ.get("HERMES_ACTIVITY_POLL_SECONDS", "2"))
 _DETAIL_KEYS = (
     "url", "command", "query", "q", "path", "file_path", "to", "subject",
     "text", "prompt", "name", "code",
+    # Google tools (agent/google_mcp): the id or title is what identifies the
+    # call, never the `account` argument that would otherwise win as the first
+    # string value.
+    "thread_id", "file_id", "document_id", "spreadsheet_id", "summary", "find",
+    "title", "range", "time_min",
 )
+
+# Never worth showing on its own.
+_DETAIL_SKIP = {"account"}
 
 _DETAIL_MAX = 140
 
@@ -92,7 +100,9 @@ def _summarise(arguments) -> str:
         if isinstance(value, str) and value.strip():
             return _clip(value.strip())
 
-    for value in parsed.values():
+    for key, value in parsed.items():
+        if key in _DETAIL_SKIP:
+            continue
         if isinstance(value, str) and value.strip():
             return _clip(value.strip())
     return ""
