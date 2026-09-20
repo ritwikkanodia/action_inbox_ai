@@ -46,9 +46,10 @@ class Fake:
     records (name, kwargs) and returns the same Fake; execute() returns the
     canned response for the *last* recorded method name, or raises."""
 
-    def __init__(self, responses=None, raise_exc=None):
+    def __init__(self, responses=None, raise_exc=None, raise_for=None):
         self.responses = responses or {}
         self.raise_exc = raise_exc
+        self.raise_for = raise_for or set()
         self.calls = []
 
     def __getattr__(self, name):
@@ -58,9 +59,11 @@ class Fake:
         return method
 
     def execute(self, **kwargs):
+        last = self.calls[-1][0] if self.calls else None
         if self.raise_exc:
             raise self.raise_exc
-        last = self.calls[-1][0] if self.calls else None
+        if last in self.raise_for:
+            raise http_error(403)
         return self.responses.get(last, self.responses.get("*", {}))
 
     def last(self, name):
@@ -86,13 +89,18 @@ def make_binding(account="a@example.com"):
     return S.Binding(user_id="u1", account_id=account, db_path=os.environ["DB_PATH"])
 
 
-def make_services(grants: dict, clients: dict | None = None):
-    """grants: account -> set of scopes. clients: (kind, account) -> Fake."""
+def make_services(grants: dict, clients: dict | None = None, revoked: set | None = None):
+    """grants: account -> set of scopes. clients: (kind, account) -> Fake.
+    revoked: accounts for which the creds provider raises RuntimeError, as if
+    Google had revoked access for that account specifically."""
     clients = clients or {}
+    revoked = revoked or set()
     order = list(grants)
 
     def creds_provider(conn, user_id, account_id):
         acct = account_id or order[0]
+        if acct in revoked:
+            raise RuntimeError(f"Gmail access revoked by Google for {acct}")
         if acct not in grants:
             raise RuntimeError(f"Gmail not connected ({acct}).")
         return object(), set(grants[acct]), acct
@@ -162,6 +170,17 @@ def check_accounts_and_gating() -> None:
           and out[0]["agent_access"] is False and out[1]["agent_access"] is True
           and "Gmail (read)" in out[0]["services"] and "Drive" in out[1]["services"])
     check("google_accounts marks the default", out[0]["default"] is True and out[1]["default"] is False)
+
+    svc_rev, _ = make_services({"a@example.com": FULL, "b@example.com": FULL},
+                               revoked={"b@example.com"})
+    out = json.loads(tools_for(svc_rev)["google_accounts"]())
+    by_email = {a["email"]: a for a in out}
+    check("one revoked account does not hide the others",
+          by_email["a@example.com"].get("error") is None
+          and "Drive" in by_email["a@example.com"]["services"])
+    check("the revoked account is reported with an error field, not raised",
+          "revoked" in by_email["b@example.com"].get("error", "")
+          and "b@example.com" in by_email["b@example.com"]["error"])
 
 
 def tools_for(svc):
@@ -261,6 +280,11 @@ def check_drive_docs() -> None:
     check("drive_search uses fullText and name", "fullText contains 'plan'" in q and "name contains 'plan'" in q)
     check("drive_search returns id, name, type, link", out[0]["id"] == "f1" and out[0]["webViewLink"] == "https://docs/f1")
 
+    t["drive_search"]("it's")
+    q = drive.last("list")["q"]
+    check("drive_search backslash-escapes a literal quote", "fullText contains 'it\\'s'" in q)
+    check("the escaped query still ends with the trashed filter", q.endswith("and trashed = false"))
+
     out = t["drive_read_file"]("f1")
     check("Google Doc exported as text/plain", drive.last("export")["mimeType"] == "text/plain")
     check("read capped at 100k with a note", len(out) < 100_200 and "truncated" in out.lower())
@@ -278,6 +302,18 @@ def check_drive_docs() -> None:
     body = drive.last("create")["body"]
     check("upload names the file and parent", body["name"] == "notes.txt" and body["parents"] == ["fold1"])
     check("upload reports link", out["webViewLink"] == "https://drive/up1")
+
+    drive.responses["get"] = {"id": "p1", "name": "Scan.pdf", "mimeType": "application/pdf"}
+    drive.responses["export"] = b"unused"
+    import agent.google_mcp.tools as tools_module
+    real_pdf_text = tools_module._pdf_text
+    tools_module._pdf_text = lambda data: ""
+    try:
+        out = t["drive_read_file"]("p1")
+    finally:
+        tools_module._pdf_text = real_pdf_text
+    check("an image-only PDF returns a clear message, not an empty string",
+          "No extractable text" in out and "Scan.pdf" in out)
 
     out = json.loads(t["docs_create"]("Title", "First line"))
     ins = docs.last("batchUpdate")["body"]["requests"][0]["insertText"]
@@ -349,6 +385,18 @@ def check_sheets_calendar_contacts() -> None:
 
     out = json.loads(t["contacts_search"]("ali", max_results=1))
     check("contacts_search caps the merged total at max_results", len(out) == 1)
+
+    # otherContacts.search needs contacts.other.readonly, which an older grant
+    # may lack — that alone must not deny results the other source can serve.
+    people_degraded = Fake(responses={
+        "searchContacts": {"results": [{"person": {"names": [{"displayName": "Alice A"}],
+                                                    "emailAddresses": [{"value": "alice@example.com"}]}}]},
+    }, raise_for={"search"})
+    svc_degraded, _ = make_services({"b@example.com": FULL},
+                                    {("people", "b@example.com"): people_degraded})
+    out = json.loads(tools_for(svc_degraded)["contacts_search"]("ali"))
+    check("a failing otherContacts source still returns the other source's results",
+          {c["email"] for c in out} == {"alice@example.com"})
 
 
 if __name__ == "__main__":

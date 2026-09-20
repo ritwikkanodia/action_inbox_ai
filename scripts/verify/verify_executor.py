@@ -132,7 +132,17 @@ def main() -> None:
     check("binding names the todo's account or empty", "AIB_ACCOUNT_ID" in b)
     check("binding carries an absolute db path", os.path.isabs(b.get("AIB_DB_PATH", "")))
     os.environ["HERMES_GOOGLE_TOOLS"] = "0"
-    check("HERMES_GOOGLE_TOOLS=0 yields no binding", hermes_runner._google_binding_env(user_id, "x") == {})
+    blanked = hermes_runner._google_binding_env(user_id, "x")
+    check("HERMES_GOOGLE_TOOLS=0 blanks the three binding keys",
+          set(blanked) == {"AIB_USER_ID", "AIB_ACCOUNT_ID", "AIB_DB_PATH"}
+          and all(v == "" for v in blanked.values()))
+
+    os.environ["AIB_USER_ID"] = "stale"
+    try:
+        check("the off switch blanks an AIB_USER_ID this process inherited",
+              hermes_runner._google_binding_env(user_id, "x")["AIB_USER_ID"] == "")
+    finally:
+        os.environ.pop("AIB_USER_ID")
     os.environ.pop("HERMES_GOOGLE_TOOLS")
     check("default yields the three variables",
           set(hermes_runner._google_binding_env(user_id, None)) == {"AIB_USER_ID", "AIB_ACCOUNT_ID", "AIB_DB_PATH"}

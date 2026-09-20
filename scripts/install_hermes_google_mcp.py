@@ -14,6 +14,7 @@ Usage:
   python scripts/install_hermes_google_mcp.py --remove
 """
 import os
+import shutil
 import sys
 
 import yaml
@@ -43,8 +44,15 @@ def entry() -> dict:
 def main(argv: list[str]) -> int:
     path = config_path()
     if os.path.exists(path):
-        with open(path) as f:
-            config = yaml.safe_load(f) or {}
+        try:
+            with open(path) as f:
+                config = yaml.safe_load(f) or {}
+        except yaml.YAMLError as exc:
+            print(f"{path} is not valid YAML ({exc}); refusing to edit it.", file=sys.stderr)
+            return 1
+        except OSError as exc:
+            print(f"Could not read {path} ({exc}); refusing to edit it.", file=sys.stderr)
+            return 1
     else:
         config = {}
     if not isinstance(config, dict):
@@ -63,13 +71,29 @@ def main(argv: list[str]) -> int:
         action = "Registered"
     config["mcp_servers"] = servers
 
+    backup_path = None
+    if os.path.exists(path):
+        backup_path = path + ".bak"
+        try:
+            shutil.copy2(path, backup_path)
+        except OSError as exc:
+            print(f"Could not back up {path} to {backup_path} ({exc}); refusing to edit it.",
+                  file=sys.stderr)
+            return 1
+
     tmp = path + ".tmp"
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(tmp, "w") as f:
-        yaml.safe_dump(config, f, sort_keys=False, default_flow_style=False)
-    os.replace(tmp, path)
+    try:
+        with open(tmp, "w") as f:
+            yaml.safe_dump(config, f, sort_keys=False, default_flow_style=False)
+        os.replace(tmp, path)
+    except OSError as exc:
+        print(f"Could not write {path} ({exc}).", file=sys.stderr)
+        return 1
 
     print(f"{action} {SERVER_NAME} in {path}")
+    if backup_path:
+        print(f"Backed up previous config to {backup_path}")
     if action == "Registered":
         print(yaml.safe_dump({SERVER_NAME: entry()}, sort_keys=False))
         print("Verify with:\n  AIB_USER_ID=<user id> AIB_DB_PATH=$(pwd)/gmail_events.db "

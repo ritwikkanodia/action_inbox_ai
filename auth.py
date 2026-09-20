@@ -8,6 +8,7 @@ flow in `pollers/gmail/auth.py` is still available for reconnects.
 
 import os
 import json
+import logging
 from functools import wraps
 from typing import Callable
 
@@ -20,6 +21,16 @@ from googleapiclient.discovery import build as google_build
 from db import seed_onboarding_todos, upsert_user, set_source_credentials
 from google_scopes import ALL_SCOPES
 
+logger = logging.getLogger(__name__)
+
+# Either of these on the returned token means Gmail access was granted: with
+# gmail.modify now also requested (google_scopes.ALL_SCOPES) and
+# include_granted_scopes=true, Google may normalise what comes back to just
+# the wider scope rather than echoing both.
+GMAIL_CONNECT_SCOPES = frozenset({
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.modify",
+})
 
 LOGIN_SCOPES = [
     "openid",
@@ -148,7 +159,7 @@ def complete_login(
     try:
         if creds and getattr(creds, "scopes", None):
             scopes = set(creds.scopes or [])
-            if "https://www.googleapis.com/auth/gmail.readonly" in scopes:
+            if scopes & GMAIL_CONNECT_SCOPES:
                 creds_dict = json.loads(creds.to_json())
                 gmail_svc = google_build("gmail", "v1", credentials=creds)
                 profile = gmail_svc.users().getProfile(userId="me").execute()
@@ -163,8 +174,10 @@ def complete_login(
                         account_id=connected_email,
                     )
     except Exception:
-        # Non-fatal: ensure login completes even if saving creds fails.
-        pass
+        # Non-fatal: ensure login completes even if saving creds fails, but
+        # log it — a silent failure here otherwise looks like the poller
+        # never connected, with no trace of why.
+        logger.exception("Could not persist Gmail credentials at sign-in")
 
     return user_id, None
 

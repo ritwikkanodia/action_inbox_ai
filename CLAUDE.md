@@ -336,7 +336,9 @@ Adding an executor means one module implementing `resolve` plus a branch in `exe
   `AIB_USER_ID`, `AIB_ACCOUNT_ID` and `AIB_DB_PATH` on each `hermes chat` subprocess and
   Hermes expands them into the server's env at launch. No token crosses the environment —
   the server reads and refreshes credentials from the database itself. With no binding
-  (any Hermes run that isn't ours, or `HERMES_GOOGLE_TOOLS=0`) it serves zero tools.
+  (any Hermes run that isn't ours, or `HERMES_GOOGLE_TOOLS=0`, which blanks the three
+  `AIB_*` variables on the subprocess env rather than omitting them, so a value this
+  process happened to have inherited can't leak through) it serves zero tools.
   Every tool returns a string and turns failures into an `Error:` line, so Hermes' loop
   guardrails see ordinary results; a missing scope says so and points at Settings. The
   server's stdout is the protocol channel — log to stderr only. Hermes' single-query mode
@@ -363,7 +365,11 @@ Adding an executor means one module implementing `resolve` plus a branch in `exe
 - **`--yolo` is deliberate and load-bearing.** A run with no TTY that stops for an approval
   prompt blocks until the timeout. It also means a full-access agent acts on prompts built
   from email content, which is attacker-controlled text; this is an accepted risk of the
-  local POC, not an oversight.
+  local POC, not an oversight. With the Google tools registered the same agent holds
+  send-mail, Drive-write, Docs/Sheets-write and Calendar-create over the API, so an
+  instruction smuggled in an email is one `gmail_send` away from acting rather than a
+  multi-step browser sequence; `HERMES_GOOGLE_TOOLS=0` blanks the binding for a run where
+  that is not acceptable.
 - **Sessions are the conversation.** `todos.executor_state` holds the Hermes session *name*
   (`aib-<todo_id>-<nonce>`), not an id, and it is stable for the life of the thread — every
   turn continues the same session. `todos.ai_thread` is just a display log of

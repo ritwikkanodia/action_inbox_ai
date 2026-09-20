@@ -95,7 +95,19 @@ def build_tools(svc: Services) -> list[Callable]:
         default = svc.resolve_account(None)
         out = []
         for email in svc.accounts():
-            granted = svc.granted(email)
+            # One account's credentials can fail independently (token revoked,
+            # refresh denied) — that must not hide every other connected
+            # account from the agent, so it is reported alongside the rest
+            # rather than raised.
+            try:
+                granted = svc.granted(email)
+            except (ToolError, RuntimeError) as exc:
+                out.append({
+                    "email": email,
+                    "default": email == default,
+                    "error": _one_line(str(exc)),
+                })
+                continue
             services = [label for key, (accepted, label) in SERVICE_SCOPES.items()
                         if any(s in granted for s in accepted)]
             out.append({
@@ -243,6 +255,9 @@ def build_tools(svc: Services) -> list[Callable]:
             if isinstance(data, str):
                 data = data.encode("utf-8")
             text = _pdf_text(data) if mime == "application/pdf" else data.decode("utf-8", errors="replace")
+            if mime == "application/pdf" and not text.strip():
+                return (f"No extractable text in {meta.get('name')!r} (likely a scanned PDF). "
+                        "Open it in the browser if its contents are needed.")
             return _cap(text)
         return (f"Cannot read {meta.get('name')!r}: type {mime} is not exportable as text. "
                 "Open it in the browser if its contents are needed.")
@@ -391,16 +406,30 @@ def build_tools(svc: Services) -> list[Callable]:
         # The People API requires a warm-up request before search results are complete.
         people.people().searchContacts(query="", readMask=mask, pageSize=1).execute()
         found: dict[str, str] = {}
+        # Each source is independently gated (otherContacts.search needs
+        # contacts.other.readonly, which an older grant may not carry) — one
+        # failing does not deny the other's results, only if both fail does
+        # the caller see an error, in which case the last exception wins.
+        last_exc: Exception | None = None
+        succeeded = False
         for call in (
             lambda: people.people().searchContacts(query=query, readMask=mask, pageSize=max_results).execute(),
             lambda: people.otherContacts().search(query=query, readMask=mask, pageSize=max_results).execute(),
         ):
-            for r in call().get("results", []):
+            try:
+                resp = call()
+            except Exception as exc:
+                last_exc = exc
+                continue
+            succeeded = True
+            for r in resp.get("results", []):
                 person = r.get("person", {})
                 name = (person.get("names") or [{}])[0].get("displayName", "")
                 for e in person.get("emailAddresses") or []:
                     if e.get("value") and e["value"] not in found:
                         found[e["value"]] = name
+        if not succeeded and last_exc is not None:
+            raise last_exc
         return _dumps([{"name": n, "email": e} for e, n in found.items()][:max_results])
 
     return tools

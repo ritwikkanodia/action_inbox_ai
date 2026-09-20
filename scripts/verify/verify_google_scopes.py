@@ -75,6 +75,9 @@ def check_scopes() -> None:
     check("has_agent_access false when one agent scope is missing",
           not google_scopes.has_agent_access(google_scopes.ALL_SCOPES[:-1]))
     check("Gmail reconnect flow requests ALL_SCOPES", gauth.SCOPES == google_scopes.ALL_SCOPES)
+    check("GMAIL_CONNECT_SCOPES accepts either gmail scope",
+          {READONLY, "https://www.googleapis.com/auth/gmail.modify"}
+          <= login_auth.GMAIL_CONNECT_SCOPES)
     check("Sign-in flow requests openid + ALL_SCOPES",
           login_auth.LOGIN_SCOPES[:3] == ["openid",
                                           "https://www.googleapis.com/auth/userinfo.email",
