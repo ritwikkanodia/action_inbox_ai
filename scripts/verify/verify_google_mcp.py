@@ -238,9 +238,65 @@ def check_gmail() -> None:
           out.startswith("Error: Google API returned 500") and "\n" not in out)
 
 
+def check_drive_docs() -> None:
+    print("\n-- drive / docs --")
+    drive = Fake(responses={
+        "list": {"files": [{"id": "f1", "name": "Plan", "mimeType": "application/vnd.google-apps.document",
+                            "modifiedTime": "2026-09-01T00:00:00Z", "webViewLink": "https://docs/f1"}]},
+        "get": {"id": "f1", "name": "Plan", "mimeType": "application/vnd.google-apps.document"},
+        "export": b"x" * 150_000,
+        "create": {"id": "up1", "webViewLink": "https://drive/up1"},
+    })
+    docs = Fake(responses={
+        "create": {"documentId": "doc1"},
+        "get": {"body": {"content": [{"endIndex": 1}, {"endIndex": 42}]}},
+        "batchUpdate": {"replies": [{"replaceAllText": {"occurrencesChanged": 3}}]},
+    })
+    svc, _ = make_services({"b@example.com": FULL},
+                           {("drive", "b@example.com"): drive, ("docs", "b@example.com"): docs})
+    t = tools_for(svc)
+
+    out = json.loads(t["drive_search"]("plan"))
+    q = drive.last("list")["q"]
+    check("drive_search uses fullText and name", "fullText contains 'plan'" in q and "name contains 'plan'" in q)
+    check("drive_search returns id, name, type, link", out[0]["id"] == "f1" and out[0]["webViewLink"] == "https://docs/f1")
+
+    out = t["drive_read_file"]("f1")
+    check("Google Doc exported as text/plain", drive.last("export")["mimeType"] == "text/plain")
+    check("read capped at 100k with a note", len(out) < 100_200 and "truncated" in out.lower())
+
+    drive.responses["get"] = {"id": "s1", "name": "Sheet", "mimeType": "application/vnd.google-apps.spreadsheet"}
+    drive.responses["export"] = b"a,b\n1,2"
+    out = t["drive_read_file"]("s1")
+    check("Google Sheet exported as CSV", drive.last("export")["mimeType"] == "text/csv" and out == "a,b\n1,2")
+
+    drive.responses["get"] = {"id": "z1", "name": "img.png", "mimeType": "image/png"}
+    out = t["drive_read_file"]("z1")
+    check("unsupported type named, not dumped", "image/png" in out and "cannot" in out.lower())
+
+    out = json.loads(t["drive_upload_file"]("notes.txt", "hello", folder_id="fold1"))
+    body = drive.last("create")["body"]
+    check("upload names the file and parent", body["name"] == "notes.txt" and body["parents"] == ["fold1"])
+    check("upload reports link", out["webViewLink"] == "https://drive/up1")
+
+    out = json.loads(t["docs_create"]("Title", "First line"))
+    ins = docs.last("batchUpdate")["body"]["requests"][0]["insertText"]
+    check("docs_create inserts body at index 1", ins["text"] == "First line" and ins["location"]["index"] == 1)
+    check("docs_create reports url", out["document_id"] == "doc1" and out["url"].endswith("/doc1/edit"))
+
+    t["docs_append"]("doc1", "More")
+    ins = docs.last("batchUpdate")["body"]["requests"][0]["insertText"]
+    check("docs_append inserts before the final newline", ins["location"]["index"] == 41)
+
+    out = t["docs_replace_text"]("doc1", "old", "new")
+    rep = docs.last("batchUpdate")["body"]["requests"][0]["replaceAllText"]
+    check("replace is case-sensitive and counts", rep["containsText"]["matchCase"] is True and "3" in out)
+
+
 if __name__ == "__main__":
     check_binding()
     check_server_shape()
     check_accounts_and_gating()
     check_gmail()
+    check_drive_docs()
     print("\nAll checks passed.")

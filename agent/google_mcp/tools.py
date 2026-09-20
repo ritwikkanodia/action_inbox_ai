@@ -8,6 +8,7 @@ a one-line `Error: …` result so Hermes always sees an ordinary tool reply.
 
 import base64
 import functools
+import io
 import json
 import logging
 import re
@@ -19,6 +20,26 @@ from agent.google_mcp.services import SERVICE_SCOPES, Services, ToolError
 from pollers.gmail.thread_context import _extract_body, _header
 
 logger = logging.getLogger(__name__)
+
+READ_CAP = 100_000
+
+_EXPORT = {
+    "application/vnd.google-apps.document": "text/plain",
+    "application/vnd.google-apps.spreadsheet": "text/csv",
+    "application/vnd.google-apps.presentation": "text/plain",
+}
+
+
+def _cap(text: str) -> str:
+    if len(text) <= READ_CAP:
+        return text
+    return text[:READ_CAP] + f"\n\n[truncated: {len(text) - READ_CAP} more characters not shown]"
+
+
+def _pdf_text(data: bytes) -> str:
+    from pypdf import PdfReader
+    reader = PdfReader(io.BytesIO(data))
+    return "\n\n".join((page.extract_text() or "") for page in reader.pages)
 
 
 def _one_line(text: str) -> str:
@@ -191,6 +212,96 @@ def build_tools(svc: Services) -> list[Callable]:
         sent = gmail.users().messages().send(userId="me", body=message).execute()
         return _dumps({"message_id": sent["id"], "thread_id": sent.get("threadId")})
 
-    # Tasks 5-6 add the Drive/Docs and Sheets/Calendar/Contacts tools here.
+    # -- Drive --------------------------------------------------------------
+
+    @register
+    def drive_search(query: str, max_results: int = 10, account: str | None = None) -> str:
+        """Search the user's Google Drive by words in the name or content. Returns id,
+        name, mimeType, modifiedTime and webViewLink. Read one with drive_read_file."""
+        acct = svc.require("drive", account)
+        safe = query.replace("\\", "\\\\").replace("'", "\\'")
+        resp = svc.drive(acct).files().list(
+            q=f"(fullText contains '{safe}' or name contains '{safe}') and trashed = false",
+            pageSize=max_results, orderBy="modifiedTime desc",
+            fields="files(id,name,mimeType,modifiedTime,webViewLink)",
+        ).execute()
+        return _dumps(resp.get("files", []))
+
+    @register
+    def drive_read_file(file_id: str, account: str | None = None) -> str:
+        """Read a Drive file as text: Google Docs and Slides as plain text, Sheets as
+        CSV, PDFs and text files as their text. Long files are truncated at 100k chars."""
+        acct = svc.require("drive", account)
+        drive = svc.drive(acct)
+        meta = drive.files().get(fileId=file_id, fields="id,name,mimeType").execute()
+        mime = meta.get("mimeType", "")
+        if mime in _EXPORT:
+            data = drive.files().export(fileId=file_id, mimeType=_EXPORT[mime]).execute()
+            return _cap(data.decode("utf-8", errors="replace") if isinstance(data, bytes) else str(data))
+        if mime == "application/pdf" or mime.startswith("text/"):
+            data = drive.files().get_media(fileId=file_id).execute()
+            if isinstance(data, str):
+                data = data.encode("utf-8")
+            text = _pdf_text(data) if mime == "application/pdf" else data.decode("utf-8", errors="replace")
+            return _cap(text)
+        return (f"Cannot read {meta.get('name')!r}: type {mime} is not exportable as text. "
+                "Open it in the browser if its contents are needed.")
+
+    @register
+    def drive_upload_file(name: str, content: str, mime_type: str = "text/plain",
+                          folder_id: str | None = None, account: str | None = None) -> str:
+        """Create a file in the user's Drive from text content. Returns id and webViewLink."""
+        acct = svc.require("drive", account)
+        from googleapiclient.http import MediaInMemoryUpload
+        body: dict = {"name": name}
+        if folder_id:
+            body["parents"] = [folder_id]
+        media = MediaInMemoryUpload(content.encode("utf-8"), mimetype=mime_type)
+        created = svc.drive(acct).files().create(
+            body=body, media_body=media, fields="id,webViewLink").execute()
+        return _dumps({"id": created["id"], "webViewLink": created.get("webViewLink")})
+
+    # -- Docs ---------------------------------------------------------------
+
+    def _doc_url(document_id: str) -> str:
+        return f"https://docs.google.com/document/d/{document_id}/edit"
+
+    @register
+    def docs_create(title: str, body_text: str = "", account: str | None = None) -> str:
+        """Create a Google Doc with a title and optional body text. Returns id and URL."""
+        acct = svc.require("docs", account)
+        docs = svc.docs(acct)
+        doc = docs.documents().create(body={"title": title}).execute()
+        doc_id = doc["documentId"]
+        if body_text:
+            docs.documents().batchUpdate(documentId=doc_id, body={"requests": [
+                {"insertText": {"location": {"index": 1}, "text": body_text}}]}).execute()
+        return _dumps({"document_id": doc_id, "url": _doc_url(doc_id)})
+
+    @register
+    def docs_append(document_id: str, text: str, account: str | None = None) -> str:
+        """Append text at the end of an existing Google Doc."""
+        acct = svc.require("docs", account)
+        docs = svc.docs(acct)
+        doc = docs.documents().get(documentId=document_id, fields="body.content.endIndex").execute()
+        content = doc.get("body", {}).get("content", [])
+        # The body always ends with a newline the API won't let you write after.
+        end = max((c.get("endIndex", 1) for c in content), default=1) - 1
+        docs.documents().batchUpdate(documentId=document_id, body={"requests": [
+            {"insertText": {"location": {"index": max(end, 1)}, "text": text}}]}).execute()
+        return _dumps({"document_id": document_id, "url": _doc_url(document_id), "appended": len(text)})
+
+    @register
+    def docs_replace_text(document_id: str, find: str, replace: str, account: str | None = None) -> str:
+        """Replace every case-sensitive occurrence of `find` in a Google Doc. Returns the count."""
+        acct = svc.require("docs", account)
+        resp = svc.docs(acct).documents().batchUpdate(documentId=document_id, body={"requests": [
+            {"replaceAllText": {"containsText": {"text": find, "matchCase": True},
+                                "replaceText": replace}}]}).execute()
+        replies = resp.get("replies") or [{}]
+        count = replies[0].get("replaceAllText", {}).get("occurrencesChanged", 0)
+        return f"Replaced {count} occurrence(s) in {_doc_url(document_id)}"
+
+    # Task 6 adds the Sheets/Calendar/Contacts tools here.
 
     return tools
