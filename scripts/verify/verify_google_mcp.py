@@ -347,6 +347,9 @@ def check_sheets_calendar_contacts() -> None:
     check("contacts warmed the cache first", people.calls[0][0] == "people" and people.calls[1][0] == "searchContacts"
           and people.calls[1][1]["query"] == "")
 
+    out = json.loads(t["contacts_search"]("ali", max_results=1))
+    check("contacts_search caps the merged total at max_results", len(out) == 1)
+
 
 if __name__ == "__main__":
     check_binding()

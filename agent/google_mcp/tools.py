@@ -342,7 +342,7 @@ def build_tools(svc: Services) -> list[Callable]:
     def calendar_list_events(time_min: str, time_max: str, query: str | None = None,
                              calendar_id: str = "primary", account: str | None = None) -> str:
         """List the user's calendar events between two RFC 3339 times, optionally matching
-        a search string. Returns id, summary, start, end, attendees and htmlLink."""
+        a search string. Returns id, summary, start, end, attendees, location and htmlLink."""
         acct = svc.require("calendar", account)
         kwargs = dict(calendarId=calendar_id, timeMin=time_min, timeMax=time_max,
                       singleEvents=True, orderBy="startTime", maxResults=50)
@@ -383,7 +383,8 @@ def build_tools(svc: Services) -> list[Callable]:
     @register
     def contacts_search(query: str, max_results: int = 10, account: str | None = None) -> str:
         """Find a person's email address by name or partial address, across the user's
-        contacts and the people they have corresponded with."""
+        contacts and the people they have corresponded with. Returns at most max_results
+        people total, merged across both sources."""
         acct = svc.require("contacts", account)
         people = svc.people(acct)
         mask = "names,emailAddresses"
@@ -400,6 +401,6 @@ def build_tools(svc: Services) -> list[Callable]:
                 for e in person.get("emailAddresses") or []:
                     if e.get("value") and e["value"] not in found:
                         found[e["value"]] = name
-        return _dumps([{"name": n, "email": e} for e, n in found.items()][:max_results * 2])
+        return _dumps([{"name": n, "email": e} for e, n in found.items()][:max_results])
 
     return tools
