@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from pollers.browser import generator as browser_history_generator
+from push_notify import notify_new_todo
 from db import (
     _normalize_url,
     get_browser_history_last_polled_at,
@@ -239,9 +240,11 @@ def _save_todos_from_digest(
         if not norm or norm not in allowed_urls:
             log.info("dropped (url not in digest): %r -> %r", title, todo.get("relevant_link"))
             continue
-        if save_browser_history_todo(conn, user_id, todo):
+        todo_id = save_browser_history_todo(conn, user_id, todo)
+        if todo_id:
             saved += 1
             log.info("saved: %r | reasoning: %s", title, reasoning)
+            notify_new_todo(conn, user_id, todo_id)
         else:
             log.info("skipped (duplicate): %r", title)
     return saved

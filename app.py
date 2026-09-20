@@ -38,6 +38,9 @@ from db import (
     list_gmail_accounts,
     gmail_state_key,
     gmail_thread_url,
+    save_push_subscription,
+    delete_push_subscription,
+    count_push_subscriptions,
 )
 from pollers.gmail.poller import BACKFILL_PENDING_SUFFIX, BACKFILLED_SUFFIX
 from pollers.digest import poller as digest_poller
@@ -484,31 +487,20 @@ def todo_action_options(todo_id):
     if row is None:
         return jsonify({"error": "not found"}), 404
 
-    if row["action_options"] and request.args.get("refresh") != "1":
-        try:
-            return jsonify({"actions": json.loads(row["action_options"])})
-        except ValueError:
-            pass  # Corrupt cache — fall through and regenerate.
-
     # Imported lazily so the OpenAI client is only built by workers that use it.
-    from agent.action_options import generate_action_options
+    from agent.action_options import ensure_action_options
 
     todo = dict(row)
     todo["todo_id"] = todo_id
     try:
-        actions = generate_action_options(todo, user_id)
+        actions = ensure_action_options(
+            db, todo, user_id, refresh=request.args.get("refresh") == "1"
+        )
     except Exception as exc:
         app.logger.exception("Failed to generate action options")
         # 200 with an error field: the pane renders this inline next to a retry,
         # which is more useful than a silent empty section.
         return jsonify({"actions": [], "error": str(exc)})
-
-    db.execute(
-        "UPDATE todos SET action_options = ?, updated_at = ? "
-        "WHERE todo_id = ? AND user_id = ?",
-        (json.dumps(actions), datetime.now(timezone.utc).isoformat(), todo_id, user_id),
-    )
-    db.commit()
     return jsonify({"actions": actions})
 
 
@@ -533,6 +525,22 @@ def ask_ai(todo_id):
     # something they typed. The executor needs the difference: they consented
     # to a short label, not to the generated sentence behind it.
     from_suggestion = bool(data.get("from_suggestion"))
+
+    # A notification button sends the option's index, never its text, so the
+    # instruction that runs is always the one this server cached.
+    if "action_index" in data:
+        idx = data["action_index"]
+        try:
+            options = json.loads(row["action_options"] or "null")
+        except ValueError:
+            options = None
+        if not isinstance(idx, int) or isinstance(idx, bool) or not isinstance(options, list) \
+                or not 0 <= idx < len(options):
+            return jsonify({"error": "no such action"}), 400
+        user_message = (options[idx].get("instruction") or "").strip()
+        if not user_message:
+            return jsonify({"error": "no such action"}), 400
+        from_suggestion = True
 
     active = runs.get(user_id, todo_id)
     if active is not None and active.status == runs.RUNNING:
@@ -749,6 +757,7 @@ def get_settings():
     fathom = get_source_connection(db, user_id, "fathom")
     fathom_key = (fathom or {}).get("credentials", {}).get("api_key", "") if fathom else None
     accounts = list_gmail_accounts(db, user_id)
+    import push_notify
     return jsonify({
         "sources": {
             "fathom": {
@@ -762,7 +771,11 @@ def get_settings():
                 ],
                 "auth_url": url_for("gmail_auth"),
             },
-        }
+        },
+        "notifications": {
+            "configured": push_notify.configured(),
+            "subscription_count": count_push_subscriptions(db, user_id),
+        },
     })
 
 
@@ -884,6 +897,65 @@ def update_source_settings(source: str):
             })
         return jsonify({"error": "use /settings/sources/gmail/auth to connect"}), 400
     return jsonify({"error": "unhandled"}), 500
+
+
+# ---------------------------------------------------------------------------
+# Push notifications — per-browser enrollment. The poller does the sending
+# (push_notify.notify_new_todo); these routes only manage subscriptions.
+# ---------------------------------------------------------------------------
+
+
+@app.route("/push/vapid-public-key", methods=["GET"])
+@login_required
+def push_public_key():
+    import push_notify
+    if not push_notify.configured():
+        return jsonify({"error": "push notifications are not configured on this server"}), 503
+    return jsonify({"key": push_notify.public_key()})
+
+
+@app.route("/push/subscribe", methods=["POST"])
+@login_required
+def push_subscribe():
+    import push_notify
+    if not push_notify.configured():
+        return jsonify({"error": "push notifications are not configured on this server"}), 503
+    data = request.get_json(force=True, silent=True) or {}
+    keys = data.get("keys") or {}
+    if not all(isinstance(v, str) and v for v in (data.get("endpoint"), keys.get("p256dh"), keys.get("auth"))):
+        return jsonify({"error": "invalid subscription"}), 400
+    user_id = current_user_id()
+    assert user_id
+    save_push_subscription(get_db(), user_id, data, request.headers.get("User-Agent"))
+    return jsonify({"ok": True})
+
+
+@app.route("/push/subscribe", methods=["DELETE"])
+@login_required
+def push_unsubscribe():
+    data = request.get_json(force=True, silent=True) or {}
+    endpoint = data.get("endpoint")
+    user_id = current_user_id()
+    assert user_id
+    if isinstance(endpoint, str) and endpoint:
+        delete_push_subscription(get_db(), endpoint, user_id=user_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/push/test", methods=["POST"])
+@login_required
+def push_test():
+    """Send a sample notification so the user can confirm the pipe end to end."""
+    import push_notify
+    user_id = current_user_id()
+    assert user_id
+    payload = {
+        "title": "Action Inbox",
+        "body": "Notifications are working. New todos will show up here.",
+        "url": "/",
+        "actions": [],
+    }
+    return jsonify({"sent": push_notify.send_to_user(get_db(), user_id, payload)})
 
 
 @app.route("/stats")

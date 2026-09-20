@@ -315,6 +315,17 @@ def init_db(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_page_views_timestamp
             ON page_views(timestamp DESC);
 
+        CREATE TABLE IF NOT EXISTS push_subscriptions (
+            endpoint    TEXT PRIMARY KEY,
+            user_id     TEXT NOT NULL,
+            p256dh      TEXT NOT NULL,
+            auth        TEXT NOT NULL,
+            user_agent  TEXT,
+            created_at  TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user
+            ON push_subscriptions(user_id);
+
         CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_dedup
             ON todos(user_id, source, dedup_key) WHERE dedup_key IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_todos_user_status_created
@@ -444,6 +455,58 @@ def list_all_users(conn: sqlite3.Connection) -> list[dict]:
         {"user_id": r[0], "email": r[1], "name": r[2], "picture_url": r[3]}
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Push subscriptions — one row per enrolled browser, keyed on the push
+# service's endpoint URL so re-subscribing from the same browser is an upsert.
+# ---------------------------------------------------------------------------
+
+
+def save_push_subscription(
+    conn: sqlite3.Connection,
+    user_id: str,
+    subscription: dict,
+    user_agent: str | None = None,
+) -> None:
+    keys = subscription.get("keys") or {}
+    conn.execute(
+        "INSERT OR REPLACE INTO push_subscriptions "
+        "(endpoint, user_id, p256dh, auth, user_agent, created_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (subscription["endpoint"], user_id, keys["p256dh"], keys["auth"],
+         user_agent, _now()),
+    )
+    conn.commit()
+
+
+def list_push_subscriptions(conn: sqlite3.Connection, user_id: str) -> list[dict]:
+    rows = conn.execute(
+        "SELECT endpoint, user_id, p256dh, auth, user_agent, created_at "
+        "FROM push_subscriptions WHERE user_id = ? ORDER BY created_at",
+        (user_id,),
+    ).fetchall()
+    cols = ["endpoint", "user_id", "p256dh", "auth", "user_agent", "created_at"]
+    return [dict(zip(cols, r)) for r in rows]
+
+
+def delete_push_subscription(
+    conn: sqlite3.Connection, endpoint: str, user_id: str | None = None
+) -> None:
+    if user_id is None:
+        conn.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+    else:
+        conn.execute(
+            "DELETE FROM push_subscriptions WHERE endpoint = ? AND user_id = ?",
+            (endpoint, user_id),
+        )
+    conn.commit()
+
+
+def count_push_subscriptions(conn: sqlite3.Connection, user_id: str) -> int:
+    return conn.execute(
+        "SELECT COUNT(*) FROM push_subscriptions WHERE user_id = ?", (user_id,)
+    ).fetchone()[0]
 
 
 # ---------------------------------------------------------------------------
@@ -638,7 +701,7 @@ def _save_todo(
     reasoning: str | None = "",
     source_meta: dict | None = None,
     decision: str | None = None,
-) -> bool:
+) -> str | None:
     if importance not in _VALID_IMPORTANCE:
         importance = None
     now = _now()
@@ -659,7 +722,7 @@ def _save_todo(
         ),
     )
     conn.commit()
-    return conn.total_changes > before
+    return todo_id if conn.total_changes > before else None
 
 
 def get_open_browser_history_titles(
@@ -676,13 +739,13 @@ def get_open_browser_history_titles(
 
 def save_browser_history_todo(
     conn: sqlite3.Connection, user_id: str, todo: dict
-) -> bool:
+) -> str | None:
     title = (todo.get("title") or "").strip()
     if not title:
-        return False
+        return None
     norm = _normalize_url(todo.get("relevant_link"))
     if not norm:
-        return False
+        return None
     # Fuzzy-match guard against any browser_history todo (any status) in last 30d
     # for THIS user.
     cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
@@ -693,7 +756,7 @@ def save_browser_history_todo(
     ).fetchall()
     for (et,) in existing:
         if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.80:
-            return False
+            return None
     dedup = hashlib.sha1(norm.encode()).hexdigest()[:12]
     return _save_todo(
         conn,
@@ -712,7 +775,7 @@ def save_browser_history_todo(
 
 def save_fathom_todo(
     conn: sqlite3.Connection, user_id: str, meeting: dict, idx: int, item: dict
-) -> None:
+) -> str | None:
     recording_id = str(meeting.get("recording_id", ""))
     dedup = f"{recording_id}_{idx}"
     meeting_title = meeting.get("meeting_title") or meeting.get("title", "")
@@ -720,7 +783,7 @@ def save_fathom_todo(
     reasoning = f"Action item from Fathom meeting: {meeting_title}"
     if assignee.get("name"):
         reasoning += f" — assigned to {assignee['name']}"
-    _save_todo(
+    return _save_todo(
         conn,
         user_id=user_id,
         todo_id=f"todo_fathom_{user_id[:8]}_{dedup}",
@@ -792,11 +855,11 @@ def save_todo(
     result: dict,
     user_id: str,
     account_id: str = "",
-) -> bool:
+) -> str | None:
     todo = result.get("todo") or {}
     title = (todo.get("title") or "").strip()
     if not title:
-        return False
+        return None
     cutoff = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
     existing = conn.execute(
         "SELECT title FROM todos "
@@ -805,7 +868,7 @@ def save_todo(
     ).fetchall()
     for (et,) in existing:
         if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.80:
-            return False
+            return None
     relevant_link = todo.get("relevant_link") or gmail_thread_url(thread_id, account_id)
     return _save_todo(
         conn,
@@ -930,10 +993,10 @@ def get_open_system_todos(
     return [r[0] for r in rows if r[0]]
 
 
-def save_system_todo(conn: sqlite3.Connection, user_id: str, todo: dict) -> bool:
+def save_system_todo(conn: sqlite3.Connection, user_id: str, todo: dict) -> str | None:
     title = (todo.get("title") or "").strip()
     if not title:
-        return False
+        return None
     cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
     existing = conn.execute(
         "SELECT title FROM todos "
@@ -942,7 +1005,7 @@ def save_system_todo(conn: sqlite3.Connection, user_id: str, todo: dict) -> bool
     ).fetchall()
     for (et,) in existing:
         if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.60:
-            return False
+            return None
     uid = uuid.uuid4().hex[:12]
     return _save_todo(
         conn,
