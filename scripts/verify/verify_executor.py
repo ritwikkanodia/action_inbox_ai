@@ -290,6 +290,143 @@ def main() -> None:
 
     # ---- the seam itself ---------------------------------------------------
     check("defaults to hermes", executor.current_executor() == "hermes")
+    check("a stored choice wins over the default",
+          executor.current_executor("agents_sdk") == "agents_sdk")
+    check("an unknown stored choice falls back to the default",
+          executor.current_executor("nonsense") == "hermes")
+
+    # ---- per-user selection from Settings -----------------------------------
+    print("\n-- per-user executor --")
+    data = client.get("/settings").get_json()
+    ex = data["executor"]
+    check("settings reports the executor block",
+          ex["selected"] == "hermes" and ex["default"] == "hermes")
+    check("settings lists both executors",
+          [o["name"] for o in ex["options"]] == ["hermes", "agents_sdk"])
+    check("every option carries a readiness verdict",
+          all("ready" in o and "reason" in o for o in ex["options"]))
+
+    def stored_choice():
+        r = conn.execute(
+            "SELECT value FROM user_state WHERE user_id = ? AND key = 'executor'",
+            (user_id,)).fetchone()
+        return r[0] if r else None
+
+    resp = client.post("/settings/executor", json={"executor": "nonsense"})
+    check("an unknown executor is refused", resp.status_code == 400)
+    check("nothing was stored", stored_choice() is None)
+
+    # An executor that is not ready on this host must not be selectable, or a
+    # saved choice would fail on the next message. Pretend the SDK is missing.
+    real_readiness = executor.readiness
+    executor.readiness = lambda name: (False, "stubbed: not installed") if name == "agents_sdk" else real_readiness(name)
+    app_module.readiness = executor.readiness
+    try:
+        resp = client.post("/settings/executor", json={"executor": "agents_sdk"})
+        check("an executor that is not ready is refused", resp.status_code == 400)
+        check("the refusal says why", "stubbed: not installed" in resp.get_json()["error"])
+        check("still nothing stored", stored_choice() is None)
+    finally:
+        executor.readiness = real_readiness
+        app_module.readiness = real_readiness
+
+    # Now pretend both are ready, pick the SDK, and make sure the next turn
+    # actually runs on it — with the Hermes-started thread in front of it.
+    executor.readiness = lambda name: (True, None)
+    app_module.readiness = executor.readiness
+    sdk_calls: list = []
+
+    def stub_sdk_resolve(todo, thread, user_message, user_id, state,
+                         cancel=None, progress=None, from_suggestion=False):
+        sdk_calls.append((list(thread), user_message, state))
+        return list(thread) + [
+            {"role": "user", "content": user_message},
+            {"role": "assistant", "content": "sdk reply"},
+        ], None
+
+    import agent.sdk_executor as sdk_executor
+    real_sdk_resolve = sdk_executor.resolve
+    sdk_executor.resolve = stub_sdk_resolve
+    try:
+        resp = client.post("/settings/executor", json={"executor": "agents_sdk"})
+        check("a ready executor is accepted", resp.status_code == 200 and resp.get_json()["ok"])
+        check("the choice is reported back",
+              resp.get_json()["executor"]["selected"] == "agents_sdk")
+        check("the choice is stored per user", stored_choice() == "agents_sdk")
+        check("settings now reports the choice",
+              client.get("/settings").get_json()["executor"]["selected"] == "agents_sdk")
+
+        hermes_before = len(calls)
+        thread_before, _ = row(conn, "t1")
+        data = turn(client, "t1", "Try the other agent.")
+        check("the next turn runs on the chosen executor",
+              len(sdk_calls) == 1 and len(calls) == hermes_before)
+        check("the chosen executor inherits the display log",
+              sdk_calls[0][0] == json.loads(thread_before))
+        check("the turn completes on the chosen executor",
+              data["status"] == "done" and data["thread"][-1]["content"] == "sdk reply")
+        ai_thread, state_after = row(conn, "t1")
+        check("the result is persisted",
+              json.loads(ai_thread)[-1]["content"] == "sdk reply")
+        check("the other executor's state does not survive the switch",
+              state_after is None)
+
+        # Switching back: Hermes gets no session it can use, so it opens a
+        # fresh one with the full task framing.
+        resp = client.post("/settings/executor", json={"executor": "hermes"})
+        check("switching back is accepted", resp.status_code == 200)
+        data = turn(client, "t1", "And back again.")
+        check("the turn runs on Hermes again", len(calls) == hermes_before + 1 and len(sdk_calls) == 1)
+        check("Hermes opens a fresh session after the switch",
+              calls[-1][1].startswith("aib-t1-") and calls[-1][1] != calls[0][1])
+        check("the fresh session gets the full task framing",
+              "Book a dentist appointment" in calls[-1][0])
+    finally:
+        sdk_executor.resolve = real_sdk_resolve
+        executor.readiness = real_readiness
+        app_module.readiness = real_readiness
+    # Back to the server default for the checks that follow.
+    client.post("/settings/executor", json={"executor": "hermes"})
+
+    # ---- the SDK executor bootstraps a thread it did not start ---------------
+    print("\n-- sdk bootstrap of an inherited thread --")
+    from agent import resolver
+    from agent.input_builder import HIDDEN_CONTEXT_SENTINEL
+    seen_inputs: list = []
+
+    class _FakeResult:
+        def __init__(self, items):
+            self._items = items
+        def to_input_list(self):
+            return self._items
+
+    class _FakeRunner:
+        @staticmethod
+        def run_sync(agent, items, max_turns=40):
+            seen_inputs.append(list(items))
+            return _FakeResult(list(items) + [{"role": "assistant", "content": "ok"}])
+
+    real_runner, real_build = resolver.Runner, resolver._build_agent
+    resolver.Runner = _FakeRunner
+    resolver._build_agent = lambda user_id, account_id=None: object()
+    try:
+        todo = {"todo_id": "t1", "title": "Book a dentist appointment", "source": "user"}
+        inherited = [{"role": "user", "content": "Sort this out."},
+                     {"role": "assistant", "content": "reply 1"}]
+        resolver.resolve_todo(todo, inherited, "Continue.", user_id)
+        items = seen_inputs[-1]
+        check("an inherited thread gets the hidden context in front",
+              items[0]["content"].startswith(HIDDEN_CONTEXT_SENTINEL)
+              and "Book a dentist appointment" in items[0]["content"])
+        check("the inherited bubbles follow it, then the new message",
+              items[1:3] == inherited and items[-1] == {"role": "user", "content": "Continue."})
+        own = resolver.resolve_todo(todo, [], "Start.", user_id)
+        resolver.resolve_todo(todo, own, "More.", user_id)
+        check("a thread it started is not re-bootstrapped",
+              sum(1 for i in seen_inputs[-1]
+                  if isinstance(i.get("content"), str) and i["content"].startswith(HIDDEN_CONTEXT_SENTINEL)) == 1)
+    finally:
+        resolver.Runner, resolver._build_agent = real_runner, real_build
 
     os.environ["TODO_EXECUTOR"] = "agents_sdk"
     check("TODO_EXECUTOR selects the SDK executor",

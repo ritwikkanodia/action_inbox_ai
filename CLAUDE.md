@@ -95,6 +95,7 @@ fine — a confusing way to lose an afternoon. Key routes:
 - `GET /todos/<id>/context` — source context (e.g. the Gmail thread) for the detail pane
 - `POST /todos/<id>/reset-thread` — clears `ai_thread`
 - `GET /settings`, `POST /settings/sources/<source>`, `/settings/sources/gmail/auth` — source connections
+- `POST /settings/executor` — which agent resolves this user's todos (see "Discovery and execution are decoupled")
 - `GET /digest/preview?user_id=…[&format=json]` — renders a user's digest without sending it
 
 ## Auth and per-user credentials
@@ -259,16 +260,37 @@ and answer `idle`. The UI treats that as "stop watching", and the run still pers
 when it finishes — but keep the web runtime at a single worker for the stop button to be
 reliable.
 
-`TODO_EXECUTOR` picks one, defaulting to `hermes`:
+**The executor is chosen per user, in Settings.** The choice lives in `user_state` under
+the `executor` key (`db.get_executor_choice`); `TODO_EXECUTOR` is only the server-wide
+default for users who have not chosen, and defaults to `hermes`. `GET /settings` returns an
+`executor` block — the selection, the default, and every option with a `ready` verdict from
+`executor.readiness` (Hermes: the binary resolves; Agents SDK: the package imports and
+`OPENAI_API_KEY` is set) — and `POST /settings/executor` refuses an option that is not ready,
+so a saved choice always starts a turn on the next message. `ask_ai` reads the choice when
+a turn starts and hands it to `_resolution_work`, which passes `executor=` to
+`executor.resolve`; a turn already running finishes on the executor it started with. The
+readiness probes are cheap on purpose (a `which`, a `find_spec`, an env lookup) because
+Settings runs them on every open — "ready" means the turn will start, not that it will
+succeed. Switching mid-thread is allowed: both executors read the same display log, but
+neither understands the other's `executor_state`, so the Agents SDK returns `None` for it
+(which drops the Hermes session name) and Hermes, finding none, opens a fresh session with
+the full task framing. The SDK side has one accommodation for this: a thread it did not
+start carries no task context in its bubbles (Hermes keeps that in its prompt), so
+`resolver.resolve_todo` prepends its hidden bootstrap turn when the first item is not one.
+
+The two executors:
 
 - **`hermes`** — shells out to the locally installed Hermes Agent CLI, which brings its own
   browser, terminal, file, and desktop tools. Needs the binary on the host, so it does **not**
   work in the deployed container.
 - **`agents_sdk`** (`agent/sdk_executor.py` → `agent/resolver.py`) — the original in-process
   OpenAI Agents SDK agent. The only executor that runs without a local CLI, so **the deployed
-  container must set this**. Keeps no out-of-band state; leaves `executor_state` NULL.
+  container must set this as `TODO_EXECUTOR`** (and Hermes will show as not ready there, so
+  nobody can pick it). Keeps no out-of-band state; leaves `executor_state` NULL.
 
-Adding an executor means one module implementing `resolve` plus a branch in `executor._load`.
+Adding an executor means one module implementing `resolve`, an entry in `executor.EXECUTORS`
+(name, label, description — what Settings shows), a branch in `executor._load`, and a probe
+in `executor.readiness`.
 
 - `agent/hermes_runner.py` and `agent/hermes_activity.py` are the only files that know about
   Hermes (plus `hermes_prompt.py`, which builds the text). The runner runs

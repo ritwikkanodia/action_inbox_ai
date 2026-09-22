@@ -5,6 +5,7 @@ from agents import Agent, Runner, WebSearchTool
 
 import llm_models
 from agent.input_builder import (
+    HIDDEN_CONTEXT_SENTINEL,
     SUGGESTED_ROUTE_LEAD,
     SUGGESTED_ROUTE_TAIL,
     build_initial_inputs,
@@ -33,6 +34,15 @@ def _build_agent(user_id: str, account_id: str | None = None) -> Agent:
     )
 
 
+def _has_bootstrap(thread: list[Any]) -> bool:
+    """True when this executor opened the thread — its hidden context turn leads."""
+    first = thread[0] if thread else None
+    if not isinstance(first, dict) or first.get("role") != "user":
+        return False
+    content = first.get("content")
+    return isinstance(content, str) and content.startswith(HIDDEN_CONTEXT_SENTINEL)
+
+
 def resolve_todo(
     todo: dict,
     thread: list[Any],
@@ -54,8 +64,16 @@ def resolve_todo(
     )
 
     input_items: list[Any]
-    if thread:
+    if thread and _has_bootstrap(thread):
         input_items = list(thread)
+        if user_message:
+            input_items.append({"role": "user", "content": framed})
+    elif thread:
+        # A thread another executor started: plain {role, content} bubbles
+        # with no task framing anywhere in them, because that executor kept
+        # the framing in its own prompt. Put the context in front, so the
+        # agent knows what the conversation was about, then continue it.
+        input_items = build_initial_inputs(todo, "", user_id) + list(thread)
         if user_message:
             input_items.append({"role": "user", "content": framed})
     else:
