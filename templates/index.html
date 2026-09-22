@@ -79,7 +79,7 @@
     <span class="count" id="todoCount">{{ todos|length }}</span>
     <button class="view-toggle-btn" id="viewToggleBtn" title="Toggle view" aria-label="Toggle view">List</button>
     <button class="new-todo-btn" id="installAppBtn" hidden>Install app</button>
-    <button class="new-todo-btn" id="openSettingsBtn">Settings</button>
+    <a class="new-todo-btn" id="openSettingsBtn" href="{{ url_for('settings_page') }}">Settings</a>
     <button class="new-todo-btn" id="openFormBtn">+ New</button>
     {% if user %}
     <span class="user-chip" title="{{ user.email }}">
@@ -188,27 +188,38 @@
   </section>
 </div>
 
-<div id="settings-modal">
-  <div id="settings-modal-box">
-    <div id="settings-modal-header">
-      <h2>Settings</h2>
-      <button id="settings-modal-close">×</button>
+<section id="settings-view" aria-labelledby="settings-heading"{% if initial_view != 'settings' %} hidden{% endif %}>
+  <div class="settings-page">
+    <a class="back-btn settings-back" id="settingsBackBtn" href="{{ url_for('index') }}">← Back to inbox</a>
+    <div class="settings-page-header">
+      <h2 id="settings-heading">Settings</h2>
+      <span class="settings-page-hint">Sources, agent and notifications for {{ user.email if user else 'you' }}</span>
     </div>
     <div id="settings-body">
-      <div class="source-card" id="gmail-card">
+      <div class="source-card" id="gmail-card" data-source="gmail">
         <div class="source-card-header">
           <span class="source-card-name">Gmail</span>
           <span class="source-connected-badge off" id="gmail-status">Not connected</span>
+          <label class="source-toggle" title="Discover todos from Gmail">
+            <input type="checkbox" class="source-toggle-input" data-source="gmail" checked>
+            <span class="source-toggle-track"></span>
+            <span class="source-toggle-label">On</span>
+          </label>
         </div>
         <div class="source-card-body">
           <div id="gmail-accounts"></div>
           <button class="btn-connect" id="gmail-connect-btn">Connect another account</button>
         </div>
       </div>
-      <div class="source-card" id="fathom-card">
+      <div class="source-card" id="fathom-card" data-source="fathom">
         <div class="source-card-header">
           <span class="source-card-name">Fathom</span>
           <span class="source-connected-badge off" id="fathom-status">Not connected</span>
+          <label class="source-toggle" title="Discover todos from Fathom meetings">
+            <input type="checkbox" class="source-toggle-input" data-source="fathom" checked>
+            <span class="source-toggle-track"></span>
+            <span class="source-toggle-label">On</span>
+          </label>
         </div>
         <div class="source-card-body">
           <label for="fathom-key-input">API Key</label>
@@ -222,6 +233,8 @@
           </div>
         </div>
       </div>
+      <!-- Opt-in, macOS-only discovery sources; filled in only when the server runs them. -->
+      <div id="extra-sources"></div>
       <div class="source-card" id="executor-card">
         <div class="source-card-header">
           <span class="source-card-name">Resolution agent</span>
@@ -251,10 +264,11 @@
       </div>
     </div>
   </div>
-</div>
+</section>
 
 <script id="todos-data" type="application/json">{{ todos_json | safe }}</script>
-<script>window.__FRESH_SIGNUP = {{ 'true' if fresh_signup else 'false' }};</script>
+<script>window.__FRESH_SIGNUP = {{ 'true' if fresh_signup else 'false' }};
+window.__INITIAL_VIEW = {{ initial_view | tojson }};</script>
 <script src="{{ url_for('static', filename='js/app.js') }}"></script>
 <script src="{{ url_for('static', filename='js/pwa.js') }}" defer></script>
 </body>

@@ -177,7 +177,7 @@ function clearSelection() {
   detailContent.classList.add('hidden');
   detailContent.innerHTML = '';
   appEl.classList.remove('detail-open');
-  if (location.hash) history.replaceState(null, '', location.pathname);
+  if (location.hash && location.pathname === '/') history.replaceState(null, '', location.pathname);
 }
 
 document.getElementById('backBtn').addEventListener('click', () => {
@@ -199,7 +199,7 @@ function selectTodo(id) {
   renderDetail(t);
   appEl.classList.add('detail-open');
 
-  if (location.hash !== `#todo/${id}`) {
+  if (location.pathname === '/' && location.hash !== `#todo/${id}`) {
     history.replaceState(null, '', `#todo/${id}`);
   }
 }
@@ -1209,8 +1209,18 @@ document.getElementById('ntTitle').addEventListener('keydown', e => {
   if (first) selectTodo(first.dataset.id);
 })();
 
-// ---------------- Settings modal ----------------
-const settingsModal = document.getElementById('settings-modal');
+// ---------------- Settings view ----------------
+// Settings is a view at /settings inside the same shell, not an overlay. The
+// server renders the same template for both paths and the frontend swaps
+// views with pushState, so Back is instant and a reload lands where you were.
+// The header link and the Back link are real anchors: without JS they still
+// work as full navigations.
+const settingsView = document.getElementById('settings-view');
+const SETTINGS_PATH = '/settings';
+
+function inSettingsView() {
+  return document.body.classList.contains('view-settings');
+}
 
 function setSourceConnected(prefix, on, hint) {
   const status = document.getElementById(`${prefix}-status`);
@@ -1319,20 +1329,111 @@ function renderExecutorCard(executor) {
   });
 }
 
-function openSettingsModal() {
-  settingsModal.classList.add('open');
-  fetch('/settings').then(r => r.json()).then(data => {
-    const { fathom, gmail } = data.sources;
+// Per-user pause for a discovery source. The poller re-reads the flag every
+// cycle, so flipping it here takes effect on the next poll. Connections are
+// untouched: a paused source keeps its accounts and keys.
+function setSourceToggle(source, enabled) {
+  const card = document.querySelector(`.source-card[data-source="${source}"]`);
+  if (!card) return;
+  const input = card.querySelector('.source-toggle-input');
+  const label = card.querySelector('.source-toggle-label');
+  if (input) input.checked = enabled;
+  if (label) label.textContent = enabled ? 'On' : 'Paused';
+  card.classList.toggle('paused', !enabled);
+}
+
+function bindSourceToggle(input) {
+  input.addEventListener('change', () => {
+    const source = input.dataset.source;
+    const enabled = input.checked;
+    input.disabled = true;
+    fetch(`/settings/sources/${encodeURIComponent(source)}/enabled`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled }),
+    })
+      .then(r => r.json())
+      .then(data => { setSourceToggle(source, data.ok ? data.enabled : !enabled); })
+      .catch(() => setSourceToggle(source, !enabled))
+      .finally(() => { input.disabled = false; });
+  });
+}
+
+// The opt-in macOS sources have nothing to connect, so their cards are just
+// a description and the pause toggle, and exist only when the server runs them.
+function renderExtraSources(extra) {
+  const container = document.getElementById('extra-sources');
+  container.innerHTML = (extra || []).map(src => `
+    <div class="source-card" data-source="${escapeHtml(src.name)}">
+      <div class="source-card-header">
+        <span class="source-card-name">${escapeHtml(src.label)}</span>
+        <span class="source-connected-badge on">Local</span>
+        <label class="source-toggle" title="Discover todos from ${escapeHtml(src.label)}">
+          <input type="checkbox" class="source-toggle-input" data-source="${escapeHtml(src.name)}">
+          <span class="source-toggle-track"></span>
+          <span class="source-toggle-label">On</span>
+        </label>
+      </div>
+      <div class="source-card-body">
+        <span class="source-card-hint">${escapeHtml(src.description)}</span>
+      </div>
+    </div>`).join('');
+  container.querySelectorAll('.source-toggle-input').forEach(bindSourceToggle);
+  (extra || []).forEach(src => setSourceToggle(src.name, src.enabled));
+}
+
+function loadSettings() {
+  fetch('/settings.json').then(r => r.json()).then(data => {
+    const { fathom, gmail, extra } = data.sources;
     setSourceConnected('fathom', fathom.connected, fathom.api_key_preview);
     window.__settings = { gmailGrantUrlTemplate: gmail.grant_url_template };
     renderGmailAccounts(gmail.accounts || []);
+    setSourceToggle('gmail', gmail.enabled !== false);
+    setSourceToggle('fathom', fathom.enabled !== false);
+    renderExtraSources(extra || []);
     renderExecutorCard(data.executor || { selected: null, default: null, options: [] });
     renderPushCard(data.notifications || { configured: false, subscription_count: 0 });
   });
 }
-document.getElementById('openSettingsBtn').addEventListener('click', openSettingsModal);
-document.getElementById('settings-modal-close').addEventListener('click', () => settingsModal.classList.remove('open'));
-settingsModal.addEventListener('click', e => { if (e.target === settingsModal) settingsModal.classList.remove('open'); });
+
+function showSettingsView({ push } = { push: true }) {
+  document.body.classList.add('view-settings');
+  settingsView.hidden = false;
+  if (push && location.pathname !== SETTINGS_PATH) {
+    history.pushState({ view: 'settings' }, '', SETTINGS_PATH);
+  }
+  window.scrollTo(0, 0);
+  settingsView.scrollTop = 0;
+  loadSettings();
+}
+
+function showInboxView({ push } = { push: true }) {
+  document.body.classList.remove('view-settings');
+  settingsView.hidden = true;
+  if (push && location.pathname !== '/') {
+    history.pushState({ view: 'inbox' }, '', selectedId ? `/#todo/${selectedId}` : '/');
+  }
+}
+
+document.getElementById('openSettingsBtn').addEventListener('click', (e) => {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // let "open in new tab" through
+  e.preventDefault();
+  showSettingsView();
+});
+document.getElementById('settingsBackBtn').addEventListener('click', (e) => {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  showInboxView();
+});
+window.addEventListener('popstate', () => {
+  if (location.pathname === SETTINGS_PATH) showSettingsView({ push: false });
+  else showInboxView({ push: false });
+});
+document.querySelectorAll('#gmail-card .source-toggle-input, #fathom-card .source-toggle-input')
+  .forEach(bindSourceToggle);
+if (window.__INITIAL_VIEW === 'settings' || location.pathname === SETTINGS_PATH) {
+  showSettingsView({ push: false });
+}
 
 document.getElementById('fathom-connect-btn').addEventListener('click', () => {
   const key = document.getElementById('fathom-key-input').value.trim();

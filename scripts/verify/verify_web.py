@@ -20,7 +20,11 @@ os.environ.setdefault("GOOGLE_CLIENT_SECRET", "verify-client-secret")
 import sqlite3
 
 import app as app_module
-from db import init_db, upsert_user, set_source_credentials, save_todo
+
+# app.py's load_dotenv(override=True) has run by now; the developer's .env may
+# opt into the macOS sources, so pin the default set for the "extra" checks.
+os.environ["ENABLED_SOURCES"] = "gmail,fathom,morning_digest"
+from db import init_db, upsert_user, set_source_credentials, save_todo, is_source_enabled
 
 
 def check(label: str, condition: bool) -> None:
@@ -63,8 +67,40 @@ def main() -> None:
         sess["user_id"] = user_id
         sess["user_email"] = "dev@example.com"
 
-    settings = client.get("/settings").get_json()
+    page = client.get("/settings")
+    check("settings is a page", page.status_code == 200
+          and 'id="settings-view"' in page.get_data(as_text=True))
+    check("settings page opens on the settings view",
+          'window.__INITIAL_VIEW = "settings"' in page.get_data(as_text=True))
+    check("inbox renders the settings view hidden",
+          'id="settings-view" aria-labelledby="settings-heading" hidden' in client.get("/").get_data(as_text=True))
+
+    settings = client.get("/settings.json").get_json()
     accounts = settings["sources"]["gmail"]["accounts"]
+    check("sources start enabled",
+          settings["sources"]["gmail"]["enabled"] is True and settings["sources"]["fathom"]["enabled"] is True)
+    check("opt-in sources absent by default", settings["sources"]["extra"] == [])
+
+    resp = client.post("/settings/sources/gmail/enabled", json={"enabled": False})
+    check("pausing gmail succeeds", resp.get_json() == {"ok": True, "source": "gmail", "enabled": False})
+    check("pause persisted",
+          client.get("/settings.json").get_json()["sources"]["gmail"]["enabled"] is False)
+    check("pause leaves accounts connected",
+          len(client.get("/settings.json").get_json()["sources"]["gmail"]["accounts"]) == 2)
+    check("poller-side helper agrees",
+          is_source_enabled(sqlite3.connect(os.environ["DB_PATH"]), user_id, "gmail") is False)
+    check("resume works",
+          client.post("/settings/sources/gmail/enabled", json={"enabled": True}).get_json()["enabled"] is True)
+    check("unknown source rejected",
+          client.post("/settings/sources/morning_digest/enabled", json={"enabled": False}).status_code == 400)
+    check("non-boolean rejected",
+          client.post("/settings/sources/fathom/enabled", json={"enabled": "no"}).status_code == 400)
+
+    os.environ["ENABLED_SOURCES"] = "gmail,fathom,browser_history"
+    extra = client.get("/settings.json").get_json()["sources"]["extra"]
+    check("server-enabled opt-in source is listed",
+          [e["name"] for e in extra] == ["browser_history"] and extra[0]["enabled"] is True)
+    os.environ["ENABLED_SOURCES"] = "gmail,fathom,morning_digest"
     check("settings lists both accounts", len(accounts) == 2)
     check("settings carries addresses",
           {a["email"] for a in accounts} == {"alice@example.com", "bob@example.com"})
@@ -89,7 +125,7 @@ def main() -> None:
     check("only bob remains after scoped disconnect",
           [a["email"] for a in body["accounts"]] == ["bob@example.com"])
 
-    after = client.get("/settings").get_json()["sources"]["gmail"]["accounts"]
+    after = client.get("/settings.json").get_json()["sources"]["gmail"]["accounts"]
     check("disconnect persisted", [a["email"] for a in after] == ["bob@example.com"])
 
     html2 = client.get("/").get_data(as_text=True)

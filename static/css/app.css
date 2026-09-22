@@ -1201,43 +1201,71 @@
 
     .ai-thread-header { margin-top: 32px; }
 
-    /* Settings modal */
-    #settings-modal {
-      display: none; position: fixed; inset: 0;
-      background: rgba(0, 0, 0, 0.66);
-      backdrop-filter: blur(3px);
-      z-index: 100;
-      align-items: center; justify-content: center;
-    }
-    #settings-modal.open { display: flex; }
-    #settings-modal-box {
+    /* Settings view — a page in the same shell, swapped in for #app */
+    #settings-view {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
       background: var(--paper-soft);
-      border: 1px solid var(--rule-strong);
-      border-radius: 14px;
-      width: min(540px, 92vw);
-      display: flex; flex-direction: column;
-      overflow: hidden;
-      box-shadow: 0 24px 70px rgba(0, 0, 0, 0.6);
+      padding: 48px 56px 80px;
     }
-    #settings-modal-header {
-      padding: 20px 24px 16px;
+    #settings-view[hidden] { display: none; }
+    body.view-settings #app { display: none; }
+    .settings-page {
+      max-width: 640px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+    }
+    .settings-back { display: inline-flex; align-self: flex-start; margin-bottom: 24px; }
+    .settings-page-header {
+      display: flex; flex-direction: column; gap: 6px;
+      padding-bottom: 20px; margin-bottom: 24px;
       border-bottom: 1px solid var(--rule);
-      display: flex; align-items: baseline; justify-content: space-between;
     }
-    #settings-modal-header h2 {
+    .settings-page-header h2 {
       font-family: var(--sans);
       font-weight: 600;
-      font-size: 16px;
+      font-size: 24px;
       color: var(--ink);
-      letter-spacing: -0.005em;
+      letter-spacing: -0.01em;
     }
-    #settings-modal-close {
-      font-size: 20px; color: var(--ink-3);
-      background: none; border: none; cursor: pointer;
-      transition: color 0.15s;
+    .settings-page-hint { font-size: 13px; color: var(--ink-3); }
+    #settings-body { display: flex; flex-direction: column; gap: 20px; }
+    #extra-sources { display: contents; }
+
+    /* Per-source pause switch, in the card header */
+    .source-toggle {
+      margin-left: auto;
+      display: inline-flex; align-items: center; gap: 8px;
+      cursor: pointer; user-select: none;
     }
-    #settings-modal-close:hover { color: var(--accent); }
-    #settings-body { padding: 24px; display: flex; flex-direction: column; gap: 20px; }
+    .source-toggle-input { position: absolute; opacity: 0; width: 0; height: 0; }
+    .source-toggle-track {
+      width: 30px; height: 16px; border-radius: 999px;
+      background: var(--pill-stone-bg);
+      border: 1px solid var(--rule-strong);
+      position: relative;
+      transition: background 0.15s, border-color 0.15s;
+    }
+    .source-toggle-track::after {
+      content: '';
+      position: absolute; top: 2px; left: 2px;
+      width: 10px; height: 10px; border-radius: 50%;
+      background: var(--ink-3);
+      transition: transform 0.15s, background 0.15s;
+    }
+    .source-toggle-input:checked + .source-toggle-track { background: var(--accent); border-color: var(--accent); }
+    .source-toggle-input:checked + .source-toggle-track::after { transform: translateX(14px); background: var(--paper); }
+    .source-toggle-input:focus-visible + .source-toggle-track { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .source-toggle-input:disabled + .source-toggle-track { opacity: 0.5; }
+    .source-toggle-label {
+      font-family: var(--mono);
+      font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase;
+      color: var(--ink-3);
+      min-width: 44px;
+    }
+    .source-card.paused .source-card-body { opacity: 0.55; }
     .source-card {
       border: 1px solid var(--rule);
       border-radius: 10px;
@@ -1538,6 +1566,7 @@
       header.top { padding: 18px 24px 14px; flex-wrap: wrap; gap: 12px; }
       .detail-title { font-size: 30px; }
       .gmail-banner { padding: 12px 24px; }
+      #settings-view { padding: 24px 16px 60px; }
     }
     @media (max-width: 540px) {
       header.top::before { display: none; }

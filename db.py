@@ -683,6 +683,20 @@ def set_system_last_polled_at(conn: sqlite3.Connection, user_id: str, ts: str) -
 EXECUTOR_STATE_KEY = "executor"
 
 
+def source_enabled_key(source: str) -> str:
+    return f"source:{source}:enabled"
+
+
+def is_source_enabled(conn: sqlite3.Connection, user_id: str, source: str) -> bool:
+    """Whether this user has the source discovering. Unset means enabled —
+    pausing is the deliberate act, so only an explicit "0" turns it off."""
+    return get_user_state(conn, user_id, source_enabled_key(source)) != "0"
+
+
+def set_source_enabled(conn: sqlite3.Connection, user_id: str, source: str, enabled: bool) -> None:
+    set_user_state(conn, user_id, source_enabled_key(source), "1" if enabled else "0")
+
+
 def get_executor_choice(conn: sqlite3.Connection, user_id: str) -> str | None:
     return get_user_state(conn, user_id, EXECUTOR_STATE_KEY)
 

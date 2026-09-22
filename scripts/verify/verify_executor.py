@@ -297,7 +297,7 @@ def main() -> None:
 
     # ---- per-user selection from Settings -----------------------------------
     print("\n-- per-user executor --")
-    data = client.get("/settings").get_json()
+    data = client.get("/settings.json").get_json()
     ex = data["executor"]
     check("settings reports the executor block",
           ex["selected"] == "hermes" and ex["default"] == "hermes")
@@ -354,7 +354,7 @@ def main() -> None:
               resp.get_json()["executor"]["selected"] == "agents_sdk")
         check("the choice is stored per user", stored_choice() == "agents_sdk")
         check("settings now reports the choice",
-              client.get("/settings").get_json()["executor"]["selected"] == "agents_sdk")
+              client.get("/settings.json").get_json()["executor"]["selected"] == "agents_sdk")
 
         hermes_before = len(calls)
         thread_before, _ = row(conn, "t1")
