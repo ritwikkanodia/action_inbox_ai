@@ -750,6 +750,88 @@ def clear_chat(conn: sqlite3.Connection, user_id: str) -> None:
     conn.commit()
 
 
+# WhatsApp linking, also in user_state. `whatsapp:number` is the linked E.164
+# number — one per user, and one user per number, enforced on write. The
+# reverse lookup the webhook needs is a scan of that key, which is fine at this
+# scale. `whatsapp:pending` is the code the user has to send from their phone
+# to prove the number is theirs: JSON {number, code, expires_at}.
+WHATSAPP_NUMBER_KEY = "whatsapp:number"
+WHATSAPP_PENDING_KEY = "whatsapp:pending"
+
+
+def get_whatsapp_number(conn: sqlite3.Connection, user_id: str) -> str | None:
+    return get_user_state(conn, user_id, WHATSAPP_NUMBER_KEY)
+
+
+def find_user_by_whatsapp(conn: sqlite3.Connection, number: str) -> str | None:
+    row = conn.execute(
+        "SELECT user_id FROM user_state WHERE key = ? AND value = ?",
+        (WHATSAPP_NUMBER_KEY, number),
+    ).fetchone()
+    return row[0] if row else None
+
+
+def set_whatsapp_number(conn: sqlite3.Connection, user_id: str, number: str) -> None:
+    """Link `number` to this user, taking it away from anyone else who had it,
+    and drop the pending code it was verified with."""
+    conn.execute(
+        "DELETE FROM user_state WHERE key = ? AND value = ? AND user_id != ?",
+        (WHATSAPP_NUMBER_KEY, number, user_id),
+    )
+    conn.execute(
+        "INSERT INTO user_state (user_id, key, value) VALUES (?, ?, ?) "
+        "ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value",
+        (user_id, WHATSAPP_NUMBER_KEY, number),
+    )
+    conn.execute(
+        "DELETE FROM user_state WHERE user_id = ? AND key = ?",
+        (user_id, WHATSAPP_PENDING_KEY),
+    )
+    conn.commit()
+
+
+def clear_whatsapp(conn: sqlite3.Connection, user_id: str) -> None:
+    conn.execute(
+        "DELETE FROM user_state WHERE user_id = ? AND key IN (?, ?)",
+        (user_id, WHATSAPP_NUMBER_KEY, WHATSAPP_PENDING_KEY),
+    )
+    conn.commit()
+
+
+def set_whatsapp_pending(conn: sqlite3.Connection, user_id: str, number: str,
+                         code: str, expires_at: str) -> None:
+    set_user_state(conn, user_id, WHATSAPP_PENDING_KEY,
+                   json.dumps({"number": number, "code": code, "expires_at": expires_at}))
+
+
+def get_whatsapp_pending(conn: sqlite3.Connection, user_id: str) -> dict | None:
+    raw = get_user_state(conn, user_id, WHATSAPP_PENDING_KEY)
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def find_pending_whatsapp_link(conn: sqlite3.Connection, number: str, code: str,
+                               now_iso: str) -> str | None:
+    """The user whose unexpired pending link is for `number` with `code`, if any."""
+    rows = conn.execute(
+        "SELECT user_id, value FROM user_state WHERE key = ?", (WHATSAPP_PENDING_KEY,)
+    ).fetchall()
+    for user_id, raw in rows:
+        try:
+            data = json.loads(raw)
+        except ValueError:
+            continue
+        if (isinstance(data, dict) and data.get("number") == number
+                and data.get("code") == code and str(data.get("expires_at", "")) > now_iso):
+            return user_id
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Todos
 # ---------------------------------------------------------------------------

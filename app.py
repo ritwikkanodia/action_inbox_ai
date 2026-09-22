@@ -33,6 +33,8 @@ from flask import (
 )
 from werkzeug.middleware.proxy_fix import ProxyFix
 
+import whatsapp
+
 from db import (
     init_db,
     save_user_todo,
@@ -58,6 +60,13 @@ from db import (
     get_chat,
     set_chat,
     clear_chat,
+    get_whatsapp_number,
+    find_user_by_whatsapp,
+    set_whatsapp_number,
+    clear_whatsapp,
+    set_whatsapp_pending,
+    get_whatsapp_pending,
+    find_pending_whatsapp_link,
 )
 from pollers.gmail.poller import BACKFILL_PENDING_SUFFIX, BACKFILLED_SUFFIX
 from pollers.digest import poller as digest_poller
@@ -796,6 +805,37 @@ def _run_payload(run) -> dict:
     }
 
 
+def _start_chat_turn(db, user_id: str, user_message: str, on_finish=None):
+    """Register one chat turn on the background registry and return the run.
+
+    Shared by the web view and the WhatsApp webhook — same thread, same run
+    key, so whichever surface starts a turn, the other sees it. `on_finish`
+    is called with `(thread, status)` once the turn has been persisted; the
+    webhook uses it to send the reply back to the phone. It is wrapped so a
+    failure in it can't change what the run records.
+    """
+    raw_thread, state = get_chat(db, user_id)
+    thread = _load_thread(raw_thread)
+    seeded = thread + [{"role": "user", "content": user_message}]
+    work = _resolution_work(
+        chat_todo(), thread, user_message, user_id, state,
+        executor=get_executor_choice(db, user_id),
+        persist=lambda final, new_state: _persist_chat(user_id, final, new_state),
+    )
+    if on_finish is not None:
+        inner = work
+
+        def work(cancel, progress):
+            final, status = inner(cancel, progress)
+            try:
+                on_finish(final, status)
+            except Exception:
+                app.logger.exception("Chat on_finish hook failed")
+            return final, status
+
+    return runs.start(user_id, CHAT_TODO_ID, seeded, work)
+
+
 @app.route("/chat/ask-ai", methods=["POST"])
 @login_required
 def chat_ask_ai():
@@ -810,23 +850,11 @@ def chat_ask_ai():
     if active is not None and active.status == runs.RUNNING:
         return jsonify(_run_payload(active))
 
-    raw_thread, state = get_chat(db, user_id)
-    thread = _load_thread(raw_thread)
     if not user_message:
-        return jsonify({"status": "idle", "thread": _thread_for_client(thread)})
+        raw_thread, _ = get_chat(db, user_id)
+        return jsonify({"status": "idle", "thread": _thread_for_client(_load_thread(raw_thread))})
 
-    seeded = thread + [{"role": "user", "content": user_message}]
-    run = runs.start(
-        user_id,
-        CHAT_TODO_ID,
-        seeded,
-        _resolution_work(
-            chat_todo(), thread, user_message, user_id, state,
-            executor=get_executor_choice(db, user_id),
-            persist=lambda final, new_state: _persist_chat(user_id, final, new_state),
-        ),
-    )
-    return jsonify(_run_payload(run))
+    return jsonify(_run_payload(_start_chat_turn(db, user_id, user_message)))
 
 
 @app.route("/chat/run", methods=["GET"])
@@ -859,6 +887,133 @@ def reset_chat_thread():
     runs.discard(user_id, CHAT_TODO_ID)
     clear_chat(db, user_id)
     return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# WhatsApp — the chat, reached from the user's phone over Twilio.
+#
+# Linking: the user asks Settings for a code and sends it from their WhatsApp
+# to the app's number; the webhook matches it and stores the number. From then
+# on a message from that number is a chat turn for that user, and the reply is
+# sent back when the run finishes. See whatsapp.py for the Twilio half.
+# ---------------------------------------------------------------------------
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _whatsapp_settings(db, user_id: str) -> dict:
+    """What the Settings card renders."""
+    pending = get_whatsapp_pending(db, user_id)
+    if pending and str(pending.get("expires_at", "")) <= _now_iso():
+        pending = None
+    return {
+        "configured": whatsapp.configured(),
+        "number": get_whatsapp_number(db, user_id),
+        "from_number": whatsapp.from_number().removeprefix("whatsapp:") or None,
+        "sandbox_keyword": whatsapp.sandbox_keyword() or None,
+        "pending": pending,
+    }
+
+
+@app.route("/settings/whatsapp/link", methods=["POST"])
+@login_required
+def whatsapp_link():
+    """Issue a linking code for a number. Linking completes in the webhook."""
+    db = get_db()
+    user_id = current_user_id()
+    assert user_id
+    if not whatsapp.configured():
+        return jsonify({"error": "WhatsApp is not configured on this server."}), 400
+    data = request.get_json(force=True, silent=True) or {}
+    number = whatsapp.normalize_number(data.get("number"))
+    if not number:
+        return jsonify({"error": "Enter the number in international format, like +14155550100."}), 400
+    expires_at = (datetime.now(timezone.utc)
+                  + timedelta(seconds=whatsapp.CODE_TTL_SECONDS)).isoformat()
+    set_whatsapp_pending(db, user_id, number, whatsapp.new_code(), expires_at)
+    return jsonify({"ok": True, "whatsapp": _whatsapp_settings(db, user_id)})
+
+
+@app.route("/settings/whatsapp/unlink", methods=["POST"])
+@login_required
+def whatsapp_unlink():
+    db = get_db()
+    user_id = current_user_id()
+    assert user_id
+    clear_whatsapp(db, user_id)
+    return jsonify({"ok": True, "whatsapp": _whatsapp_settings(db, user_id)})
+
+
+def _twiml_response(message: str | None = None):
+    return app.response_class(whatsapp.twiml(message), mimetype="text/xml")
+
+
+@app.route("/whatsapp/webhook", methods=["POST"])
+def whatsapp_webhook():
+    """Twilio's inbound-message hook. No login: the caller is Twilio, proven by
+    its request signature, and the user is whoever the sending number is linked
+    to. Answers at once with a short TwiML message; the agent's real reply is
+    sent from `on_finish` minutes later, since a turn takes as long as it takes.
+    """
+    if not whatsapp.configured():
+        return ("WhatsApp is not configured.", 404)
+    params = request.form.to_dict()
+    # Two views of the URL Twilio signed: Flask's own reconstruction (right
+    # behind ProxyFix) and the configured public base (right when it isn't).
+    urls = [request.url, BASE_URL + request.full_path.rstrip("?")]
+    if not whatsapp.validate_signature(urls, params, request.headers.get("X-Twilio-Signature")):
+        return ("Bad signature.", 403)
+
+    number = whatsapp.normalize_number(params.get("From"))
+    body = (params.get("Body") or "").strip()
+    if not number:
+        return _twiml_response()
+
+    db = get_db()
+    # A pending code is checked before the existing link: the phone that sent
+    # it is the proof of control, so a number can be re-verified into another
+    # account (or the same one) without unlinking first.
+    if body.isdigit():
+        pending_user = find_pending_whatsapp_link(db, number, body, _now_iso())
+        if pending_user is not None:
+            set_whatsapp_number(db, pending_user, number)
+            app.logger.info("WhatsApp linked: user=%s number=%s", pending_user, number)
+            return _twiml_response(
+                "Linked. Message me here any time — it's the same conversation as Chat in the app."
+            )
+
+    user_id = find_user_by_whatsapp(db, number)
+    if user_id is None:
+        return _twiml_response(
+            "This number isn't linked to an account yet. Open "
+            f"{BASE_URL}/settings, find the WhatsApp card, and follow the steps."
+        )
+
+    if not body:
+        # Media, a location, a contact card: nothing the agent can read yet.
+        return _twiml_response("I can only read text here for now — send it as a message.")
+
+    active = runs.get(user_id, CHAT_TODO_ID)
+    if active is not None and active.status == runs.RUNNING:
+        return _twiml_response("Still working on your last message — I'll reply here when it's done.")
+
+    # A digit reply answers the question the agent asked last, the way a chip
+    # click does in the web view. Anything else is the message itself.
+    raw_thread, _ = get_chat(db, user_id)
+    shown = _thread_for_client(_load_thread(raw_thread))
+    last = shown[-1] if shown and shown[-1].get("role") == "assistant" else {}
+    message = whatsapp.answer_from_reply(body, last.get("questions")) or body
+
+    def on_finish(final_thread, status):
+        bubbles = _thread_for_client(final_thread)
+        if bubbles and bubbles[-1].get("role") == "assistant":
+            whatsapp.send_message(number, whatsapp.format_reply(bubbles[-1]))
+
+    _start_chat_turn(db, user_id, message, on_finish=on_finish)
+    app.logger.info("WhatsApp turn started: user=%s", user_id)
+    return _twiml_response("On it — I'll reply here when it's done.")
 
 
 # ---------------------------------------------------------------------------
@@ -951,6 +1106,7 @@ def get_settings():
             "subscription_count": count_push_subscriptions(db, user_id),
         },
         "executor": describe_executors(get_executor_choice(db, user_id)),
+        "whatsapp": _whatsapp_settings(db, user_id),
     })
 
 

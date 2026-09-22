@@ -47,7 +47,9 @@ Invalid signature or unconfigured server → 403.
 
 Given `From` (`whatsapp:+…`) and `Body`:
 
-- Unknown number, body is a pending code for that number → link, reply "Linked".
+- Body is a pending code for that number → link (taking the number from any other
+  account that held it; the phone that sent the code is the proof), reply "Linked".
+  Checked before the existing link, so a number can be re-verified without unlinking.
 - Unknown number otherwise → reply with a pointer to Settings.
 - Known user, run already in flight → reply "still working on your last message".
 - Known user, otherwise → if the last assistant bubble asked a question and the body is
