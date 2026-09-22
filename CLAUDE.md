@@ -49,6 +49,13 @@ one failing source never kills the cycle. Sources are gated by `ENABLED_SOURCES`
 set is `gmail,fathom,morning_digest`. `browser_history` and `system` are macOS-only and opt-in.
 The morning digest is the exception to the per-source loop: it iterates `list_all_users`, not
 just connected ones, so unconnected users get a "connect Gmail" nudge instead of nothing.
+The source registry (`KNOWN_SOURCES`, the default set, `enabled_sources()`, and the labels
+Settings shows) lives in `sources.py`, shared by the poller and the web UI. On top of the
+server-wide set, **each user can pause any discovery source from Settings**
+(`db.is_source_enabled`, a `source:<name>:enabled` key in `user_state`; unset means on).
+The poller checks that flag per user, per source, every cycle, so a pause lands within one
+poll interval and never needs a restart. Pausing leaves connections and cursors alone.
+The morning digest is a sender, not a discovery source, and has no per-user toggle.
 
 **Push notifications** (`push_notify.py`): each poller calls `notify_new_todo(conn, user_id,
 todo_id)` right where it branches on the `save_*_todo` return value (which is the `todo_id`,
@@ -94,7 +101,13 @@ fine — a confusing way to lose an afternoon. Key routes:
 - `GET /todos/<id>/run`, `POST /todos/<id>/run/stop` — poll and stop the running turn
 - `GET /todos/<id>/context` — source context (e.g. the Gmail thread) for the detail pane
 - `POST /todos/<id>/reset-thread` — clears `ai_thread`
-- `GET /settings`, `POST /settings/sources/<source>`, `/settings/sources/gmail/auth` — source connections
+- `GET /settings` — the Settings *page*: the same shell as `/` with the settings view in front
+  (`initial_view`), so Back is instant and the digest's "connect Gmail" link lands somewhere
+  real. The frontend swaps views with `pushState`; the header link and Back are real anchors.
+  The Gmail OAuth callback redirects here, so a freshly connected account is on screen.
+- `GET /settings.json` — what the settings view fetches; `POST /settings/sources/<source>`,
+  `/settings/sources/gmail/auth` — source connections
+- `POST /settings/sources/<source>/enabled` — per-user pause/resume of a discovery source
 - `POST /settings/executor` — which agent resolves this user's todos (see "Discovery and execution are decoupled")
 - `GET /digest/preview?user_id=…[&format=json]` — renders a user's digest without sending it
 
@@ -459,11 +472,14 @@ Use `/digest/preview` to iterate on the template — it renders without sending.
 ## Adding a source
 
 1. New package under `pollers/`, exposing `poll(conn, user_id) -> int` (count saved).
-2. Add the name to `KNOWN_SOURCES` in `main.py`, and to `DEFAULT_ENABLED_SOURCES` only if it's
-   cross-platform and safe on by default.
+2. Add the name to `KNOWN_SOURCES` in `sources.py`, and to `DEFAULT_ENABLED_SOURCES` only if
+   it's cross-platform and safe on by default. Add a `DISCOVERY_SOURCES` entry (label and
+   description) so Settings can show its pause toggle — sources without a connection UI get
+   a generated card from that entry alone.
 3. Add a `save_<source>_todo` helper in `db.py` with a stable `dedup_key`, and extend the
    `source` CHECK constraint *and* the Python-side enum validation.
-4. Wire it into the per-user block in `main()` inside its own `try/except`.
+4. Wire it into the per-user block in `main()` inside its own `try/except`, gated on
+   `wants(<name>)` so the user's pause applies.
 
 ## Deployment
 

@@ -22,32 +22,21 @@ from pollers.fathom import poller as fathom_poller
 from pollers.browser import poller as browser_history_poller
 from pollers.system import poller as system_poller
 from pollers.digest import poller as digest_poller
-from db import init_db, list_active_users, list_all_users, list_gmail_accounts, save_todo
+from db import (
+    init_db, is_source_enabled, list_active_users, list_all_users,
+    list_gmail_accounts, save_todo,
+)
 from push_notify import notify_new_todo
+from sources import enabled_sources as _enabled_sources
 
 DB_PATH = os.environ.get("DB_PATH", "gmail_events.db")
 POLL_INTERVAL_SECONDS = 30
-KNOWN_SOURCES = {"gmail", "fathom", "browser_history", "system", "morning_digest"}
-# `browser_history` (reads Dia browser history) and `system` (snapshots
-# macOS Downloads/Desktop/Documents) are macOS-specific and opt-in.
-DEFAULT_ENABLED_SOURCES = {"gmail", "fathom", "morning_digest"}
 
 
 def _ensure_db_parent_dir() -> None:
     parent = os.path.dirname(DB_PATH)
     if parent:
         os.makedirs(parent, exist_ok=True)
-
-
-def _enabled_sources() -> set[str]:
-    raw = os.environ.get("ENABLED_SOURCES")
-    if not raw:
-        return set(DEFAULT_ENABLED_SOURCES)
-    enabled = {source.strip() for source in raw.split(",") if source.strip()}
-    unknown = enabled - KNOWN_SOURCES
-    if unknown:
-        print(f"[config] Ignoring unknown ENABLED_SOURCES values: {', '.join(sorted(unknown))}")
-    return enabled & KNOWN_SOURCES
 
 
 def _truncate(s: str, n: int) -> str:
@@ -142,19 +131,24 @@ def main():
             for user in users:
                 user_label = user.get("email") or user["user_id"][:8]
                 print(f"--- polling for {user_label} ---")
-                if "gmail" in enabled_sources:
+
+                # Server-wide gate, then the user's own pause from Settings.
+                def wants(source: str) -> bool:
+                    return source in enabled_sources and is_source_enabled(conn, user["user_id"], source)
+
+                if wants("gmail"):
                     try:
                         _poll_gmail_for_user(conn, user)
                     except Exception as exc:
                         print(f"[gmail:{user_label}] error: {exc}")
 
-                if "fathom" in enabled_sources:
+                if wants("fathom"):
                     try:
                         fathom_poller.poll(conn, user["user_id"])
                     except Exception as exc:
                         print(f"[fathom:{user_label}] error: {exc}")
 
-                if "browser_history" in enabled_sources:
+                if wants("browser_history"):
                     try:
                         bh_saved = browser_history_poller.poll(conn, user["user_id"])
                         if bh_saved:
@@ -164,7 +158,7 @@ def main():
                     except Exception as exc:
                         print(f"[browser_history:{user_label}] error: {exc}")
 
-                if "system" in enabled_sources:
+                if wants("system"):
                     try:
                         sys_saved = system_poller.poll(conn, user["user_id"])
                         if sys_saved:

@@ -267,7 +267,7 @@ def test_push_routes() -> None:
         check("public key 503 when unconfigured", client.get("/push/vapid-public-key").status_code == 503)
         check("subscribe 503 when unconfigured",
               client.post("/push/subscribe", json=SUB_A).status_code == 503)
-        s = client.get("/settings").get_json()["notifications"]
+        s = client.get("/settings.json").get_json()["notifications"]
         check("settings reports unconfigured", s == {"configured": False, "subscription_count": 0})
 
     with mock.patch.dict(os.environ, VAPID_ENV):
@@ -277,7 +277,7 @@ def test_push_routes() -> None:
               client.post("/push/subscribe", json={"endpoint": "x"}).status_code == 400)
         r = client.post("/push/subscribe", json=SUB_A, headers={"User-Agent": "Chrome/T"})
         check("subscribe stores", r.status_code == 200 and r.get_json()["ok"] is True)
-        s = client.get("/settings").get_json()["notifications"]
+        s = client.get("/settings.json").get_json()["notifications"]
         check("settings counts the subscription", s == {"configured": True, "subscription_count": 1})
 
         with mock.patch.object(push_notify, "webpush") as wp:
@@ -289,7 +289,7 @@ def test_push_routes() -> None:
 
         r = client.delete("/push/subscribe", json={"endpoint": SUB_A["endpoint"]})
         check("unsubscribe ok", r.get_json()["ok"] is True)
-        s = client.get("/settings").get_json()["notifications"]
+        s = client.get("/settings.json").get_json()["notifications"]
         check("settings back to zero", s["subscription_count"] == 0)
 
     anon = app_module.app.test_client()

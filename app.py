@@ -51,6 +51,8 @@ from db import (
     count_push_subscriptions,
     get_executor_choice,
     set_executor_choice,
+    is_source_enabled,
+    set_source_enabled,
 )
 from pollers.gmail.poller import BACKFILL_PENDING_SUFFIX, BACKFILLED_SUFFIX
 from pollers.digest import poller as digest_poller
@@ -219,6 +221,19 @@ def logout():
 @app.route("/")
 @login_required
 def index():
+    return _render_shell("inbox")
+
+
+@app.route("/settings", methods=["GET"])
+@login_required
+def settings_page():
+    """Settings is a view inside the same shell, not a separate template: the
+    todo list is already loaded, so Back is instant, and the header count is
+    right. The frontend reads `initial_view` and shows this view on load."""
+    return _render_shell("settings")
+
+
+def _render_shell(initial_view: str):
     db = get_db()
     user_id = current_user_id()
     rows = db.execute(
@@ -256,6 +271,7 @@ def index():
         gmail_connected=gmail_connected,
         gmail_auth_url=url_for("gmail_auth"),
         fresh_signup=fresh_signup,
+        initial_view=initial_view,
     )
 
 
@@ -772,12 +788,14 @@ def _account_has_agent_access(db, user_id: str, account_id: str) -> bool:
     return bool(row) and has_agent_access(row["credentials"].get("scopes") or [])
 
 
-@app.route("/settings", methods=["GET"])
+@app.route("/settings.json", methods=["GET"])
 @login_required
 def get_settings():
+    from sources import DISCOVERY_SOURCES, enabled_sources
     db = get_db()
     user_id = current_user_id()
     assert user_id
+    server_enabled = enabled_sources()
     fathom = get_source_connection(db, user_id, "fathom")
     fathom_key = (fathom or {}).get("credentials", {}).get("api_key", "") if fathom else None
     accounts = list_gmail_accounts(db, user_id)
@@ -786,9 +804,11 @@ def get_settings():
         "sources": {
             "fathom": {
                 "connected": bool(fathom),
+                "enabled": is_source_enabled(db, user_id, "fathom"),
                 "api_key_preview": f"...{fathom_key[-6:]}" if fathom_key else None,
             },
             "gmail": {
+                "enabled": is_source_enabled(db, user_id, "gmail"),
                 "accounts": [
                     {
                         "email": a["account_id"],
@@ -801,6 +821,18 @@ def get_settings():
                 # The front end appends the account's address so Google preselects it.
                 "grant_url_template": url_for("gmail_auth") + "?login_hint=",
             },
+            # The opt-in, macOS-only sources have no connection to manage,
+            # so they only appear when this server actually runs them.
+            "extra": [
+                {
+                    "name": src["name"],
+                    "label": src["label"],
+                    "description": src["description"],
+                    "enabled": is_source_enabled(db, user_id, src["name"]),
+                }
+                for src in DISCOVERY_SOURCES
+                if src["name"] not in ("gmail", "fathom") and src["name"] in server_enabled
+            ],
         },
         "notifications": {
             "configured": push_notify.configured(),
@@ -926,7 +958,27 @@ def gmail_callback():
 
     session.pop("gmail_oauth_state", None)
     session.pop("gmail_oauth_code_verifier", None)
-    return redirect(url_for("index"))
+    return redirect(url_for("settings_page"))
+
+
+@app.route("/settings/sources/<source>/enabled", methods=["POST"])
+@login_required
+def set_source_enabled_route(source: str):
+    """Pause or resume one discovery source for this user. The poller checks
+    the flag every cycle, so it applies within one poll interval. Connections
+    are untouched — a paused Gmail keeps its accounts and resumes where its
+    cursor left off."""
+    from sources import DISCOVERY_SOURCE_NAMES
+    if source not in DISCOVERY_SOURCE_NAMES:
+        return jsonify({"error": "unknown source"}), 400
+    data = request.get_json(force=True, silent=True) or {}
+    if not isinstance(data.get("enabled"), bool):
+        return jsonify({"error": "enabled must be true or false"}), 400
+    db = get_db()
+    user_id = current_user_id()
+    assert user_id
+    set_source_enabled(db, user_id, source, data["enabled"])
+    return jsonify({"ok": True, "source": source, "enabled": data["enabled"]})
 
 
 @app.route("/settings/sources/<source>", methods=["POST"])
