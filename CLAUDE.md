@@ -37,6 +37,7 @@ python scripts/verify/verify_clarify.py     # clarifying-question parsing; no CL
 python scripts/verify/verify_push.py       # stubs pywebpush + the OpenAI call; no spend
 python scripts/verify/verify_google_scopes.py  # scope set + credential refresh; no network
 python scripts/verify/verify_google_mcp.py     # Google MCP server against fake clients; no network
+python scripts/verify/verify_chat.py           # todo-less chat routes; stubs Hermes, no spend
 ```
 
 ## Architecture
@@ -110,6 +111,20 @@ fine — a confusing way to lose an afternoon. Key routes:
 - `POST /settings/sources/<source>/enabled` — per-user pause/resume of a discovery source
 - `POST /settings/executor` — which agent resolves this user's todos (see "Discovery and execution are decoupled")
 - `GET /digest/preview?user_id=…[&format=json]` — renders a user's digest without sending it
+- `GET /chat` — the todo-less chat, a third view in the same shell; `POST /chat/ask-ai`,
+  `GET /chat/run`, `POST /chat/run/stop`, `POST /chat/reset-thread` mirror the todo routes
+
+**The chat is the todo routes with the todo taken out.** One conversation per user, held in
+`user_state` under `chat:thread` (the display log) and `chat:executor_state`; "New chat"
+clears both and there is no history. The run registry keys it on the fixed id `chat`, and the
+same `_resolution_work` runs it with a different `persist` callable, so stop, failure records
+and clarifying-question chips behave exactly as they do on a todo. Executors are handed
+`executor.chat_todo()` — a pseudo-todo with `source='chat'` — and both prompt builders swap the
+"Todo" section for a short direct-chat framing (`input_builder.CHAT_CONTEXT`); Hermes names
+the session `aib-chat-<nonce>`, and the Google tools fall back to the user's first connected
+account. The frontend reuses the detail pane's thread and composer code, resolving URLs from
+the active thread id (`aiUrl`), so only one composer exists in the DOM at a time: opening the
+chat clears the todo selection. Verified by `scripts/verify/verify_chat.py`.
 
 ## Auth and per-user credentials
 

@@ -224,7 +224,9 @@ def resolve(
     if session_name:
         # The session carries the conversation, but not the task framing — each
         # invocation gets a fresh system prompt.
-        prompt = build_followup_prompt(user_message, from_suggestion)
+        prompt = build_followup_prompt(
+            user_message, from_suggestion, chat=todo.get("source") == "chat"
+        )
     else:
         session_name = _new_session_name(todo["todo_id"])
         prompt = build_prompt(todo, user_message, user_id, from_suggestion)

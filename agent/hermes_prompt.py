@@ -11,7 +11,12 @@ the API rather than the browser.
 
 import os
 
-from agent.input_builder import SUGGESTED_ROUTE_LEAD, SUGGESTED_ROUTE_TAIL, _format_todo
+from agent.input_builder import (
+    CHAT_CONTEXT,
+    SUGGESTED_ROUTE_LEAD,
+    SUGGESTED_ROUTE_TAIL,
+    _format_todo,
+)
 from agent.tools.email import fetch_gmail_thread_context
 
 INSTRUCTIONS = """\
@@ -330,17 +335,29 @@ FOLLOWUP_INSTRUCTIONS = FOLLOWUP_INSTRUCTIONS.replace(
 )
 
 
-def build_followup_prompt(user_message: str, from_suggestion: bool = False) -> str:
+def build_followup_prompt(
+    user_message: str, from_suggestion: bool = False, chat: bool = False
+) -> str:
     """Prompt for a resumed turn.
 
     The session carries the conversation, but each one-shot invocation gets a
     fresh system prompt — so without this the agent loses its task framing and
     starts asking clarifying questions instead of resolving.
+
+    `chat` is a direct conversation with no todo behind it: the same rules,
+    minus the line that tells the agent there is a todo to get back to.
     """
     message = user_message or "Continue."
+    instructions = FOLLOWUP_INSTRUCTIONS
+    if chat:
+        instructions = instructions.replace(
+            "Continue resolving the same todo from earlier in this session.",
+            "Continue the same conversation from earlier in this session — there is no "
+            "todo behind it; the user is talking to you directly.",
+        )
     if not from_suggestion:
-        return f"{FOLLOWUP_INSTRUCTIONS}{message}"
-    body = FOLLOWUP_INSTRUCTIONS.replace("The user says:\n", SUGGESTED_ROUTE_LEAD)
+        return f"{instructions}{message}"
+    body = instructions.replace("The user says:\n", SUGGESTED_ROUTE_LEAD)
     return f"{body}{message}{SUGGESTED_ROUTE_TAIL}"
 
 
@@ -354,14 +371,18 @@ def build_prompt(
     """
     parts = [INSTRUCTIONS]
 
-    if todo.get("source") == "gmail" and todo.get("source_meta"):
-        email_context = fetch_gmail_thread_context(
-            todo["source_meta"], user_id, todo.get("account_id")
-        )
-        if email_context:
-            parts.append(f"## Email thread\n{email_context}")
+    if todo.get("source") == "chat":
+        # No todo and no thread: the user's message below is the whole task.
+        parts.append(f"## Direct chat\n{CHAT_CONTEXT}")
+    else:
+        if todo.get("source") == "gmail" and todo.get("source_meta"):
+            email_context = fetch_gmail_thread_context(
+                todo["source_meta"], user_id, todo.get("account_id")
+            )
+            if email_context:
+                parts.append(f"## Email thread\n{email_context}")
 
-    parts.append(f"## Todo\n{_format_todo(todo)}")
+        parts.append(f"## Todo\n{_format_todo(todo)}")
 
     if user_message:
         if from_suggestion:

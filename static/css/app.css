@@ -1232,6 +1232,37 @@
     }
     .settings-page-hint { font-size: 13px; color: var(--ink-3); }
     #settings-body { display: flex; flex-direction: column; gap: 20px; }
+
+    /* Chat view — the same executor with no todo; a page like Settings */
+    #chat-view {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      background: var(--paper-soft);
+      padding: 48px 56px 80px;
+    }
+    #chat-view[hidden] { display: none; }
+    body.view-chat #app { display: none; }
+    .chat-page {
+      max-width: 720px;
+      margin: 0 auto;
+      display: flex;
+      flex-direction: column;
+    }
+    .chat-page-header {
+      display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;
+      padding-bottom: 20px; margin-bottom: 24px;
+      border-bottom: 1px solid var(--rule);
+    }
+    .chat-page-titles { display: flex; flex-direction: column; gap: 6px; }
+    .chat-page-header h2 {
+      font-family: var(--sans);
+      font-weight: 600;
+      font-size: 24px;
+      color: var(--ink);
+      letter-spacing: -0.01em;
+    }
+    #chat-body { display: flex; flex-direction: column; }
     #extra-sources { display: contents; }
 
     /* Per-source pause switch, in the card header */
@@ -1567,6 +1598,7 @@
       .detail-title { font-size: 30px; }
       .gmail-banner { padding: 12px 24px; }
       #settings-view { padding: 24px 16px 60px; }
+      #chat-view { padding: 24px 16px 60px; }
     }
     @media (max-width: 540px) {
       header.top::before { display: none; }

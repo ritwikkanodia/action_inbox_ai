@@ -40,6 +40,17 @@ not license acting on them. If removing them leaves a gap you need in order to f
 gap is exactly what to ask about. Do the task, not the assumption."""
 
 
+# What replaces the todo when the user opened a direct chat instead. Short on
+# purpose: the instructions above it already say how to operate, and the only
+# thing that changes is where the task comes from.
+CHAT_CONTEXT = """\
+There is no todo this time. The user opened a direct chat with you; their message is the task. \
+Everything in your instructions still applies to it — use your tools before asking, never invent \
+a fact about the user, stop before an irreversible act whose inputs you inferred, ask with an \
+ask_user block when only they know — and produce the finished artifact. No email thread is \
+attached; fetch whatever you need with the tools."""
+
+
 def _format_todo(todo: dict) -> str:
     fields = [
         ("Title", todo.get("title")),
@@ -59,13 +70,16 @@ def build_initial_inputs(todo: dict, user_message: str, user_id: str) -> list[di
     visible turn.
     """
     context_parts = []
-    if todo.get("source") == "gmail" and todo.get("source_meta"):
-        email_context = fetch_gmail_thread_context(
-            todo["source_meta"], user_id, todo.get("account_id")
-        )
-        if email_context:
-            context_parts.append(f"Email thread:\n{email_context}")
-    context_parts.append(_format_todo(todo))
+    if todo.get("source") == "chat":
+        context_parts.append(CHAT_CONTEXT)
+    else:
+        if todo.get("source") == "gmail" and todo.get("source_meta"):
+            email_context = fetch_gmail_thread_context(
+                todo["source_meta"], user_id, todo.get("account_id")
+            )
+            if email_context:
+                context_parts.append(f"Email thread:\n{email_context}")
+        context_parts.append(_format_todo(todo))
 
     items: list[dict] = [
         {"role": "user", "content": HIDDEN_CONTEXT_SENTINEL + "\n".join(context_parts)}
