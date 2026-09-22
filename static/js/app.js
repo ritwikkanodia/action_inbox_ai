@@ -1270,6 +1270,55 @@ function renderGmailAccounts(accounts) {
   });
 }
 
+// Which executor resolves this user's todos. Options come from the server
+// with a readiness verdict each — one that can't run here is shown disabled
+// with the reason, never selectable, so a saved choice always works.
+function renderExecutorCard(executor) {
+  const container = document.getElementById('executor-options');
+  const status = document.getElementById('executor-status');
+  const errorEl = document.getElementById('executor-error');
+  const options = executor.options || [];
+  const selected = options.find(o => o.name === executor.selected);
+  errorEl.hidden = true;
+  status.textContent = selected ? selected.label : 'Not set';
+  status.className = `source-connected-badge ${selected && selected.ready ? 'on' : 'off'}`;
+
+  container.innerHTML = options.map(o => `
+    <label class="executor-option ${o.ready ? '' : 'unavailable'} ${o.name === executor.selected ? 'selected' : ''}">
+      <input type="radio" name="executor" value="${escapeHtml(o.name)}"
+        ${o.name === executor.selected ? 'checked' : ''} ${o.ready ? '' : 'disabled'}>
+      <span class="executor-option-text">
+        <span class="executor-option-label">${escapeHtml(o.label)}${o.recommended ? ' <span class="executor-tag">Recommended</span>' : ''}</span>
+        <span class="executor-option-desc">${escapeHtml(o.description)}</span>
+        ${o.ready ? '' : `<span class="executor-option-reason">Not available: ${escapeHtml(o.reason || '')}</span>`}
+      </span>
+    </label>`).join('');
+
+  container.querySelectorAll('input[name="executor"]').forEach(input => {
+    input.addEventListener('change', () => {
+      if (!input.checked) return;
+      container.querySelectorAll('input[name="executor"]').forEach(i => { i.disabled = true; });
+      fetch('/settings/executor', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ executor: input.value }),
+      })
+        .then(r => r.json())
+        .then(data => {
+          if (data.ok) { renderExecutorCard(data.executor); return; }
+          renderExecutorCard(executor);
+          errorEl.textContent = data.error || 'Could not switch agent';
+          errorEl.hidden = false;
+        })
+        .catch(() => {
+          renderExecutorCard(executor);
+          errorEl.textContent = 'Could not switch agent';
+          errorEl.hidden = false;
+        });
+    });
+  });
+}
+
 function openSettingsModal() {
   settingsModal.classList.add('open');
   fetch('/settings').then(r => r.json()).then(data => {
@@ -1277,6 +1326,7 @@ function openSettingsModal() {
     setSourceConnected('fathom', fathom.connected, fathom.api_key_preview);
     window.__settings = { gmailGrantUrlTemplate: gmail.grant_url_template };
     renderGmailAccounts(gmail.accounts || []);
+    renderExecutorCard(data.executor || { selected: null, default: null, options: [] });
     renderPushCard(data.notifications || { configured: false, subscription_count: 0 });
   });
 }

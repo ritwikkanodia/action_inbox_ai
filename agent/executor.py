@@ -35,13 +35,36 @@ assert things about them they never said, and an executor that treats it as
 their own words will act on those assertions instead of asking. Executors that
 build a prompt should frame such a turn as a proposed route, not a statement.
 
-Set TODO_EXECUTOR to pick one. `hermes` needs the CLI on the host, so the
-deployed container — which has no such binary — wants `agents_sdk`.
+Selection is per user. Each user picks an executor in Settings and the choice
+is stored in `user_state`; `TODO_EXECUTOR` is only the default for users who
+have not chosen. `hermes` needs the CLI on the host, so the deployed container —
+which has no such binary — wants `agents_sdk` as its default, and `readiness`
+is what keeps Settings from offering an executor that cannot run here.
 """
 
+import importlib.util
 import os
+import shutil
 
 DEFAULT_EXECUTOR = "hermes"
+
+# Every executor there is, in the order Settings lists them. Adding one means an
+# entry here, a branch in `_load`, and a readiness probe in `readiness`.
+EXECUTORS = (
+    {
+        "name": "hermes",
+        "label": "Hermes Agent",
+        "description": "Browser, terminal and desktop tools. The most capable option.",
+        "recommended": True,
+    },
+    {
+        "name": "agents_sdk",
+        "label": "Built-in OpenAI agent",
+        "description": "Web search and Gmail only. Works without Hermes installed.",
+        "recommended": False,
+    },
+)
+EXECUTOR_NAMES = tuple(e["name"] for e in EXECUTORS)
 
 
 class ExecutorError(RuntimeError):
@@ -74,13 +97,59 @@ def _load(name: str):
         from agent.sdk_executor import resolve
     else:
         raise ExecutorError(
-            f"Unknown TODO_EXECUTOR {name!r}. Expected 'hermes' or 'agents_sdk'."
+            f"Unknown executor {name!r}. Expected one of {', '.join(EXECUTOR_NAMES)}."
         )
     return resolve
 
 
-def current_executor() -> str:
+def default_executor() -> str:
+    """The server-wide default: TODO_EXECUTOR, else `hermes`."""
     return os.environ.get("TODO_EXECUTOR", DEFAULT_EXECUTOR).strip().lower()
+
+
+def current_executor(choice: str | None = None) -> str:
+    """The executor a turn runs on: the user's stored choice when it names a
+    known executor, else the server default."""
+    choice = (choice or "").strip().lower()
+    return choice if choice in EXECUTOR_NAMES else default_executor()
+
+
+def readiness(name: str) -> tuple[bool, str | None]:
+    """Whether `name` can run a turn on this host, and if not, why.
+
+    Cheap probes only — a binary on PATH, an importable package, a key in the
+    environment — so Settings can ask on every open. A green light here means
+    the next message will start a turn, not that the turn will succeed.
+    """
+    if name == "hermes":
+        binary = os.environ.get("HERMES_BIN", "hermes")
+        if shutil.which(binary) or os.path.isfile(binary):
+            return True, None
+        return False, (
+            f"Hermes CLI not found (looked for {binary!r}). Install it, or set "
+            "HERMES_BIN to where it lives."
+        )
+    if name == "agents_sdk":
+        if importlib.util.find_spec("agents") is None:
+            return False, "The openai-agents package is not installed."
+        if not os.environ.get("OPENAI_API_KEY", "").strip():
+            return False, "OPENAI_API_KEY is not set."
+        return True, None
+    return False, f"Unknown executor {name!r}."
+
+
+def describe_executors(choice: str | None = None) -> dict:
+    """What Settings shows: every executor, whether it is ready, and which one
+    this user's turns run on."""
+    options = []
+    for entry in EXECUTORS:
+        ready, reason = readiness(entry["name"])
+        options.append({**entry, "ready": ready, "reason": reason})
+    return {
+        "selected": current_executor(choice),
+        "default": default_executor(),
+        "options": options,
+    }
 
 
 def resolve(
@@ -92,9 +161,11 @@ def resolve(
     cancel=None,
     progress=None,
     from_suggestion: bool = False,
+    executor: str | None = None,
 ) -> tuple[list, str | None]:
-    """Run one turn on the configured executor."""
-    return _load(current_executor())(
+    """Run one turn on `executor` — the user's choice, resolved by the caller —
+    or on the server default when none is given."""
+    return _load(current_executor(executor))(
         todo, thread, user_message, user_id, state,
         cancel=cancel, progress=progress, from_suggestion=from_suggestion,
     )

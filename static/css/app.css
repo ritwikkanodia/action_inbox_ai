@@ -1279,6 +1279,34 @@
       text-transform: uppercase;
       color: var(--ink-3);
     }
+    #executor-options { display: flex; flex-direction: column; gap: 8px; }
+    /* Overrides the generic .source-card-body label rule (mono, uppercase). */
+    .source-card-body label.executor-option {
+      font-family: var(--sans); font-size: 13px;
+      letter-spacing: normal; text-transform: none; color: var(--ink);
+      display: flex; gap: 10px; align-items: flex-start;
+      padding: 10px 12px;
+      border: 1px solid var(--rule); border-radius: 8px;
+      background: var(--paper-soft);
+      cursor: pointer;
+      transition: border-color 0.15s;
+    }
+    .executor-option:hover { border-color: var(--rule-strong); }
+    .executor-option.selected { border-color: var(--accent); }
+    .executor-option.unavailable { cursor: not-allowed; opacity: 0.6; }
+    .executor-option input { margin-top: 3px; accent-color: var(--accent); flex-shrink: 0; }
+    .executor-option-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .executor-option-label {
+      font-family: var(--sans); font-size: 13px; font-weight: 500; color: var(--ink);
+    }
+    .executor-tag {
+      font-family: var(--mono); font-size: 9px; font-weight: 500;
+      letter-spacing: 0.14em; text-transform: uppercase;
+      color: var(--accent); margin-left: 6px;
+    }
+    .executor-option-desc { font-family: var(--sans); font-size: 12px; color: var(--ink-2); line-height: 1.4; }
+    .executor-option-reason { font-family: var(--mono); font-size: 10px; color: var(--u-high, #b3261e); }
+    #executor-error { color: var(--u-high, #b3261e); }
     .source-key-row { display: flex; gap: 8px; align-items: center; }
     .source-key-input {
       flex: 1; font-family: var(--mono); font-size: 12px;

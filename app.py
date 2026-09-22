@@ -8,7 +8,15 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 
 from agent import runs
-from agent.executor import ExecutorCancelled, ExecutorError, current_executor, resolve
+from agent.executor import (
+    EXECUTOR_NAMES,
+    ExecutorCancelled,
+    ExecutorError,
+    current_executor,
+    describe_executors,
+    readiness,
+    resolve,
+)
 
 from flask import (
     Flask,
@@ -41,6 +49,8 @@ from db import (
     save_push_subscription,
     delete_push_subscription,
     count_push_subscriptions,
+    get_executor_choice,
+    set_executor_choice,
 )
 from pollers.gmail.poller import BACKFILL_PENDING_SUFFIX, BACKFILLED_SUFFIX
 from pollers.digest import poller as digest_poller
@@ -397,14 +407,20 @@ def _acted_summary(events: list[dict]) -> str:
 
 
 def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, state,
-                     from_suggestion: bool = False):
+                     from_suggestion: bool = False, executor: str | None = None):
     """Build the callable `agent.runs.start` will execute on its own thread.
 
     Renders its own failures into the thread rather than raising: the frontend
     reads `thread` without checking the status code, so anything not in there is
     invisible to the user.
+
+    `executor` is the user's choice, read from the database by the request that
+    started the run. It is resolved here, once, rather than inside the work:
+    the background thread has no request context, and a choice changed in
+    Settings mid-run should take effect on the next turn, not this one.
     """
     todo_id = todo["todo_id"]
+    executor = current_executor(executor)
 
     def notice(text: str) -> list:
         shown = list(thread)
@@ -446,12 +462,13 @@ def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, 
             final, new_state = resolve(
                 todo, thread, user_message, user_id, state,
                 cancel=cancel, progress=observe, from_suggestion=from_suggestion,
+                executor=executor,
             )
         except ExecutorCancelled as exc:
             app.logger.warning(
                 "Resolution stopped: todo=%s user=%s executor=%s state=%s "
                 "after %d tool call(s) (%s)",
-                todo_id, user_id, current_executor(), state, len(acted),
+                todo_id, user_id, executor, state, len(acted),
                 "recorded" if acted else "turn discarded; state unchanged",
             )
             return record(
@@ -461,7 +478,7 @@ def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, 
             app.logger.warning(
                 "Resolution failed: todo=%s user=%s executor=%s state=%s: %s "
                 "after %d tool call(s) (%s)",
-                todo_id, user_id, current_executor(), state, exc, len(acted),
+                todo_id, user_id, executor, state, exc, len(acted),
                 "recorded" if acted else "turn discarded; state unchanged",
             )
             return record(f"⚠️ Resolution failed: {exc}", exc), runs.ERROR
@@ -570,7 +587,7 @@ def ask_ai(todo_id):
         todo_id,
         seeded,
         _resolution_work(todo, thread, user_message, user_id, row["executor_state"],
-                         from_suggestion),
+                         from_suggestion, executor=get_executor_choice(db, user_id)),
     )
     return jsonify(
         {
@@ -789,7 +806,34 @@ def get_settings():
             "configured": push_notify.configured(),
             "subscription_count": count_push_subscriptions(db, user_id),
         },
+        "executor": describe_executors(get_executor_choice(db, user_id)),
     })
+
+
+@app.route("/settings/executor", methods=["POST"])
+@login_required
+def update_executor_settings():
+    """Pick which agent resolves this user's todos.
+
+    Refuses an executor that cannot run on this host — a missing Hermes binary,
+    an uninstalled SDK — so a saved choice always starts a turn on the next
+    message. The choice takes effect on the next turn of every todo; a turn
+    already running finishes on whatever it started with. Threads carry over:
+    the new executor reads the same display log, though Hermes starts a fresh
+    session of its own, since the other executor's state means nothing to it.
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    name = (data.get("executor") or "").strip().lower()
+    if name not in EXECUTOR_NAMES:
+        return jsonify({"error": f"unknown executor {name!r}"}), 400
+    ready, reason = readiness(name)
+    if not ready:
+        return jsonify({"error": reason}), 400
+    db = get_db()
+    user_id = current_user_id()
+    assert user_id
+    set_executor_choice(db, user_id, name)
+    return jsonify({"ok": True, "executor": describe_executors(name)})
 
 
 @app.route("/settings/sources/gmail/auth")

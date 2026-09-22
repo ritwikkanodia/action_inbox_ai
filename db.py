@@ -677,6 +677,20 @@ def set_system_last_polled_at(conn: sqlite3.Connection, user_id: str, ts: str) -
     set_user_state(conn, user_id, "system_last_polled_at", ts)
 
 
+# Which executor resolves this user's todos (`hermes` or `agents_sdk`). Chosen
+# in Settings; None means the server default (TODO_EXECUTOR). Validation lives
+# in agent.executor — this is storage only.
+EXECUTOR_STATE_KEY = "executor"
+
+
+def get_executor_choice(conn: sqlite3.Connection, user_id: str) -> str | None:
+    return get_user_state(conn, user_id, EXECUTOR_STATE_KEY)
+
+
+def set_executor_choice(conn: sqlite3.Connection, user_id: str, name: str) -> None:
+    set_user_state(conn, user_id, EXECUTOR_STATE_KEY, name)
+
+
 # ---------------------------------------------------------------------------
 # Todos
 # ---------------------------------------------------------------------------

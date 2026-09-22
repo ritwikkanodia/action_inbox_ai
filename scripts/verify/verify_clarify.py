@@ -234,7 +234,8 @@ def check_suggested_route_framing() -> None:
     seen = {}
 
     def stub_resolve(todo, thread, user_message, user_id, state,
-                     cancel=None, progress=None, from_suggestion=False):
+                     cancel=None, progress=None, from_suggestion=False,
+                     executor=None):
         seen["flag"] = from_suggestion
         return list(thread) + [{"role": "assistant", "content": "ok"}], state
 
