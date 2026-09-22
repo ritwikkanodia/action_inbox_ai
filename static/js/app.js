@@ -53,6 +53,11 @@ const detailEmpty   = document.getElementById('detail-empty');
 const detailContent = document.getElementById('detail-content');
 
 let selectedId = null;
+// The thread the composer on screen belongs to: a todo id in the detail pane,
+// or CHAT_ID in the chat view. Separate from `selectedId` because the chat
+// selects no todo, and the same run/poll/stop code serves both.
+const CHAT_ID = '__chat__';
+let activeThreadId = null;
 const contextCache = {};
 const threadCache  = {};
 
@@ -172,6 +177,8 @@ applyFilter();
 // ---------------- Selection / detail rendering ----------------
 function clearSelection() {
   selectedId = null;
+  activeThreadId = null;
+  stopPolling();
   document.querySelectorAll('.todo-row.selected').forEach(r => r.classList.remove('selected'));
   detailEmpty.classList.remove('hidden');
   detailContent.classList.add('hidden');
@@ -458,8 +465,26 @@ function wireDetailHandlers(t) {
   const editBtn = document.getElementById('detailEditTitleBtn');
   if (editBtn) editBtn.addEventListener('click', () => startTitleEdit(t));
 
+  bindComposer(t.todo_id);
+  document.getElementById('ai-regen-btn').addEventListener('click', () => loadActions(t, true));
+
+  document.getElementById('ai-new-thread-btn').addEventListener('click', () => {
+    fetch(aiUrl(t.todo_id, '/reset-thread'), { method: 'POST' }).then(() => {
+      delete threadCache[t.todo_id];
+      stopPolling();
+      setRunning(false);
+      document.getElementById('ai-thread').innerHTML = '';
+    });
+  });
+}
+
+// The composer under a thread: Send, Stop, Enter-to-send, autosize. The same
+// markup serves a todo's detail pane and the chat view, so it is wired once
+// here, against whichever thread is on screen.
+function bindComposer(threadId) {
   const sendBtn = document.getElementById('ai-send-btn');
   const followup = document.getElementById('ai-followup');
+  const placeholder = followup.placeholder;
   sendBtn.addEventListener('click', () => {
     const msg = followup.value.trim();
     if (!msg) return;
@@ -467,27 +492,16 @@ function wireDetailHandlers(t) {
     followup.style.height = 'auto';
     // "Something else…" borrows the placeholder to show which question is
     // being answered; put it back once that answer is on its way.
-    followup.placeholder = 'Or type your own instruction…';
-    callAI(t.todo_id, msg);
+    followup.placeholder = placeholder;
+    callAI(threadId, msg);
   });
-
-  document.getElementById('ai-stop-btn').addEventListener('click', () => stopRun(t.todo_id));
-  document.getElementById('ai-regen-btn').addEventListener('click', () => loadActions(t, true));
+  document.getElementById('ai-stop-btn').addEventListener('click', () => stopRun(threadId));
   followup.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }
   });
   followup.addEventListener('input', () => {
     followup.style.height = 'auto';
     followup.style.height = Math.min(140, followup.scrollHeight) + 'px';
-  });
-
-  document.getElementById('ai-new-thread-btn').addEventListener('click', () => {
-    fetch(`/todos/${t.todo_id}/reset-thread`, { method: 'POST' }).then(() => {
-      delete threadCache[t.todo_id];
-      stopPolling();
-      setRunning(false);
-      document.getElementById('ai-thread').innerHTML = '';
-    });
   });
 }
 
@@ -760,6 +774,10 @@ let runningTodoId = null;
 let pollTimer = null;
 const POLL_MS = 1500;
 
+function aiUrl(threadId, suffix) {
+  return (threadId === CHAT_ID ? '/chat' : `/todos/${threadId}`) + suffix;
+}
+
 function renderThread(thread) {
   const threadEl = document.getElementById('ai-thread');
   if (!threadEl) return;
@@ -903,7 +921,7 @@ function renderQuestions(questions) {
       .filter(Boolean)
       .join('\n');
     wrap.classList.add('is-sent');
-    callAI(selectedId, answer);
+    callAI(activeThreadId, answer);
   });
   wrap.appendChild(send);
 
@@ -1013,10 +1031,10 @@ function applyRunState(todoId, data) {
     // stop or a failure leaves nothing behind server-side, so keeping its
     // notice around would survive longer than the state it describes.
     if (data.status === 'done' || data.status === 'idle') threadCache[todoId] = data.thread;
-    if (selectedId === todoId) renderThread(data.thread);
+    if (activeThreadId === todoId) renderThread(data.thread);
   }
   if (data.status === 'running') {
-    if (selectedId === todoId) {
+    if (activeThreadId === todoId) {
       // setRunning first: renderThread above wiped the loading bubble, and
       // renderActivity needs it back before it has anywhere to draw.
       setRunning(true, todoId);
@@ -1026,17 +1044,17 @@ function applyRunState(todoId, data) {
     return;
   }
   stopPolling();
-  if (selectedId === todoId) setRunning(false);
+  if (activeThreadId === todoId) setRunning(false);
 }
 
 function schedulePoll(todoId) {
   stopPolling();
   pollTimer = setTimeout(() => {
-    fetch(`/todos/${todoId}/run`)
+    fetch(aiUrl(todoId, '/run'))
       .then(r => r.json())
       .then(data => {
         // The run may have been reset, or the worker restarted, while we waited.
-        if (data.status === 'idle') { stopPolling(); if (selectedId === todoId) setRunning(false); return; }
+        if (data.status === 'idle') { stopPolling(); if (activeThreadId === todoId) setRunning(false); return; }
         applyRunState(todoId, data);
       })
       .catch(() => schedulePoll(todoId));
@@ -1046,7 +1064,7 @@ function schedulePoll(todoId) {
 function stopRun(todoId) {
   const stopBtn = document.getElementById('ai-stop-btn');
   if (stopBtn) { stopBtn.disabled = true; stopBtn.textContent = 'Stopping…'; }
-  fetch(`/todos/${todoId}/run/stop`, { method: 'POST' })
+  fetch(aiUrl(todoId, '/run/stop'), { method: 'POST' })
     .then(() => schedulePoll(todoId))
     .catch(() => schedulePoll(todoId));
 }
@@ -1057,7 +1075,7 @@ function stopRun(todoId) {
 function callAI(todoId, message, fromSuggestion) {
   if (message) {
     const threadEl = document.getElementById('ai-thread');
-    if (threadEl && selectedId === todoId) {
+    if (threadEl && activeThreadId === todoId) {
       const userBubble = document.createElement('div');
       userBubble.className = 'ai-bubble user';
       userBubble.textContent = message;
@@ -1066,7 +1084,7 @@ function callAI(todoId, message, fromSuggestion) {
     setRunning(true, todoId);
   }
   const body = message ? { message, from_suggestion: Boolean(fromSuggestion) } : {};
-  return fetch(`/todos/${todoId}/ask-ai`, {
+  return fetch(aiUrl(todoId, '/ask-ai'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
@@ -1075,7 +1093,7 @@ function callAI(todoId, message, fromSuggestion) {
     .then(data => applyRunState(todoId, data))
     .catch(() => {
       stopPolling();
-      if (selectedId === todoId) {
+      if (activeThreadId === todoId) {
         setRunning(false);
         addErrorBubble("Couldn't reach the server.");
       }
@@ -1093,6 +1111,7 @@ function addErrorBubble(text) {
 
 function loadAiThread(t) {
   const threadEl = document.getElementById('ai-thread');
+  activeThreadId = t.todo_id;
   stopPolling();
   setRunning(false);
 
@@ -1104,14 +1123,14 @@ function loadAiThread(t) {
 
   // Ask the server what it has: either the persisted thread, or a run this
   // page never started — one left behind by a reload, or by another tab.
-  fetch(`/todos/${t.todo_id}/ask-ai`, {
+  fetch(aiUrl(t.todo_id, '/ask-ai'), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({}),
   })
     .then(r => r.json())
     .then(data => {
-      if (selectedId !== t.todo_id) return;
+      if (activeThreadId !== t.todo_id) return;
       if (data.thread && data.thread.length) applyRunState(t.todo_id, data);
       else if (data.status === 'running') applyRunState(t.todo_id, data);
     })
@@ -1397,6 +1416,7 @@ function loadSettings() {
 }
 
 function showSettingsView({ push } = { push: true }) {
+  hideChatView();
   document.body.classList.add('view-settings');
   settingsView.hidden = false;
   if (push && location.pathname !== SETTINGS_PATH) {
@@ -1408,6 +1428,7 @@ function showSettingsView({ push } = { push: true }) {
 }
 
 function showInboxView({ push } = { push: true }) {
+  hideChatView();
   document.body.classList.remove('view-settings');
   settingsView.hidden = true;
   if (push && location.pathname !== '/') {
@@ -1427,12 +1448,110 @@ document.getElementById('settingsBackBtn').addEventListener('click', (e) => {
 });
 window.addEventListener('popstate', () => {
   if (location.pathname === SETTINGS_PATH) showSettingsView({ push: false });
+  else if (location.pathname === CHAT_PATH) showChatView({ push: false });
   else showInboxView({ push: false });
 });
 document.querySelectorAll('#gmail-card .source-toggle-input, #fathom-card .source-toggle-input')
   .forEach(bindSourceToggle);
+// ---------------- Chat view ----------------
+// The executor with no todo in front of it. One conversation per user, kept
+// server-side; "New chat" clears it. The thread, composer, live trace and
+// clarifying-question chips are the detail pane's code, pointed at /chat by
+// `aiUrl`, so the view only has to build the markup and load the thread.
+const chatView = document.getElementById('chat-view');
+const chatBody = document.getElementById('chat-body');
+const CHAT_PATH = '/chat';
+
+function renderChatShell() {
+  chatBody.innerHTML = `
+    <div id="ai-thread"></div>
+    <div id="ai-input-area">
+      <textarea id="ai-followup" placeholder="Ask your agent to do something…" rows="1"></textarea>
+      <button id="ai-send-btn">Send</button>
+      <button id="ai-stop-btn" class="hidden">Stop</button>
+    </div>`;
+  bindComposer(CHAT_ID);
+}
+
+function loadChatThread() {
+  activeThreadId = CHAT_ID;
+  stopPolling();
+  setRunning(false);
+  const threadEl = document.getElementById('ai-thread');
+  if (threadCache[CHAT_ID] && threadCache[CHAT_ID].length) {
+    renderThread(threadCache[CHAT_ID]);
+  } else {
+    threadEl.innerHTML = '<div class="ai-empty-cta">Ask for anything — the agent has the same tools it uses to resolve todos.</div>';
+  }
+  // Same as a todo: the server has either the saved thread or a run this page
+  // never started (a reload mid-turn, another tab).
+  fetch('/chat/ask-ai', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (activeThreadId !== CHAT_ID) return;
+      if ((data.thread && data.thread.length) || data.status === 'running') applyRunState(CHAT_ID, data);
+    })
+    .catch(() => {});
+}
+
+function showChatView({ push } = { push: true }) {
+  // The detail pane's composer uses the same ids; only one may exist at a time.
+  clearSelection();
+  document.body.classList.remove('view-settings');
+  settingsView.hidden = true;
+  document.body.classList.add('view-chat');
+  chatView.hidden = false;
+  if (push && location.pathname !== CHAT_PATH) {
+    history.pushState({ view: 'chat' }, '', CHAT_PATH);
+  }
+  window.scrollTo(0, 0);
+  renderChatShell();
+  loadChatThread();
+  document.getElementById('ai-followup').focus();
+}
+
+function hideChatView() {
+  if (!document.body.classList.contains('view-chat')) return;
+  document.body.classList.remove('view-chat');
+  chatView.hidden = true;
+  // A run in flight keeps going server-side; reopening the view picks it up.
+  stopPolling();
+  activeThreadId = null;
+  chatBody.innerHTML = '';
+}
+
+document.getElementById('openChatBtn').addEventListener('click', (e) => {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  showChatView();
+});
+document.getElementById('chatBackBtn').addEventListener('click', (e) => {
+  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+  e.preventDefault();
+  showInboxView();
+});
+document.getElementById('chat-new-btn').addEventListener('click', () => {
+  const btn = document.getElementById('chat-new-btn');
+  btn.disabled = true;
+  fetch('/chat/reset-thread', { method: 'POST' })
+    .then(() => {
+      delete threadCache[CHAT_ID];
+      renderChatShell();
+      loadChatThread();
+    })
+    .finally(() => { btn.disabled = false; });
+});
+
+// A direct load of /settings or /chat opens on that view. Last, because the
+// view code above has to exist before either can be shown.
 if (window.__INITIAL_VIEW === 'settings' || location.pathname === SETTINGS_PATH) {
   showSettingsView({ push: false });
+} else if (window.__INITIAL_VIEW === 'chat' || location.pathname === CHAT_PATH) {
+  showChatView({ push: false });
 }
 
 document.getElementById('fathom-connect-btn').addEventListener('click', () => {

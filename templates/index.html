@@ -79,6 +79,7 @@
     <span class="count" id="todoCount">{{ todos|length }}</span>
     <button class="view-toggle-btn" id="viewToggleBtn" title="Toggle view" aria-label="Toggle view">List</button>
     <button class="new-todo-btn" id="installAppBtn" hidden>Install app</button>
+    <a class="new-todo-btn" id="openChatBtn" href="{{ url_for('chat_page') }}">Chat</a>
     <a class="new-todo-btn" id="openSettingsBtn" href="{{ url_for('settings_page') }}">Settings</a>
     <button class="new-todo-btn" id="openFormBtn">+ New</button>
     {% if user %}
@@ -263,6 +264,22 @@
         </div>
       </div>
     </div>
+  </div>
+</section>
+
+<section id="chat-view" aria-labelledby="chat-heading"{% if initial_view != 'chat' %} hidden{% endif %}>
+  <div class="chat-page">
+    <a class="back-btn settings-back" id="chatBackBtn" href="{{ url_for('index') }}">← Back to inbox</a>
+    <div class="chat-page-header">
+      <div class="chat-page-titles">
+        <h2 id="chat-heading">Chat</h2>
+        <span class="settings-page-hint">Talk to your agent directly — no todo needed. One conversation; New chat starts over.</span>
+      </div>
+      <button class="new-todo-btn" id="chat-new-btn" type="button">New chat</button>
+    </div>
+    {# Filled by app.js when the view opens, so the composer's ids exist in one
+       place at a time — the todo detail pane uses the same ones. #}
+    <div id="chat-body"></div>
   </div>
 </section>
 

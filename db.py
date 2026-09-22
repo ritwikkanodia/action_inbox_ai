@@ -705,6 +705,51 @@ def set_executor_choice(conn: sqlite3.Connection, user_id: str, name: str) -> No
     set_user_state(conn, user_id, EXECUTOR_STATE_KEY, name)
 
 
+# The todo-less chat: one conversation per user with whichever executor they
+# picked, held in user_state rather than a table of its own. Two keys — the
+# display log and the executor's opaque state — mirror `todos.ai_thread` and
+# `todos.executor_state`, so the same run/stop/reset plumbing applies. There is
+# deliberately no history: "New chat" clears both and the old one is gone.
+CHAT_THREAD_KEY = "chat:thread"
+CHAT_STATE_KEY = "chat:executor_state"
+
+
+def get_chat(conn: sqlite3.Connection, user_id: str) -> tuple[str | None, str | None]:
+    """(thread JSON or None, executor state or None) for this user's chat."""
+    return (
+        get_user_state(conn, user_id, CHAT_THREAD_KEY),
+        get_user_state(conn, user_id, CHAT_STATE_KEY),
+    )
+
+
+def set_chat(conn: sqlite3.Connection, user_id: str, thread_json: str, state: str | None) -> None:
+    conn.execute(
+        "INSERT INTO user_state (user_id, key, value) VALUES (?, ?, ?) "
+        "ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value",
+        (user_id, CHAT_THREAD_KEY, thread_json),
+    )
+    if state is None:
+        conn.execute(
+            "DELETE FROM user_state WHERE user_id = ? AND key = ?",
+            (user_id, CHAT_STATE_KEY),
+        )
+    else:
+        conn.execute(
+            "INSERT INTO user_state (user_id, key, value) VALUES (?, ?, ?) "
+            "ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value",
+            (user_id, CHAT_STATE_KEY, state),
+        )
+    conn.commit()
+
+
+def clear_chat(conn: sqlite3.Connection, user_id: str) -> None:
+    conn.execute(
+        "DELETE FROM user_state WHERE user_id = ? AND key IN (?, ?)",
+        (user_id, CHAT_THREAD_KEY, CHAT_STATE_KEY),
+    )
+    conn.commit()
+
+
 # ---------------------------------------------------------------------------
 # Todos
 # ---------------------------------------------------------------------------

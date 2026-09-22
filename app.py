@@ -9,9 +9,11 @@ load_dotenv(override=True)
 
 from agent import runs
 from agent.executor import (
+    CHAT_TODO_ID,
     EXECUTOR_NAMES,
     ExecutorCancelled,
     ExecutorError,
+    chat_todo,
     current_executor,
     describe_executors,
     readiness,
@@ -53,6 +55,9 @@ from db import (
     set_executor_choice,
     is_source_enabled,
     set_source_enabled,
+    get_chat,
+    set_chat,
+    clear_chat,
 )
 from pollers.gmail.poller import BACKFILL_PENDING_SUFFIX, BACKFILLED_SUFFIX
 from pollers.digest import poller as digest_poller
@@ -233,6 +238,13 @@ def settings_page():
     return _render_shell("settings")
 
 
+@app.route("/chat", methods=["GET"])
+@login_required
+def chat_page():
+    """The todo-less chat, as a view in the same shell as the inbox and Settings."""
+    return _render_shell("chat")
+
+
 def _render_shell(initial_view: str):
     db = get_db()
     user_id = current_user_id()
@@ -402,6 +414,16 @@ def _persist_resolution(todo_id: str, user_id: str, thread: list, state) -> None
         conn.close()
 
 
+def _persist_chat(user_id: str, thread: list, state) -> None:
+    """The chat's counterpart to `_persist_resolution`: same background-thread
+    caveat, different home (`user_state`, not a todo row)."""
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    try:
+        set_chat(conn, user_id, json.dumps(thread), state)
+    finally:
+        conn.close()
+
+
 def _acted_summary(events: list[dict]) -> str:
     """Render what an interrupted turn had already done, for its record bubble.
 
@@ -423,7 +445,8 @@ def _acted_summary(events: list[dict]) -> str:
 
 
 def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, state,
-                     from_suggestion: bool = False, executor: str | None = None):
+                     from_suggestion: bool = False, executor: str | None = None,
+                     persist=None):
     """Build the callable `agent.runs.start` will execute on its own thread.
 
     Renders its own failures into the thread rather than raising: the frontend
@@ -434,9 +457,15 @@ def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, 
     started the run. It is resolved here, once, rather than inside the work:
     the background thread has no request context, and a choice changed in
     Settings mid-run should take effect on the next turn, not this one.
+
+    `persist(thread, state)` is where a finished — or interrupted-after-acting —
+    turn is written. Defaults to the todo's row; the chat supplies its own.
     """
     todo_id = todo["todo_id"]
     executor = current_executor(executor)
+    if persist is None:
+        def persist(final_thread, final_state):
+            _persist_resolution(todo_id, user_id, final_thread, final_state)
 
     def notice(text: str) -> list:
         shown = list(thread)
@@ -469,9 +498,7 @@ def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, 
             """
             shown = notice(text + _acted_summary(acted))
             if acted:
-                _persist_resolution(
-                    todo_id, user_id, shown, getattr(exc, "state", None) or state
-                )
+                persist(shown, getattr(exc, "state", None) or state)
             return shown
 
         try:
@@ -499,7 +526,7 @@ def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, 
             )
             return record(f"⚠️ Resolution failed: {exc}", exc), runs.ERROR
 
-        _persist_resolution(todo_id, user_id, final, new_state)
+        persist(final, new_state)
         return final, runs.DONE
 
     return work
@@ -746,6 +773,91 @@ def update_todo(todo_id):
         (*updates.values(), datetime.now(timezone.utc).isoformat(), todo_id, user_id),
     )
     db.commit()
+    return jsonify({"ok": True})
+
+
+# ---------------------------------------------------------------------------
+# Chat — the same executor, no todo. One thread per user, in user_state.
+#
+# Deliberately the todo routes with the todo taken out: same background run
+# registry (keyed on the user and the fixed chat id), same poll/stop shape, same
+# clarifying-question chips, because the frontend reuses the same code for
+# both. What differs is where the thread lives and that there is no source
+# context, no action options and no history.
+# ---------------------------------------------------------------------------
+
+
+def _run_payload(run) -> dict:
+    return {
+        "status": run.status,
+        "run_id": run.run_id,
+        "thread": _thread_for_client(run.thread),
+        "activity": run.activity_snapshot(),
+    }
+
+
+@app.route("/chat/ask-ai", methods=["POST"])
+@login_required
+def chat_ask_ai():
+    """Start a chat turn, or hand back the thread when no message is sent."""
+    db = get_db()
+    user_id = current_user_id()
+    assert user_id
+    data = request.get_json(force=True, silent=True) or {}
+    user_message = (data.get("message") or "").strip()
+
+    active = runs.get(user_id, CHAT_TODO_ID)
+    if active is not None and active.status == runs.RUNNING:
+        return jsonify(_run_payload(active))
+
+    raw_thread, state = get_chat(db, user_id)
+    thread = _load_thread(raw_thread)
+    if not user_message:
+        return jsonify({"status": "idle", "thread": _thread_for_client(thread)})
+
+    seeded = thread + [{"role": "user", "content": user_message}]
+    run = runs.start(
+        user_id,
+        CHAT_TODO_ID,
+        seeded,
+        _resolution_work(
+            chat_todo(), thread, user_message, user_id, state,
+            executor=get_executor_choice(db, user_id),
+            persist=lambda final, new_state: _persist_chat(user_id, final, new_state),
+        ),
+    )
+    return jsonify(_run_payload(run))
+
+
+@app.route("/chat/run", methods=["GET"])
+@login_required
+def chat_run():
+    user_id = current_user_id()
+    assert user_id
+    run = runs.get(user_id, CHAT_TODO_ID)
+    if run is None:
+        return jsonify({"status": "idle"})
+    return jsonify(_run_payload(run))
+
+
+@app.route("/chat/run/stop", methods=["POST"])
+@login_required
+def stop_chat_run():
+    user_id = current_user_id()
+    assert user_id
+    return jsonify({"stopped": runs.stop(user_id, CHAT_TODO_ID)})
+
+
+@app.route("/chat/reset-thread", methods=["POST"])
+@login_required
+def reset_chat_thread():
+    """New chat. Drops the executor's state with the log, for the same reason
+    `/todos/<id>/reset-thread` does — otherwise Hermes still remembers."""
+    db = get_db()
+    user_id = current_user_id()
+    assert user_id
+    runs.discard(user_id, CHAT_TODO_ID)
+    clear_chat(db, user_id)
     return jsonify({"ok": True})
 
 

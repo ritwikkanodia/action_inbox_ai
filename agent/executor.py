@@ -48,6 +48,22 @@ import shutil
 
 DEFAULT_EXECUTOR = "hermes"
 
+# A conversation with no todo behind it. The contract takes a todo dict, so the
+# chat hands executors this stand-in instead of growing a second entry point:
+# `source` is what the prompt builders branch on to drop the todo framing, and
+# `todo_id` is what Hermes names its session after. `account_id` is None, so
+# the Google tools fall back to the user's first connected account.
+CHAT_TODO_ID = "chat"
+CHAT_SOURCE = "chat"
+
+
+def chat_todo() -> dict:
+    return {"todo_id": CHAT_TODO_ID, "source": CHAT_SOURCE, "account_id": None}
+
+
+def is_chat(todo: dict) -> bool:
+    return (todo or {}).get("source") == CHAT_SOURCE
+
 # Every executor there is, in the order Settings lists them. Adding one means an
 # entry here, a branch in `_load`, and a readiness probe in `readiness`.
 EXECUTORS = (
