@@ -1412,6 +1412,7 @@ function loadSettings() {
     renderExtraSources(extra || []);
     renderExecutorCard(data.executor || { selected: null, default: null, options: [] });
     renderPushCard(data.notifications || { configured: false, subscription_count: 0 });
+    renderWhatsappCard(data.whatsapp || { configured: false });
   });
 }
 
@@ -1574,6 +1575,104 @@ document.getElementById('fathom-disconnect-btn').addEventListener('click', () =>
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ disconnect: true }),
   }).then(r => r.json()).then(data => { if (data.ok) setSourceConnected('fathom', false); });
+});
+
+// ---------------- WhatsApp linking ----------------
+// One number per user, proven by a code the user sends from their phone. The
+// webhook completes the link, not this page, so while a code is pending the
+// card polls settings to notice when it lands.
+let whatsappPollTimer = null;
+
+function renderWhatsappCard(info) {
+  info = info || {};
+  const status = document.getElementById('whatsapp-status');
+  const hint = document.getElementById('whatsapp-hint');
+  const inputRow = document.getElementById('whatsapp-input-row');
+  const input = document.getElementById('whatsapp-number-input');
+  const linkBtn = document.getElementById('whatsapp-link-btn');
+  const steps = document.getElementById('whatsapp-steps');
+  const linkedRow = document.getElementById('whatsapp-linked-row');
+  const numberEl = document.getElementById('whatsapp-number');
+  const errorEl = document.getElementById('whatsapp-error');
+  if (whatsappPollTimer) { clearTimeout(whatsappPollTimer); whatsappPollTimer = null; }
+  errorEl.hidden = true;
+
+  if (!info.configured) {
+    status.textContent = 'Not configured';
+    status.className = 'source-connected-badge off';
+    hint.textContent = 'Set META_WA_PHONE_NUMBER_ID, META_WA_ACCESS_TOKEN, META_WA_APP_SECRET and META_WA_VERIFY_TOKEN on the server to enable this.';
+    inputRow.style.display = 'none';
+    steps.hidden = true;
+    linkedRow.style.display = 'none';
+    return;
+  }
+  hint.textContent = 'Message your agent from WhatsApp. Same conversation as Chat. Enter your number with its country code.';
+
+  if (info.number) {
+    status.textContent = 'Linked';
+    status.className = 'source-connected-badge on';
+    numberEl.textContent = info.number;
+    linkedRow.style.display = 'flex';
+    inputRow.style.display = 'none';
+    steps.hidden = true;
+    return;
+  }
+
+  status.textContent = 'Not linked';
+  status.className = 'source-connected-badge off';
+  linkedRow.style.display = 'none';
+  inputRow.style.display = 'flex';
+  const pending = info.pending;
+  if (!pending) {
+    steps.hidden = true;
+    linkBtn.textContent = 'Get code';
+    return;
+  }
+  input.value = pending.number;
+  linkBtn.textContent = 'New code';
+  const from = info.business_number || "the app's WhatsApp number";
+  const minutesLeft = Math.max(1, Math.round((new Date(pending.expires_at) - Date.now()) / 60000));
+  const items = [];
+  if (info.test_number) {
+    items.push('This server is on a Meta <em>test</em> number, which only answers numbers on its recipient list — ask whoever runs it to add yours first.');
+  }
+  items.push(`Save <strong>${escapeHtml(from)}</strong> in your contacts.`);
+  items.push(`From ${escapeHtml(pending.number)}, send the code <strong class="whatsapp-code">${escapeHtml(pending.code)}</strong> to that number.`);
+  items.push(`The code expires in ${minutesLeft} min. This card updates by itself once the code arrives.`);
+  steps.innerHTML = items.map(t => `<li>${t}</li>`).join('');
+  steps.hidden = false;
+  whatsappPollTimer = setTimeout(() => {
+    whatsappPollTimer = null;
+    if (!inSettingsView()) return;
+    fetch('/settings.json').then(r => r.json()).then(d => renderWhatsappCard(d.whatsapp)).catch(() => {});
+  }, 3000);
+}
+
+document.getElementById('whatsapp-link-btn').addEventListener('click', () => {
+  const input = document.getElementById('whatsapp-number-input');
+  const btn = document.getElementById('whatsapp-link-btn');
+  const errorEl = document.getElementById('whatsapp-error');
+  const number = input.value.trim();
+  if (!number) { input.focus(); return; }
+  btn.disabled = true;
+  fetch('/settings/whatsapp/link', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ number }),
+  })
+    .then(r => r.json())
+    .then(data => {
+      if (data.ok) { renderWhatsappCard(data.whatsapp); return; }
+      errorEl.textContent = data.error || 'Could not start linking';
+      errorEl.hidden = false;
+    })
+    .catch(() => { errorEl.textContent = 'Could not start linking'; errorEl.hidden = false; })
+    .finally(() => { btn.disabled = false; });
+});
+document.getElementById('whatsapp-unlink-btn').addEventListener('click', () => {
+  fetch('/settings/whatsapp/unlink', { method: 'POST' })
+    .then(r => r.json())
+    .then(data => { if (data.ok) renderWhatsappCard(data.whatsapp); });
 });
 
 // ---------------- Browser notifications ----------------

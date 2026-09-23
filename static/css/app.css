@@ -1265,6 +1265,18 @@
     #chat-body { display: flex; flex-direction: column; }
     #extra-sources { display: contents; }
 
+    /* WhatsApp card — the linking steps while a code is pending */
+    .whatsapp-steps {
+      margin: 4px 0 0 18px;
+      display: flex; flex-direction: column; gap: 6px;
+      font-size: 13px; line-height: 1.5; color: var(--ink);
+    }
+    .whatsapp-steps[hidden] { display: none; }
+    .whatsapp-steps code { font-family: var(--mono); font-size: 12px; }
+    .whatsapp-code { font-family: var(--mono); font-size: 15px; letter-spacing: 0.12em; }
+    .whatsapp-error { color: var(--accent); }
+    #whatsapp-linked-row { display: flex; align-items: center; gap: 12px; }
+
     /* Per-source pause switch, in the card header */
     .source-toggle {
       margin-left: auto;
