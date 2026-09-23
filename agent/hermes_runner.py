@@ -13,7 +13,7 @@ import subprocess
 import uuid
 
 from agent import agent_browser, chrome_profile
-from agent.executor import ExecutorCancelled, ExecutorError
+from agent.executor import ExecutorCancelled, ExecutorError, is_chat
 from agent.hermes_activity import ActivityWatcher
 from agent.hermes_prompt import build_followup_prompt, build_prompt
 
@@ -52,7 +52,9 @@ def _google_tools_enabled() -> bool:
     }
 
 
-def _google_binding_env(user_id: str, account_id: str | None) -> dict[str, str]:
+def _google_binding_env(
+    user_id: str, account_id: str | None, todo_id: str | None = None
+) -> dict[str, str]:
     if not _google_tools_enabled():
         # Explicit blanks, not {}: the subprocess env is `dict(os.environ)`
         # with this merged in, so an empty dict would let a value this Flask
@@ -60,12 +62,14 @@ def _google_binding_env(user_id: str, account_id: str | None) -> dict[str, str]:
         # test` run) leak through to the child unchanged. Blank strings
         # override that inheritance, and `binding_from_env` in the MCP server
         # already treats a blank AIB_USER_ID as no binding.
-        return {"AIB_USER_ID": "", "AIB_ACCOUNT_ID": "", "AIB_DB_PATH": ""}
+        return {"AIB_USER_ID": "", "AIB_ACCOUNT_ID": "", "AIB_DB_PATH": "", "AIB_TODO_ID": ""}
     from agent.db import DB_PATH
     return {
         "AIB_USER_ID": user_id,
         "AIB_ACCOUNT_ID": (account_id or "").strip().lower(),
         "AIB_DB_PATH": os.path.abspath(DB_PATH),
+        # Which todo the todos_update tool defaults to; blank on a chat turn.
+        "AIB_TODO_ID": (todo_id or "").strip(),
     }
 
 
@@ -233,7 +237,9 @@ def resolve(
 
     try:
         reply = _run(prompt, session_name, cancel, progress,
-                     binding=_google_binding_env(user_id, todo.get("account_id")))
+                     binding=_google_binding_env(
+                         user_id, todo.get("account_id"),
+                         None if is_chat(todo) else todo.get("todo_id")))
     except ExecutorError as exc:
         # The session exists from the first tool call onward, whatever happens
         # after. Name it, so a stopped first turn still resumes the session

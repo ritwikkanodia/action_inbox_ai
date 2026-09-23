@@ -38,6 +38,9 @@ import whatsapp
 from db import (
     init_db,
     save_user_todo,
+    list_todos,
+    get_todo,
+    update_todo_fields,
     get_source_connection,
     set_source_credentials,
     clear_source_connection,
@@ -257,30 +260,9 @@ def chat_page():
 def _render_shell(initial_view: str):
     db = get_db()
     user_id = current_user_id()
-    rows = db.execute(
-        """
-        SELECT todo_id, title, suggested_action, importance,
-               estimated_time_minutes, due_date, relevant_link, reasoning, status, source, account_id, decision, created_at, source_meta,
-               (ai_thread IS NOT NULL AND ai_thread != '' AND ai_thread != '[]') AS has_ai_thread
-        FROM todos
-        WHERE user_id = ? AND title IS NOT NULL AND title != ''
-        ORDER BY
-            CASE status WHEN 'closed' THEN 1 ELSE 0 END,
-            CASE importance WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
-            created_at DESC
-        """,
-        (user_id,),
-    ).fetchall()
-    todos = [dict(r) for r in rows]
-    for t in todos:
-        meta_raw = t.get("source_meta")
-        if meta_raw:
-            try:
-                t["source_meta"] = json.loads(meta_raw)
-            except Exception:
-                t["source_meta"] = {}
-        else:
-            t["source_meta"] = {}
+    # The same helper the executors' todo tools read through, so the agent and
+    # the inbox always agree on what the list is and how it is ordered.
+    todos = list_todos(db, user_id)
     gmail_accounts = list_gmail_accounts(db, user_id)
     gmail_connected = bool(gmail_accounts)
     fresh_signup = bool(session.pop("fresh_signup", False))
@@ -312,17 +294,7 @@ def create_todo():
     user_id = current_user_id()
     assert user_id
     todo_id = save_user_todo(db, user_id, title, importance, due_date, suggested_action)
-    row = db.execute(
-        """
-        SELECT todo_id, title, suggested_action, importance,
-               estimated_time_minutes, due_date, relevant_link, reasoning, status,
-               source, decision, created_at,
-               (ai_thread IS NOT NULL AND ai_thread != '' AND ai_thread != '[]') AS has_ai_thread
-        FROM todos WHERE todo_id = ? AND user_id = ?
-        """,
-        (todo_id, user_id),
-    ).fetchone()
-    return jsonify({"ok": True, "todo_id": todo_id, "todo": dict(row) if row else None}), 201
+    return jsonify({"ok": True, "todo_id": todo_id, "todo": get_todo(db, user_id, todo_id)}), 201
 
 
 def _extract_text(content) -> str:
@@ -768,20 +740,18 @@ def reset_thread(todo_id):
 @app.route("/todos/<todo_id>", methods=["PATCH"])
 @login_required
 def update_todo(todo_id):
-    ALLOWED = {"due_date", "importance", "status", "decision", "title"}
-    data = request.get_json(force=True)
-    updates = {k: v for k, v in data.items() if k in ALLOWED}
-    if not updates:
-        return jsonify({"error": "no valid fields"}), 400
-    sets = ", ".join(f"{k} = ?" for k in updates) + ", updated_at = ?"
+    # `update_todo_fields` owns the editable-field set and the enum checks, and
+    # is what the executors' todos_update tool calls too — one rule for both.
+    data = request.get_json(force=True) or {}
     db = get_db()
     user_id = current_user_id()
     assert user_id
-    db.execute(
-        f"UPDATE todos SET {sets} WHERE todo_id = ? AND user_id = ?",
-        (*updates.values(), datetime.now(timezone.utc).isoformat(), todo_id, user_id),
-    )
-    db.commit()
+    try:
+        changed = update_todo_fields(db, user_id, todo_id, data)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if not changed:
+        return jsonify({"error": "not found"}), 404
     return jsonify({"ok": True})
 
 

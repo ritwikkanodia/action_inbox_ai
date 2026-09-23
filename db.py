@@ -850,6 +850,95 @@ def find_pending_whatsapp_link(conn: sqlite3.Connection, number: str, code: str,
 # ---------------------------------------------------------------------------
 
 _VALID_IMPORTANCE = {"low", "medium", "high"}
+_VALID_STATUS = {"open", "ongoing", "closed"}
+_VALID_DECISION = {"accepted", "rejected"}
+
+# The columns a user (or an agent acting for them) may change on an existing
+# todo. Shared by the web UI's PATCH route and the executors' todo tools, so
+# the two can never disagree about what is editable. Agent state (ai_thread,
+# executor_state, action_options) and provenance (source, dedup_key,
+# account_id, source_meta) are deliberately not here.
+TODO_EDITABLE_FIELDS = frozenset(
+    {"title", "due_date", "importance", "status", "decision", "suggested_action"}
+)
+_TODO_ENUMS = {
+    "importance": _VALID_IMPORTANCE,
+    "status": _VALID_STATUS,
+    "decision": _VALID_DECISION,
+}
+
+# What the UI's list and detail views read. `has_ai_thread` is derived so the
+# frontend never has to load the thread itself to know whether there is one.
+_TODO_VIEW_COLUMNS = """
+    todo_id, title, suggested_action, importance, estimated_time_minutes,
+    due_date, relevant_link, reasoning, status, source, account_id, decision,
+    created_at, updated_at, source_meta,
+    (ai_thread IS NOT NULL AND ai_thread != '' AND ai_thread != '[]') AS has_ai_thread
+"""
+
+
+def _todo_view_row(row: sqlite3.Row) -> dict:
+    todo = dict(row)
+    meta_raw = todo.get("source_meta")
+    if meta_raw:
+        try:
+            todo["source_meta"] = json.loads(meta_raw)
+        except Exception:
+            todo["source_meta"] = {}
+    else:
+        todo["source_meta"] = {}
+    return todo
+
+
+def list_todos(conn: sqlite3.Connection, user_id: str) -> list[dict]:
+    """A user's todos in the order the inbox shows them: open before closed,
+    then by importance, then newest first. Untitled rows are skipped, as the
+    UI has nothing to render for them."""
+    rows = conn.execute(
+        f"""
+        SELECT {_TODO_VIEW_COLUMNS}
+        FROM todos
+        WHERE user_id = ? AND title IS NOT NULL AND title != ''
+        ORDER BY
+            CASE status WHEN 'closed' THEN 1 ELSE 0 END,
+            CASE importance WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END,
+            created_at DESC
+        """,
+        (user_id,),
+    ).fetchall()
+    return [_todo_view_row(r) for r in rows]
+
+
+def get_todo(conn: sqlite3.Connection, user_id: str, todo_id: str) -> dict | None:
+    """One todo in the same shape `list_todos` returns, or None when the id is
+    unknown or belongs to another user — the two are deliberately not told apart."""
+    row = conn.execute(
+        f"SELECT {_TODO_VIEW_COLUMNS} FROM todos WHERE todo_id = ? AND user_id = ?",
+        (todo_id, user_id),
+    ).fetchone()
+    return _todo_view_row(row) if row else None
+
+
+def update_todo_fields(
+    conn: sqlite3.Connection, user_id: str, todo_id: str, updates: dict
+) -> bool:
+    """Apply the editable subset of `updates` to one todo. Unknown keys are
+    dropped; an enum value outside its set, or no editable key at all, raises
+    ValueError before anything is written. Returns True when a row changed,
+    False when the id is unknown or not this user's."""
+    fields = {k: v for k, v in updates.items() if k in TODO_EDITABLE_FIELDS}
+    if not fields:
+        raise ValueError("no editable fields")
+    for field, allowed in _TODO_ENUMS.items():
+        if field in fields and fields[field] is not None and fields[field] not in allowed:
+            raise ValueError(f"{field} must be one of {', '.join(sorted(allowed))}")
+    sets = ", ".join(f"{k} = ?" for k in fields) + ", updated_at = ?"
+    cur = conn.execute(
+        f"UPDATE todos SET {sets} WHERE todo_id = ? AND user_id = ?",
+        (*fields.values(), _now(), todo_id, user_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
 
 
 def _save_todo(

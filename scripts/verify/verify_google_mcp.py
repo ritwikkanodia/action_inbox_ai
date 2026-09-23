@@ -125,6 +125,11 @@ def check_binding() -> None:
     b = S.binding_from_env({"AIB_USER_ID": "u1", "AIB_ACCOUNT_ID": "A@Example.com"})
     check("account lowercased, db path defaults to DB_PATH env",
           b.account_id == "a@example.com" and b.db_path == os.environ["DB_PATH"])
+    check("no todo id → empty (a chat turn)", b.todo_id == "")
+    b = S.binding_from_env({"AIB_USER_ID": "u1", "AIB_TODO_ID": " todo_x "})
+    check("todo id carried, stripped", b.todo_id == "todo_x")
+    b = S.binding_from_env({"AIB_USER_ID": "u1", "AIB_TODO_ID": "${AIB_TODO_ID}"})
+    check("unexpanded ${AIB_TODO_ID} → empty", b.todo_id == "")
 
 
 def check_server_shape() -> None:
@@ -134,6 +139,9 @@ def check_server_shape() -> None:
     server = make_server(make_binding())
     names = {t.name for t in asyncio.run(server.list_tools())}
     check("bound → google_accounts registered", "google_accounts" in names)
+    check("bound → todo tools registered, no delete",
+          {"todos_list", "todos_get", "todos_create", "todos_update"} <= names
+          and not any("delete" in n for n in names))
 
 
 def check_accounts_and_gating() -> None:

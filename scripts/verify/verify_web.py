@@ -132,6 +132,23 @@ def main() -> None:
     check("alice's todo survives her disconnect",
           "Reply about the Alice contract" in html2)
 
+    print("\n-- todo routes share the db helpers --")
+    created = client.post("/todos", json={"title": "Typed in the UI", "importance": "high"})
+    body = created.get_json()
+    check("create returns the row through get_todo",
+          created.status_code == 201 and body["todo"]["title"] == "Typed in the UI"
+          and body["todo"]["source_meta"] == {} and body["todo"]["has_ai_thread"] == 0)
+    tid = body["todo_id"]
+    check("PATCH rejects an enum outside the CHECK set with 400",
+          client.patch(f"/todos/{tid}", json={"status": "done"}).status_code == 400)
+    check("PATCH with no editable field is 400",
+          client.patch(f"/todos/{tid}", json={"ai_thread": "x"}).status_code == 400)
+    check("PATCH of an unknown id is 404",
+          client.patch("/todos/nope", json={"status": "closed"}).status_code == 404)
+    check("PATCH closes the todo",
+          client.patch(f"/todos/{tid}", json={"status": "closed"}).get_json().get("ok") is True
+          and 'Typed in the UI' in client.get("/").get_data(as_text=True))
+
     print("\nAll web-surface checks passed.")
 
 

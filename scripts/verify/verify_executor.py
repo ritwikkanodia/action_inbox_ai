@@ -131,10 +131,11 @@ def main() -> None:
     check("binding names the user", b.get("AIB_USER_ID") == user_id)
     check("binding names the todo's account or empty", "AIB_ACCOUNT_ID" in b)
     check("binding carries an absolute db path", os.path.isabs(b.get("AIB_DB_PATH", "")))
+    check("binding names the todo", b.get("AIB_TODO_ID") == "t1")
     os.environ["HERMES_GOOGLE_TOOLS"] = "0"
     blanked = hermes_runner._google_binding_env(user_id, "x")
-    check("HERMES_GOOGLE_TOOLS=0 blanks the three binding keys",
-          set(blanked) == {"AIB_USER_ID", "AIB_ACCOUNT_ID", "AIB_DB_PATH"}
+    check("HERMES_GOOGLE_TOOLS=0 blanks the four binding keys",
+          set(blanked) == {"AIB_USER_ID", "AIB_ACCOUNT_ID", "AIB_DB_PATH", "AIB_TODO_ID"}
           and all(v == "" for v in blanked.values()))
 
     os.environ["AIB_USER_ID"] = "stale"
@@ -144,9 +145,10 @@ def main() -> None:
     finally:
         os.environ.pop("AIB_USER_ID")
     os.environ.pop("HERMES_GOOGLE_TOOLS")
-    check("default yields the three variables",
-          set(hermes_runner._google_binding_env(user_id, None)) == {"AIB_USER_ID", "AIB_ACCOUNT_ID", "AIB_DB_PATH"}
-          and hermes_runner._google_binding_env(user_id, None)["AIB_ACCOUNT_ID"] == "")
+    check("default yields the four variables, chat → empty todo id",
+          set(hermes_runner._google_binding_env(user_id, None)) == {"AIB_USER_ID", "AIB_ACCOUNT_ID", "AIB_DB_PATH", "AIB_TODO_ID"}
+          and hermes_runner._google_binding_env(user_id, None)["AIB_ACCOUNT_ID"] == ""
+          and hermes_runner._google_binding_env(user_id, None)["AIB_TODO_ID"] == "")
 
     ai_thread, session_name = row(conn, "t1")
     check("session name persisted", session_name == calls[0][1])
@@ -408,7 +410,7 @@ def main() -> None:
 
     real_runner, real_build = resolver.Runner, resolver._build_agent
     resolver.Runner = _FakeRunner
-    resolver._build_agent = lambda user_id, account_id=None: object()
+    resolver._build_agent = lambda user_id, account_id=None, todo_id=None: object()
     try:
         todo = {"todo_id": "t1", "title": "Book a dentist appointment", "source": "user"}
         inherited = [{"role": "user", "content": "Sort this out."},
