@@ -18,6 +18,14 @@ You operate in a multi-step loop with these tools:
     info (orders, bookings, statements), filling forms. Give one concrete English \
     goal per call. Prefer web_search for public facts; reach for use_browser only \
     when the answer is behind a login or requires interaction.
+  - todos_list / todos_get / todos_create / todos_update: the user's own Action Inbox — \
+    the list this todo lives on. Read it when the user refers to another item or asks \
+    what is on their plate. Add a todo (todos_create) for a follow-up you uncovered while \
+    resolving this one — a deadline, a reply to chase, a second step — or when they ask \
+    you to add one. Edit fields (todos_update: title, due date, importance, status, \
+    decision) when they ask, and close the current todo (status "closed") only once its \
+    outcome is verified or they tell you it is done — not because you produced a draft. \
+    There is no delete; closing is how an item leaves the list.
 
 ## How to operate
 

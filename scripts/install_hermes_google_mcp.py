@@ -2,7 +2,7 @@
 
 Writes one entry, `mcp_servers.action_inbox_google`, into ~/.hermes/config.yaml
 (or $HERMES_HOME/config.yaml). The entry runs this repo's venv python on
-`agent/google_mcp` with the repo as cwd, and forwards the three AIB_* variables
+`agent/google_mcp` with the repo as cwd, and forwards the four AIB_* variables
 as `${VAR}` references that Hermes expands from the launching process — the
 runner sets them per turn, so nothing per-user lives in the config.
 
@@ -37,6 +37,7 @@ def entry() -> dict:
             "AIB_USER_ID": "${AIB_USER_ID}",
             "AIB_ACCOUNT_ID": "${AIB_ACCOUNT_ID}",
             "AIB_DB_PATH": "${AIB_DB_PATH}",
+            "AIB_TODO_ID": "${AIB_TODO_ID}",
         },
     }
 

@@ -25,7 +25,8 @@ INSTRUCTIONS = (
     "The user's own Google account over the API. Use these tools for anything in "
     "Gmail, Drive, Docs, Sheets, Calendar or Contacts instead of a browser. Tools act "
     "on the account the todo came from unless you pass `account`; call "
-    "google_accounts to see the options."
+    "google_accounts to see the options. The todos_* tools are the user's Action "
+    "Inbox list itself: read it, add a follow-up, or close the current todo."
 )
 
 
@@ -35,7 +36,13 @@ def make_server(binding: Binding | None) -> MCPServer:
         logging.getLogger(__name__).info("no AIB binding; serving zero tools")
         return server
     from agent.google_mcp.tools import build_tools
+    from agent.todo_tools import build_todo_tools
     for fn in build_tools(Services(binding)):
+        server.add_tool(fn)
+    # Same process, same binding: the todo tools only need the user and the
+    # database, which the Google binding already names. A second MCP server
+    # would cost a second subprocess inside Hermes' startup budget for nothing.
+    for fn in build_todo_tools(binding.db_path, binding.user_id, binding.todo_id or None):
         server.add_tool(fn)
     return server
 

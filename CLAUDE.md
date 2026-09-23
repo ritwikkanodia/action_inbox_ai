@@ -39,6 +39,7 @@ python scripts/verify/verify_google_scopes.py  # scope set + credential refresh;
 python scripts/verify/verify_google_mcp.py     # Google MCP server against fake clients; no network
 python scripts/verify/verify_chat.py           # todo-less chat routes; stubs Hermes, no spend
 python scripts/verify/verify_whatsapp.py       # Meta webhook, linking, replies; stubs Meta + Hermes, no spend
+python scripts/verify/verify_todo_tools.py     # agents' todo tools + the db helpers the UI shares; no spend
 ```
 
 ## Architecture
@@ -96,7 +97,8 @@ fine — a confusing way to lose an afternoon. Key routes:
 
 - `GET /` — todos for the current user, ordered closed-last, then importance, then recency
 - `POST /todos` — user-entered todo (`source='user'`)
-- `PATCH /todos/<id>` — `due_date`, `importance`, `status`, `decision`
+- `PATCH /todos/<id>` — any of `db.TODO_EDITABLE_FIELDS` (`title`, `due_date`, `importance`,
+  `status`, `decision`, `suggested_action`); 400 on a bad enum, 404 on another user's id
 - `GET /todos/<id>/actions` — the three inferred ways to close the todo; `?refresh=1` re-infers
 - `POST /todos/<id>/ask-ai` — starts one agent turn in the background and returns immediately;
   posting with no message returns the existing thread without an LLM call
@@ -430,6 +432,23 @@ in `executor.readiness`.
   guardrails see ordinary results; a missing scope says so and points at Settings. The
   server's stdout is the protocol channel — log to stderr only. Hermes' single-query mode
   waits up to 15s for MCP servers to come up, which covers the Google client imports.
+- **Both executors can read and edit the user's todo list** (`agent/todo_tools.py`):
+  `todos_list`, `todos_get`, `todos_create`, `todos_update` — and deliberately no delete, so
+  an agent acting on a prompt built from email content can never erase the list; closing is
+  `todos_update(status="closed")`, and the row staying is what keeps dedup from regenerating
+  a polled todo. The tools are plain closures over `(db_path, user_id, current_todo_id)` and
+  call the **same `db.py` helpers the UI routes do** — `list_todos` (the inbox ordering),
+  `get_todo`, `save_user_todo`, `update_todo_fields` (which owns `TODO_EDITABLE_FIELDS` and
+  the enum checks, so the PATCH route and the agent can't disagree about what is editable).
+  Hermes gets them from the existing `action_inbox_google` MCP server, which serves them
+  alongside the Google tools from the same binding plus one more variable, `AIB_TODO_ID`
+  (blank on a chat turn, where `todos_update` then needs an explicit id); re-run
+  `scripts/install_hermes_google_mcp.py` once after pulling this so the config forwards it.
+  `HERMES_GOOGLE_TOOLS=0` blanks the whole binding, so it turns these off too. The Agents SDK
+  wraps the same closures in `function_tool` inside `resolver._build_agent`. Both prompts say
+  when to use them: add a follow-up you uncovered, edit when asked, close the current todo
+  only once the outcome is verified — never because a draft exists. Verified by
+  `scripts/verify/verify_todo_tools.py`.
 - **Don't edit a `.py` file while a turn is live under `flask --debug`.** The reloader
   restarts the web process; the run registry is in-memory, so the reply has nowhere to land,
   and a `finally` (the Chrome restore, say) never runs. Hermes, in its own process group,

@@ -17,12 +17,14 @@ logger = logging.getLogger(__name__)
 _ENV_USER = "AIB_USER_ID"
 _ENV_ACCOUNT = "AIB_ACCOUNT_ID"
 _ENV_DB = "AIB_DB_PATH"
+_ENV_TODO = "AIB_TODO_ID"
 
 
 class Binding(NamedTuple):
     user_id: str
     account_id: str   # '' when the todo predates multi-account
     db_path: str
+    todo_id: str = ""  # '' on a chat turn, which has no todo behind it
 
 
 def _clean(value: str | None) -> str:
@@ -41,7 +43,8 @@ def binding_from_env(environ: Mapping[str, str]) -> Binding | None:
         return None
     account = _clean(environ.get(_ENV_ACCOUNT)).lower()
     db_path = _clean(environ.get(_ENV_DB)) or os.environ.get("DB_PATH", "gmail_events.db")
-    return Binding(user_id=user_id, account_id=account, db_path=db_path)
+    todo_id = _clean(environ.get(_ENV_TODO))
+    return Binding(user_id=user_id, account_id=account, db_path=db_path, todo_id=todo_id)
 
 
 class ToolError(Exception):

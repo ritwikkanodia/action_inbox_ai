@@ -1,7 +1,7 @@
 import os
 from typing import Any
 
-from agents import Agent, Runner, WebSearchTool
+from agents import Agent, Runner, WebSearchTool, function_tool
 
 import llm_models
 from agent.input_builder import (
@@ -13,16 +13,24 @@ from agent.input_builder import (
 from agent.prompt import INSTRUCTIONS
 from agent.tools.email import gmail_tools
 from agent.tools.local_files import local_file_tools
+from agent.todo_tools import build_todo_tools
 
 # Playwright needs a real display/profile to drive Chromium, which isn't safe to
 # assume in the deployed container — opt in locally via .env.
 ENABLE_BROWSER_AGENT = os.environ.get("ENABLE_BROWSER_AGENT", "").strip().lower() in {"1", "true", "yes"}
 
 
-def _build_agent(user_id: str, account_id: str | None = None) -> Agent:
+def _build_agent(
+    user_id: str, account_id: str | None = None, todo_id: str | None = None
+) -> Agent:
     tools: list[Any] = [WebSearchTool()]
     tools.extend(gmail_tools(user_id, account_id))
     tools.extend(local_file_tools())
+    # The user's own todo list. The same closures the Hermes MCP server
+    # serves, wrapped for the SDK; `todo_id` is what todos_update defaults
+    # to, and None on a chat turn.
+    from agent.db import DB_PATH
+    tools.extend(function_tool(fn) for fn in build_todo_tools(DB_PATH, user_id, todo_id))
     if ENABLE_BROWSER_AGENT:
         from agent.tools.browser import use_browser
         tools.append(use_browser)
@@ -53,7 +61,10 @@ def resolve_todo(
     """Run one turn of the agent. Returns the updated thread (SDK input-list shape)."""
     # The agent searches the mailbox the todo came from. None (legacy todos)
     # falls back to the user's first connected account.
-    agent = _build_agent(user_id, todo.get("account_id"))
+    agent = _build_agent(
+        user_id, todo.get("account_id"),
+        None if todo.get("source") == "chat" else todo.get("todo_id"),
+    )
 
     # A clicked suggestion is not the user's own words. The framing has to ride
     # inside the message here, because this executor has no per-turn system

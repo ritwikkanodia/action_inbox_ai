@@ -48,7 +48,8 @@ There is no todo this time. The user opened a direct chat with you; their messag
 Everything in your instructions still applies to it — use your tools before asking, never invent \
 a fact about the user, stop before an irreversible act whose inputs you inferred, ask with an \
 ask_user block when only they know — and produce the finished artifact. No email thread is \
-attached; fetch whatever you need with the tools."""
+attached; fetch whatever you need with the tools. The `todos_*` tools are their Action Inbox \
+list; with no current todo, `todos_update` needs an explicit id from `todos_list`."""
 
 
 def _format_todo(todo: dict) -> str:
