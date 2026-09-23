@@ -890,12 +890,12 @@ def reset_chat_thread():
 
 
 # ---------------------------------------------------------------------------
-# WhatsApp — the chat, reached from the user's phone over Twilio.
+# WhatsApp — the chat, reached from the user's phone over Meta's Cloud API.
 #
 # Linking: the user asks Settings for a code and sends it from their WhatsApp
 # to the app's number; the webhook matches it and stores the number. From then
 # on a message from that number is a chat turn for that user, and the reply is
-# sent back when the run finishes. See whatsapp.py for the Twilio half.
+# sent back when the run finishes. See whatsapp.py for the Meta half.
 # ---------------------------------------------------------------------------
 
 
@@ -911,8 +911,8 @@ def _whatsapp_settings(db, user_id: str) -> dict:
     return {
         "configured": whatsapp.configured(),
         "number": get_whatsapp_number(db, user_id),
-        "from_number": whatsapp.from_number().removeprefix("whatsapp:") or None,
-        "sandbox_keyword": whatsapp.sandbox_keyword() or None,
+        "business_number": whatsapp.business_number(),
+        "test_number": whatsapp.test_number(),
         "pending": pending,
     }
 
@@ -946,32 +946,54 @@ def whatsapp_unlink():
     return jsonify({"ok": True, "whatsapp": _whatsapp_settings(db, user_id)})
 
 
-def _twiml_response(message: str | None = None):
-    return app.response_class(whatsapp.twiml(message), mimetype="text/xml")
+@app.route("/whatsapp/webhook", methods=["GET"])
+def whatsapp_webhook_verify():
+    """Meta's one-time subscription handshake: echo `hub.challenge` when the
+    verify token matches. Happens once, when the webhook URL is saved in the
+    Meta app dashboard."""
+    if not whatsapp.configured():
+        return ("WhatsApp is not configured.", 404)
+    challenge = whatsapp.handshake(request.args)
+    if challenge is None:
+        return ("Bad verify token.", 403)
+    return app.response_class(challenge, mimetype="text/plain")
 
 
 @app.route("/whatsapp/webhook", methods=["POST"])
 def whatsapp_webhook():
-    """Twilio's inbound-message hook. No login: the caller is Twilio, proven by
-    its request signature, and the user is whoever the sending number is linked
-    to. Answers at once with a short TwiML message; the agent's real reply is
-    sent from `on_finish` minutes later, since a turn takes as long as it takes.
+    """Meta's inbound-message hook. No login: the caller is Meta, proven by the
+    signature over the raw body, and the user is whoever the sending number is
+    linked to. Always answers 200 once the signature checks out — anything else
+    makes Meta redeliver, and a message that broke once will break again. The
+    acknowledgement and the agent's real reply both go out through the API,
+    since Meta's webhook response carries no message.
     """
     if not whatsapp.configured():
         return ("WhatsApp is not configured.", 404)
-    params = request.form.to_dict()
-    # Two views of the URL Twilio signed: Flask's own reconstruction (right
-    # behind ProxyFix) and the configured public base (right when it isn't).
-    urls = [request.url, BASE_URL + request.full_path.rstrip("?")]
-    if not whatsapp.validate_signature(urls, params, request.headers.get("X-Twilio-Signature")):
+    raw = request.get_data()
+    if not whatsapp.validate_signature(raw, request.headers.get("X-Hub-Signature-256")):
         return ("Bad signature.", 403)
-
-    number = whatsapp.normalize_number(params.get("From"))
-    body = (params.get("Body") or "").strip()
-    if not number:
-        return _twiml_response()
+    try:
+        payload = json.loads(raw or b"{}")
+    except ValueError:
+        return ("OK", 200)
 
     db = get_db()
+    for msg in whatsapp.parse_inbound(payload):
+        # Meta redelivers until it sees a 200 and can deliver twice anyway;
+        # a repeat must not start a second agent turn.
+        if not whatsapp.first_delivery(msg["id"]):
+            continue
+        try:
+            _handle_whatsapp_message(db, msg["number"], msg["text"])
+        except Exception:
+            app.logger.exception("WhatsApp message handling failed")
+    return ("OK", 200)
+
+
+def _handle_whatsapp_message(db, number: str, text: str | None) -> None:
+    body = (text or "").strip()
+
     # A pending code is checked before the existing link: the phone that sent
     # it is the proof of control, so a number can be re-verified into another
     # account (or the same one) without unlinking first.
@@ -980,24 +1002,32 @@ def whatsapp_webhook():
         if pending_user is not None:
             set_whatsapp_number(db, pending_user, number)
             app.logger.info("WhatsApp linked: user=%s number=%s", pending_user, number)
-            return _twiml_response(
-                "Linked. Message me here any time — it's the same conversation as Chat in the app."
+            whatsapp.send_message(
+                number,
+                "Linked. Message me here any time — it's the same conversation as Chat in the app.",
             )
+            return
 
     user_id = find_user_by_whatsapp(db, number)
     if user_id is None:
-        return _twiml_response(
+        whatsapp.send_message(
+            number,
             "This number isn't linked to an account yet. Open "
-            f"{BASE_URL}/settings, find the WhatsApp card, and follow the steps."
+            f"{BASE_URL}/settings, find the WhatsApp card, and follow the steps.",
         )
+        return
 
     if not body:
         # Media, a location, a contact card: nothing the agent can read yet.
-        return _twiml_response("I can only read text here for now — send it as a message.")
+        whatsapp.send_message(number, "I can only read text here for now — send it as a message.")
+        return
 
     active = runs.get(user_id, CHAT_TODO_ID)
     if active is not None and active.status == runs.RUNNING:
-        return _twiml_response("Still working on your last message — I'll reply here when it's done.")
+        whatsapp.send_message(
+            number, "Still working on your last message — I'll reply here when it's done."
+        )
+        return
 
     # A digit reply answers the question the agent asked last, the way a chip
     # click does in the web view. Anything else is the message itself.
@@ -1013,7 +1043,7 @@ def whatsapp_webhook():
 
     _start_chat_turn(db, user_id, message, on_finish=on_finish)
     app.logger.info("WhatsApp turn started: user=%s", user_id)
-    return _twiml_response("On it — I'll reply here when it's done.")
+    whatsapp.send_message(number, "On it — I'll reply here when it's done.")
 
 
 # ---------------------------------------------------------------------------

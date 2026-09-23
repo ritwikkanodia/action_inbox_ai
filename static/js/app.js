@@ -1600,7 +1600,7 @@ function renderWhatsappCard(info) {
   if (!info.configured) {
     status.textContent = 'Not configured';
     status.className = 'source-connected-badge off';
-    hint.textContent = 'Set TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN and TWILIO_WHATSAPP_FROM on the server to enable this.';
+    hint.textContent = 'Set META_WA_PHONE_NUMBER_ID, META_WA_ACCESS_TOKEN, META_WA_APP_SECRET and META_WA_VERIFY_TOKEN on the server to enable this.';
     inputRow.style.display = 'none';
     steps.hidden = true;
     linkedRow.style.display = 'none';
@@ -1630,14 +1630,13 @@ function renderWhatsappCard(info) {
   }
   input.value = pending.number;
   linkBtn.textContent = 'New code';
-  const from = info.from_number || "the app's WhatsApp number";
+  const from = info.business_number || "the app's WhatsApp number";
   const minutesLeft = Math.max(1, Math.round((new Date(pending.expires_at) - Date.now()) / 60000));
   const items = [];
-  if (info.sandbox_keyword) {
-    items.push(`Save <strong>${escapeHtml(from)}</strong> and send it <code>join ${escapeHtml(info.sandbox_keyword)}</code> once (Twilio sandbox).`);
-  } else {
-    items.push(`Save <strong>${escapeHtml(from)}</strong> in your contacts.`);
+  if (info.test_number) {
+    items.push('This server is on a Meta <em>test</em> number, which only answers numbers on its recipient list — ask whoever runs it to add yours first.');
   }
+  items.push(`Save <strong>${escapeHtml(from)}</strong> in your contacts.`);
   items.push(`From ${escapeHtml(pending.number)}, send the code <strong class="whatsapp-code">${escapeHtml(pending.code)}</strong> to that number.`);
   items.push(`The code expires in ${minutesLeft} min. This card updates by itself once the code arrives.`);
   steps.innerHTML = items.map(t => `<li>${t}</li>`).join('');

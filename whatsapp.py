@@ -1,64 +1,74 @@
-"""WhatsApp as a second surface on the todo-less chat, over Twilio.
+"""WhatsApp as a second surface on the todo-less chat, over Meta's Cloud API.
 
 The web Chat view and WhatsApp share one conversation per user: a message from
 WhatsApp starts the same background run `/chat/ask-ai` would, the web view shows
 it live, and when it finishes the reply is sent back here. This module is the
-Twilio-facing half — configuration, the request-signature check, sending, and
-turning an agent reply (markdown, maybe with an ask_user block) into something
-readable in a WhatsApp bubble. The routes and the linking flow live in app.py.
+Meta-facing half — configuration, the webhook signature and subscription
+handshake, parsing Meta's delivery payload, sending, and turning an agent reply
+(markdown, maybe with an ask_user block) into something readable in a WhatsApp
+bubble. The routes and the linking flow live in app.py.
 
-No Twilio SDK: the signature scheme is a dozen lines of HMAC and the send is one
-form-encoded POST, both cheaper to own than to depend on, and trivially stubbed
-by scripts/verify/verify_whatsapp.py. Every failure on the way *out* is logged
-and swallowed — a WhatsApp hiccup must never take a run down with it.
+No SDK: the signature is one HMAC, the send is one JSON POST, and both are
+trivially stubbed by scripts/verify/verify_whatsapp.py. Every failure on the
+way *out* is logged and swallowed — a WhatsApp hiccup must never take a run
+down with it.
 """
 
-import base64
 import hashlib
 import hmac
+import json
 import logging
 import os
 import re
 import secrets
-import urllib.parse
+import urllib.error
 import urllib.request
-from xml.sax.saxutils import escape
+from collections import deque
 
 log = logging.getLogger(__name__)
 
-TWILIO_API = "https://api.twilio.com/2010-04-01"
+# Graph API versions are supported for about two years each; override when
+# this one ages out.
+GRAPH_VERSION = os.environ.get("META_GRAPH_VERSION", "v23.0").strip() or "v23.0"
 
-# Twilio caps a WhatsApp body at 1600 characters; leave headroom.
-CHUNK_CHARS = 1500
+# Meta caps a text body at 4096 characters; leave headroom.
+CHUNK_CHARS = 4000
 
 # How long a linking code stays valid.
 CODE_TTL_SECONDS = 15 * 60
 
 
-def _sid() -> str:
-    return os.environ.get("TWILIO_ACCOUNT_SID", "").strip()
+def _phone_number_id() -> str:
+    return os.environ.get("META_WA_PHONE_NUMBER_ID", "").strip()
 
 
-def _token() -> str:
-    return os.environ.get("TWILIO_AUTH_TOKEN", "").strip()
+def _access_token() -> str:
+    return os.environ.get("META_WA_ACCESS_TOKEN", "").strip()
 
 
-def from_number() -> str:
-    """The sending address, `whatsapp:+…`, as Twilio wants it."""
-    raw = os.environ.get("TWILIO_WHATSAPP_FROM", "").strip()
-    if raw and not raw.lower().startswith("whatsapp:"):
-        raw = f"whatsapp:{raw}"
-    return raw
+def _app_secret() -> str:
+    return os.environ.get("META_WA_APP_SECRET", "").strip()
 
 
-def sandbox_keyword() -> str:
-    """The `join <word>` keyword of Twilio's sandbox, when this server is on it.
-    Empty on a real WhatsApp sender, where there is nothing to join."""
-    return os.environ.get("TWILIO_SANDBOX_KEYWORD", "").strip()
+def verify_token() -> str:
+    """The shared secret Meta echoes back when subscribing the webhook."""
+    return os.environ.get("META_WA_VERIFY_TOKEN", "").strip()
+
+
+def business_number() -> str | None:
+    """The number users message, for the Settings card. Optional: the API
+    addresses the sender by phone-number id, so this is display only."""
+    return normalize_number(os.environ.get("META_WA_PHONE_NUMBER"))
+
+
+def test_number() -> bool:
+    """On Meta's free test number only allowlisted recipients can message it;
+    the Settings card says so when this is set."""
+    return os.environ.get("META_WA_TEST_NUMBER", "").strip().lower() in {"1", "true", "yes"}
 
 
 def configured() -> bool:
-    return bool(_sid() and _token() and from_number())
+    return bool(_phone_number_id() and _access_token() and _app_secret() and verify_token())
 
 
 # ---------------------------------------------------------------------------
@@ -69,11 +79,8 @@ _E164 = re.compile(r"^\+[1-9]\d{6,14}$")
 
 
 def normalize_number(raw: str | None) -> str | None:
-    """`whatsapp:+1 (415) 555-0100` → `+14155550100`; None when it isn't a number.
-
-    A leading `+` is added to a bare digit string, since that is how most people
-    type their number; everything else has to already be E.164.
-    """
+    """`+1 (415) 555-0100` or Meta's bare `14155550100` → `+14155550100`;
+    None when it isn't a number."""
     s = (raw or "").strip()
     if s.lower().startswith("whatsapp:"):
         s = s[len("whatsapp:"):]
@@ -88,39 +95,86 @@ def new_code() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Inbound: Twilio's request signature
+# Inbound: subscription handshake, signature, payload
 # ---------------------------------------------------------------------------
 
 
-def compute_signature(url: str, params: dict, token: str) -> str:
-    """Twilio's scheme: the full URL, then every POST field appended as key+value
-    in sorted key order, HMAC-SHA1 with the auth token, base64."""
-    payload = url + "".join(f"{k}{params[k]}" for k in sorted(params))
-    digest = hmac.new(token.encode("utf-8"), payload.encode("utf-8"), hashlib.sha1).digest()
-    return base64.b64encode(digest).decode("ascii")
+def handshake(args) -> str | None:
+    """Meta's one-time webhook subscription: return the challenge to echo when
+    the verify token matches, else None."""
+    token = verify_token()
+    if not token or args.get("hub.mode") != "subscribe":
+        return None
+    if not hmac.compare_digest(args.get("hub.verify_token", ""), token):
+        return None
+    return args.get("hub.challenge")
 
 
-def validate_signature(urls: list[str], params: dict, signature: str | None,
-                       token: str | None = None) -> bool:
-    """True when `signature` matches any of `urls`.
+def sign_body(raw_body: bytes, secret: str) -> str:
+    """The `X-Hub-Signature-256` value Meta sends: HMAC-SHA256 of the raw body
+    with the app secret, hex, prefixed `sha256=`."""
+    return "sha256=" + hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
 
-    Several candidate URLs because the one Twilio signed is the public one, and
-    what Flask reconstructs behind a proxy can differ in scheme or host even
-    with ProxyFix; the caller passes both its own view and BASE_URL's.
-    """
-    token = token if token is not None else _token()
-    if not token or not signature:
+
+def validate_signature(raw_body: bytes, header: str | None, secret: str | None = None) -> bool:
+    secret = secret if secret is not None else _app_secret()
+    if not secret or not header:
         return False
-    return any(
-        hmac.compare_digest(compute_signature(url, params, token), signature)
-        for url in urls
-    )
+    return hmac.compare_digest(sign_body(raw_body, secret), header.strip())
 
 
-def twiml(message: str | None = None) -> str:
-    """The webhook's immediate response: an empty `<Response/>`, or one message."""
-    body = f"<Message>{escape(message)}</Message>" if message else ""
-    return f'<?xml version="1.0" encoding="UTF-8"?><Response>{body}</Response>'
+def parse_inbound(payload: dict) -> list[dict]:
+    """Every user message in one delivery, as {id, number, text}.
+
+    `text` is None for anything that isn't text (media, location, a contact
+    card); a tapped reply button or list row arrives as its title. Status
+    receipts ride the same webhook and are skipped. One delivery can carry
+    several messages, and the same message can be delivered more than once —
+    see `first_delivery`.
+    """
+    out: list[dict] = []
+    for entry in (payload or {}).get("entry") or []:
+        for change in entry.get("changes") or []:
+            if change.get("field") not in (None, "messages"):
+                continue
+            value = change.get("value") or {}
+            for msg in value.get("messages") or []:
+                number = normalize_number(msg.get("from"))
+                if not number:
+                    continue
+                text = None
+                kind = msg.get("type")
+                if kind == "text":
+                    text = (msg.get("text") or {}).get("body")
+                elif kind == "interactive":
+                    inter = msg.get("interactive") or {}
+                    picked = inter.get("button_reply") or inter.get("list_reply") or {}
+                    text = picked.get("title")
+                elif kind == "button":
+                    text = (msg.get("button") or {}).get("text")
+                out.append({"id": msg.get("id"), "number": number, "text": text})
+    return out
+
+
+# Meta redelivers a message until it sees a 200, and can deliver one twice
+# regardless. A bounded set of recent ids keeps a redelivery from starting a
+# second agent turn. Per process and unpersisted on purpose: after a restart a
+# very late redelivery could slip through, which is a repeated question, not a
+# lost one.
+_seen_ids: deque = deque(maxlen=1000)
+_seen_set: set = set()
+
+
+def first_delivery(message_id: str | None) -> bool:
+    if not message_id:
+        return True
+    if message_id in _seen_set:
+        return False
+    if len(_seen_ids) == _seen_ids.maxlen:
+        _seen_set.discard(_seen_ids[0])
+    _seen_ids.append(message_id)
+    _seen_set.add(message_id)
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -148,35 +202,48 @@ def chunk(text: str, limit: int = CHUNK_CHARS) -> list[str]:
     return parts
 
 
-def _post(url: str, data: dict, sid: str, token: str) -> int:
-    """One authenticated form POST to Twilio. Returns the HTTP status.
-    Module-level so the verify script can replace it."""
-    body = urllib.parse.urlencode(data).encode("utf-8")
+def _post(url: str, payload: dict, token: str) -> int:
+    """One authenticated JSON POST to the Graph API. Returns the HTTP status,
+    raising on a 4xx/5xx with Meta's error body in the message. Module-level so
+    the verify script can replace it."""
+    body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
-    auth = base64.b64encode(f"{sid}:{token}".encode("utf-8")).decode("ascii")
-    req.add_header("Authorization", f"Basic {auth}")
-    req.add_header("Content-Type", "application/x-www-form-urlencoded")
-    with urllib.request.urlopen(req, timeout=20) as resp:
-        return resp.status
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=20) as resp:
+            return resp.status
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[:500]
+        raise RuntimeError(f"Graph API {exc.code}: {detail}") from None
 
 
 def send_message(to: str, body: str) -> bool:
-    """Send `body` to `to` (E.164 or `whatsapp:+…`), in chunks. False on any
-    failure — logged, never raised."""
+    """Send `body` to `to` (E.164), in chunks. False on any failure — logged,
+    never raised."""
     if not configured():
         log.info("WhatsApp not configured; dropping message to %s", to)
         return False
-    if not to.lower().startswith("whatsapp:"):
-        to = f"whatsapp:{to}"
-    url = f"{TWILIO_API}/Accounts/{_sid()}/Messages.json"
+    number = normalize_number(to)
+    if not number:
+        log.warning("WhatsApp send skipped: %r is not a number", to)
+        return False
+    url = f"https://graph.facebook.com/{GRAPH_VERSION}/{_phone_number_id()}/messages"
     for part in chunk(body):
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": number.lstrip("+"),
+            "type": "text",
+            "text": {"preview_url": False, "body": part},
+        }
         try:
-            status = _post(url, {"From": from_number(), "To": to, "Body": part}, _sid(), _token())
+            status = _post(url, payload, _access_token())
         except Exception:
-            log.exception("WhatsApp send to %s failed", to)
+            log.exception("WhatsApp send to %s failed", number)
             return False
         if status >= 300:
-            log.warning("WhatsApp send to %s returned %s", to, status)
+            log.warning("WhatsApp send to %s returned %s", number, status)
             return False
     return True
 

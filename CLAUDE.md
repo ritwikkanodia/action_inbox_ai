@@ -38,7 +38,7 @@ python scripts/verify/verify_push.py       # stubs pywebpush + the OpenAI call; 
 python scripts/verify/verify_google_scopes.py  # scope set + credential refresh; no network
 python scripts/verify/verify_google_mcp.py     # Google MCP server against fake clients; no network
 python scripts/verify/verify_chat.py           # todo-less chat routes; stubs Hermes, no spend
-python scripts/verify/verify_whatsapp.py       # Twilio webhook, linking, replies; stubs both, no spend
+python scripts/verify/verify_whatsapp.py       # Meta webhook, linking, replies; stubs Meta + Hermes, no spend
 ```
 
 ## Architecture
@@ -114,8 +114,8 @@ fine — a confusing way to lose an afternoon. Key routes:
 - `GET /digest/preview?user_id=…[&format=json]` — renders a user's digest without sending it
 - `GET /chat` — the todo-less chat, a third view in the same shell; `POST /chat/ask-ai`,
   `GET /chat/run`, `POST /chat/run/stop`, `POST /chat/reset-thread` mirror the todo routes
-- `POST /whatsapp/webhook` — Twilio inbound messages (public, signature-checked);
-  `POST /settings/whatsapp/link`, `/settings/whatsapp/unlink` — number linking
+- `GET|POST /whatsapp/webhook` — Meta's subscription handshake and inbound messages (public,
+  signature-checked); `POST /settings/whatsapp/link`, `/settings/whatsapp/unlink` — number linking
 
 **The chat is the todo routes with the todo taken out.** One conversation per user, held in
 `user_state` under `chat:thread` (the display log) and `chat:executor_state`; "New chat"
@@ -130,23 +130,36 @@ the active thread id (`aiUrl`), so only one composer exists in the DOM at a time
 chat clears the todo selection. Verified by `scripts/verify/verify_chat.py`.
 
 **WhatsApp is a second surface on that same chat** (`whatsapp.py`, routes in `app.py`), over
-Twilio. A user links their number from Settings: the server issues a 6-digit code
-(`whatsapp:pending` in `user_state`, 15 minutes), the user sends it from their WhatsApp to
-the app's Twilio number, and `POST /whatsapp/webhook` matches it and stores
-`whatsapp:number` — one per user, one user per number. The code is what stops someone
-routing another person's WhatsApp into their own account. From then on a message from
-that number is a chat turn for that user, started through the same `_start_chat_turn` the
-web view uses, so `/chat` shows it live; an `on_finish` hook sends the last assistant bubble
-back with `whatsapp.send_message`, chunked under Twilio's 1600-character cap. The webhook
-answers immediately with a short TwiML acknowledgement because a turn takes minutes; a
-message arriving while one is running gets "still working". Clarifying questions render as
-a numbered list, and a digit reply is mapped back to the option and phrased exactly as a
-chip click would be. The webhook is public but Twilio-signed (`X-Twilio-Signature`, checked
-against both Flask's URL and `BASE_URL`'s, since proxies change the scheme). Needs
-`TWILIO_ACCOUNT_SID`/`TWILIO_AUTH_TOKEN`/`TWILIO_WHATSAPP_FROM` (`TWILIO_SANDBOX_KEYWORD` on
-the sandbox) and Twilio pointed at `<BASE_URL>/whatsapp/webhook` — a tunnel locally. No SDK:
-the signature is a dozen lines of HMAC and the send one form POST, both stubbed by
-`scripts/verify/verify_whatsapp.py`. Every outbound failure is logged and swallowed.
+Meta's WhatsApp Cloud API, direct — no BSP in between. A user links their number from
+Settings: the server issues a 6-digit code (`whatsapp:pending` in `user_state`, 15 minutes),
+the user sends it from their WhatsApp to the app's number, and the webhook matches it and
+stores `whatsapp:number` — one per user, one user per number. A pending code is checked
+*before* the existing link, so a number can be re-verified into another account; the phone
+that sent the code is the proof, and that proof is what stops someone routing another
+person's WhatsApp into their own account. From then on a message from that number is a chat
+turn for that user, started through the same `_start_chat_turn` the web view uses, so `/chat`
+shows it live; an `on_finish` hook sends the last assistant bubble back with
+`whatsapp.send_message`, chunked under Meta's 4096-character cap. Clarifying questions render
+as a numbered list, and a digit reply is mapped back to the option and phrased exactly as a
+chip click would be. Because a turn takes minutes and Meta's webhook response carries no
+message, the "On it" acknowledgement, "still working" (a message arriving mid-run), "Linked"
+and the not-linked pointer all go out as ordinary API sends. Meta specifics, all in
+`whatsapp.py`: `GET /whatsapp/webhook` is the one-time subscription handshake
+(`hub.verify_token` → echo `hub.challenge`); `POST` is signed with `X-Hub-Signature-256`,
+HMAC-SHA256 of the raw body with the app secret, so the body must be read raw before any
+parsing; one delivery can carry several messages plus status receipts (skipped); and Meta
+redelivers until it sees a 200 and can deliver twice anyway, so the route always returns 200
+once the signature checks out and a bounded set of recent message ids drops repeats.
+Non-text messages get a text-only notice; a tapped reply button or list row arrives as its
+title and is treated as text. Needs `META_WA_PHONE_NUMBER_ID`/`META_WA_ACCESS_TOKEN`/
+`META_WA_APP_SECRET`/`META_WA_VERIFY_TOKEN` (`META_WA_PHONE_NUMBER` for the card,
+`META_WA_TEST_NUMBER=1` on the free test number, whose recipient allowlist Settings then
+mentions) and the webhook pointed at `<BASE_URL>/whatsapp/webhook` — a tunnel locally. The
+agent never initiates, so every conversation is user-initiated and inside the 24-hour
+service window: free, and not counted against the business-initiated limits that Meta's
+business verification raises. No SDK: the signature is one HMAC and the send one JSON POST,
+both stubbed by `scripts/verify/verify_whatsapp.py`. Every outbound failure is logged and
+swallowed.
 
 ## Auth and per-user credentials
 
