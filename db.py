@@ -815,6 +815,19 @@ def get_whatsapp_pending(conn: sqlite3.Connection, user_id: str) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _same_phone(entered: str, sender: str) -> bool:
+    """Whether the number typed into Settings names the phone that sent the code.
+
+    Exact match, or the typed number is the sender's without its country code:
+    people type their national number, and the country prefix is the one part
+    a phone's own message can't get wrong. Eight digits minimum, so a short
+    fragment can't ride in on a lucky code.
+    """
+    a = entered.lstrip("+")
+    b = sender.lstrip("+")
+    return a == b or (len(a) >= 8 and b.endswith(a))
+
+
 def find_pending_whatsapp_link(conn: sqlite3.Connection, number: str, code: str,
                                now_iso: str) -> str | None:
     """The user whose unexpired pending link is for `number` with `code`, if any."""
@@ -826,7 +839,7 @@ def find_pending_whatsapp_link(conn: sqlite3.Connection, number: str, code: str,
             data = json.loads(raw)
         except ValueError:
             continue
-        if (isinstance(data, dict) and data.get("number") == number
+        if (isinstance(data, dict) and _same_phone(str(data.get("number") or ""), number)
                 and data.get("code") == code and str(data.get("expires_at", "")) > now_iso):
             return user_id
     return None

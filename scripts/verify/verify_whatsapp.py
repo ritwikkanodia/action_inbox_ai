@@ -246,6 +246,17 @@ def main() -> None:
           get_whatsapp_number(conn, user_id) == NUMBER
           and find_user_by_whatsapp(conn, NUMBER) == user_id
           and client.get("/settings.json").get_json()["whatsapp"]["pending"] is None)
+    # Typed without the country code: the phone's own message carries it.
+    fresh = (datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat()
+    set_whatsapp_pending(conn, other_id, "+8961536544", "333333", fresh)
+    inbound(client, "333333", number="+918961536544")
+    check("a number typed without its country code still links, stored in full",
+          get_whatsapp_number(conn, other_id) == "+918961536544")
+    set_whatsapp_pending(conn, other_id, "+6544", "444444", fresh)
+    inbound(client, "444444", number="+911234566544")
+    check("a short fragment does not link",
+          "isn't linked" in sends[-1]["body"] and get_whatsapp_number(conn, other_id) == "+918961536544")
+    conn.execute("DELETE FROM user_state WHERE user_id = ? AND key LIKE 'whatsapp:%'", (other_id,)); conn.commit()
     expired = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
     set_whatsapp_pending(conn, other_id, "+14155550111", "222222", expired)
     inbound(client, "222222", number="+14155550111")

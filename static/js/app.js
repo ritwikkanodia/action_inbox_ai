@@ -1606,7 +1606,7 @@ function renderWhatsappCard(info) {
     linkedRow.style.display = 'none';
     return;
   }
-  hint.textContent = 'Message your agent from WhatsApp. Same conversation as Chat.';
+  hint.textContent = 'Message your agent from WhatsApp. Same conversation as Chat. Enter your number with its country code.';
 
   if (info.number) {
     status.textContent = 'Linked';
