@@ -186,7 +186,7 @@ finish() {
 # Replace the example below. Set TOTAL_STAGES to match the stages you write.
 # ──────────────────────────────────────────────────────────────────────────
 
-TOTAL_STAGES=10
+TOTAL_STAGES=11
 
 banner "WhatsApp (Meta Cloud API) setup"
 
@@ -221,6 +221,16 @@ ask META_WA_PHONE_NUMBER "Paste the sender's phone number (with country code):"
 step "At the top, 'Temporary access token' → 'Generate' (if needed) → copy it."
 note "It expires after 24 hours. Fine for trying it; the last stage makes a permanent one."
 ask_secret META_WA_ACCESS_TOKEN "Paste the access token:"
+# A paste into a hidden prompt sometimes lands two or three times over. Every
+# Meta token starts with EAA, so a second EAA means a repeat: keep the first copy.
+if [[ "$META_WA_ACCESS_TOKEN" == EAA*EAA* ]]; then
+  META_WA_ACCESS_TOKEN="EAA${META_WA_ACCESS_TOKEN#EAA}"
+  META_WA_ACCESS_TOKEN="${META_WA_ACCESS_TOKEN%%EAA*}"
+  warn "the token was pasted more than once; kept the first copy (${#META_WA_ACCESS_TOKEN} chars)"
+fi
+step "Below the token, copy the 'WhatsApp Business Account ID' as well."
+ask META_WA_WABA_ID "Paste the WhatsApp Business Account ID:"
+write_env META_WA_WABA_ID "$META_WA_WABA_ID"
 write_env META_WA_PHONE_NUMBER_ID "$META_WA_PHONE_NUMBER_ID"
 write_env META_WA_PHONE_NUMBER "$META_WA_PHONE_NUMBER"
 write_env META_WA_ACCESS_TOKEN "$META_WA_ACCESS_TOKEN"
@@ -322,6 +332,22 @@ note "Only 'messages' is needed; the app ignores everything else."
 pause "Press Enter once the webhook shows as verified and 'messages' is subscribed."
 
 # ── 9 ─────────────────────────────────────────────────────────────────────
+stage "Subscribe the app to the Business Account"
+say "Registering the webhook is not enough: the Business Account must also list your app."
+say "Out of the box it lists only Meta's own dashboard app, so nothing reaches your webhook."
+say "Subscribing now…"
+subscribed=$(curl -s --max-time 15 -X POST \
+  "https://graph.facebook.com/v23.0/${META_WA_WABA_ID}/subscribed_apps" \
+  -H "Authorization: Bearer ${META_WA_ACCESS_TOKEN}" || true)
+if [[ "$subscribed" == *'"success":true'* ]]; then
+  printf '  %s✓ subscribed%s — the Business Account now delivers messages to your app\n' "$GREEN" "$RESET"
+else
+  warn "Meta answered: ${subscribed:-nothing}"
+  warn "Check the token and the Business Account ID, then re-run this stage."
+  pause
+fi
+
+# ── 10 ────────────────────────────────────────────────────────────────────
 stage "Try it from your phone"
 say "From the phone you allowlisted, send any message to ${BOLD}${META_WA_PHONE_NUMBER}${RESET} on WhatsApp."
 say "Expected reply within a few seconds:"
@@ -333,7 +359,7 @@ say "then send the code from your phone. The card flips to 'Linked' by itself."
 open_url "${BASE_URL:-http://localhost:5001}/settings"
 pause "Press Enter once it says Linked. Then just message the agent."
 
-# ── 10 ────────────────────────────────────────────────────────────────────
+# ── 11 ────────────────────────────────────────────────────────────────────
 stage "Permanent access token (optional now, needed within 24h)"
 say "The temporary token from stage 3 dies after 24 hours. A System User token does not."
 if confirm "Create the permanent token now?"; then
@@ -348,7 +374,7 @@ if confirm "Create the permanent token now?"; then
   write_env META_WA_ACCESS_TOKEN "$META_WA_ACCESS_TOKEN"
   note "Restart the app so it picks the new token up."
 else
-  SKIPPED+=("Permanent access token: the temporary one stops working 24h after it was generated (re-run this wizard, stage 10)")
+  SKIPPED+=("Permanent access token: the temporary one stops working 24h after it was generated (re-run this wizard, stage 11)")
 fi
 
 finish
