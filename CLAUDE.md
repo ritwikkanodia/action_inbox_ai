@@ -154,7 +154,9 @@ Non-text messages get a text-only notice; a tapped reply button or list row arri
 title and is treated as text. Needs `META_WA_PHONE_NUMBER_ID`/`META_WA_ACCESS_TOKEN`/
 `META_WA_APP_SECRET`/`META_WA_VERIFY_TOKEN` (`META_WA_PHONE_NUMBER` for the card,
 `META_WA_TEST_NUMBER=1` on the free test number, whose recipient allowlist Settings then
-mentions) and the webhook pointed at `<BASE_URL>/whatsapp/webhook` — a tunnel locally. The
+mentions) and the webhook pointed at `<BASE_URL>/whatsapp/webhook` — a tunnel locally;
+`scripts/setup_whatsapp_meta.sh` is a guided walk through the Meta dashboard that fills all of
+that in. The
 agent never initiates, so every conversation is user-initiated and inside the 24-hour
 service window: free, and not counted against the business-initiated limits that Meta's
 business verification raises. No SDK: the signature is one HMAC and the send one JSON POST,
