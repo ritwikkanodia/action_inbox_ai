@@ -1,3 +1,6 @@
+import base64
+import mimetypes
+
 from agent.tools.email import fetch_gmail_thread_context
 
 # Sentinel prefix on bootstrap user turns that should NOT be shown in the UI.
@@ -61,6 +64,45 @@ def _format_todo(todo: dict) -> str:
         ("Due", todo.get("due_date")),
     ]
     return "\n".join(f"{label}: {value}" for label, value in fields if value)
+
+
+def user_turn(text: str, images: list[str] | None = None) -> dict:
+    """A user input item. Plain string content unless `images` (local paths)
+    are given, in which case the content is a list: the text as an
+    `input_text` part, then one base64 data-URL `input_image` part per file.
+    Files that cannot be read are skipped rather than failing the turn."""
+    if not images:
+        return {"role": "user", "content": text}
+    parts: list[dict] = [{"type": "input_text", "text": text}]
+    for path in images:
+        try:
+            with open(path, "rb") as fh:
+                data = fh.read()
+        except OSError:
+            continue
+        mime = mimetypes.guess_type(path)[0] or "image/jpeg"
+        encoded = base64.b64encode(data).decode("ascii")
+        parts.append({"type": "input_image", "detail": "auto",
+                      "image_url": f"data:{mime};base64,{encoded}"})
+    return {"role": "user", "content": parts}
+
+
+def strip_image_parts(items: list) -> list:
+    """The persisted thread keeps the text of a user turn, never the image
+    bytes: a base64 image re-sent on every later turn would dominate the
+    context and the row. Returns a copy with list-shaped user content
+    reduced to its `input_text` parts joined."""
+    out = []
+    for item in items:
+        if (isinstance(item, dict) and item.get("role") == "user"
+                and isinstance(item.get("content"), list)):
+            text = "\n".join(
+                p.get("text", "") for p in item["content"]
+                if isinstance(p, dict) and p.get("type") == "input_text"
+            )
+            item = {**item, "content": text}
+        out.append(item)
+    return out
 
 
 def build_initial_inputs(todo: dict, user_message: str, user_id: str) -> list[dict]:

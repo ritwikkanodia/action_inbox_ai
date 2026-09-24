@@ -73,7 +73,21 @@ def _google_binding_env(
     }
 
 
-def _run(prompt: str, session_name: str, cancel=None, progress=None, binding=None) -> str:
+def build_command(prompt: str, session_name: str, images: list[str] | None = None) -> list[str]:
+    """The `hermes chat` argv for one turn. `--image` takes a single path, so
+    the first image rides on it and the prompt names the rest (see
+    `hermes_prompt._images_section`)."""
+    cmd = [HERMES_BIN, "chat", "-q", prompt, "-Q", "-c", session_name,
+           "--create-if-missing"]
+    if images:
+        cmd += ["--image", images[0]]
+    if YOLO:
+        cmd.append("--yolo")
+    return cmd
+
+
+def _run(prompt: str, session_name: str, cancel=None, progress=None, binding=None,
+         images: list[str] | None = None) -> str:
     """Invoke the CLI once against a named session. Returns the reply text.
 
     `hermes chat -q … -Q` rather than the top-level `-z` one-shot. `-z` accepts
@@ -96,10 +110,7 @@ def _run(prompt: str, session_name: str, cancel=None, progress=None, binding=Non
     an `ActivityWatcher` tails that instead. The watcher is built *before* the
     process starts, so it knows which messages predate this turn.
     """
-    cmd = [HERMES_BIN, "chat", "-q", prompt, "-Q", "-c", session_name,
-           "--create-if-missing"]
-    if YOLO:
-        cmd.append("--yolo")
+    cmd = build_command(prompt, session_name, images)
 
     env = dict(os.environ)
     env.update(binding or {})
@@ -205,8 +216,13 @@ def resolve(
     cancel=None,
     progress=None,
     from_suggestion: bool = False,
+    images: list[str] | None = None,
 ) -> tuple[list, str | None]:
     """Run one turn and append it to `thread`.
+
+    `images` are local paths the user attached to this message (the WhatsApp
+    surface saves inbound photos to disk); the first is passed to the CLI's
+    --image and all are named in the prompt.
 
     Returns the updated thread and the Hermes session name to persist. The
     thread is a plain list of {role, content} bubbles — Hermes owns the real
@@ -229,17 +245,19 @@ def resolve(
         # The session carries the conversation, but not the task framing — each
         # invocation gets a fresh system prompt.
         prompt = build_followup_prompt(
-            user_message, from_suggestion, chat=todo.get("source") == "chat"
+            user_message, from_suggestion, chat=todo.get("source") == "chat",
+            images=images,
         )
     else:
         session_name = _new_session_name(todo["todo_id"])
-        prompt = build_prompt(todo, user_message, user_id, from_suggestion)
+        prompt = build_prompt(todo, user_message, user_id, from_suggestion, images=images)
 
     try:
         reply = _run(prompt, session_name, cancel, progress,
                      binding=_google_binding_env(
                          user_id, todo.get("account_id"),
-                         None if is_chat(todo) else todo.get("todo_id")))
+                         None if is_chat(todo) else todo.get("todo_id")),
+                     images=images)
     except ExecutorError as exc:
         # The session exists from the first tool call onward, whatever happens
         # after. Name it, so a stopped first turn still resumes the session

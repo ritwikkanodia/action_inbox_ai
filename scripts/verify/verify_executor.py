@@ -42,11 +42,14 @@ def check(label: str, condition: bool) -> None:
 
 calls: list[tuple[str, str | None]] = []
 seen_bindings: list = []
+seen_images: list = []
 
 
-def stub_run(prompt: str, session_name: str, cancel=None, progress=None, binding=None) -> str:
+def stub_run(prompt: str, session_name: str, cancel=None, progress=None, binding=None,
+             images=None) -> str:
     calls.append((prompt, session_name))
     seen_bindings.append(binding)
+    seen_images.append(images)
     # A real run reports its steps here; the trace itself is covered by
     # verify_hermes_activity.py, so this only has to accept the argument.
     if progress is not None:
@@ -54,12 +57,14 @@ def stub_run(prompt: str, session_name: str, cancel=None, progress=None, binding
     return f"reply {len(calls)}"
 
 
-def failing_run(prompt: str, session_name: str, cancel=None, progress=None, binding=None) -> str:
+def failing_run(prompt: str, session_name: str, cancel=None, progress=None, binding=None,
+                images=None) -> str:
     calls.append((prompt, session_name))
     raise executor.ExecutorError("browser exploded")
 
 
-def blocking_run(prompt: str, session_name: str, cancel=None, progress=None, binding=None) -> str:
+def blocking_run(prompt: str, session_name: str, cancel=None, progress=None, binding=None,
+                 images=None) -> str:
     """Stands in for a long agent run: returns only once cancelled."""
     calls.append((prompt, session_name))
     if progress is not None:
@@ -339,7 +344,7 @@ def main() -> None:
     sdk_calls: list = []
 
     def stub_sdk_resolve(todo, thread, user_message, user_id, state,
-                         cancel=None, progress=None, from_suggestion=False):
+                         cancel=None, progress=None, from_suggestion=False, images=None):
         sdk_calls.append((list(thread), user_message, state))
         return list(thread) + [
             {"role": "user", "content": user_message},
@@ -427,8 +432,36 @@ def main() -> None:
         check("a thread it started is not re-bootstrapped",
               sum(1 for i in seen_inputs[-1]
                   if isinstance(i.get("content"), str) and i["content"].startswith(HIDDEN_CONTEXT_SENTINEL)) == 1)
+
+        print("\n-- images --")
+        img = os.path.join(_tmp, "shot.png")
+        with open(img, "wb") as fh:
+            fh.write(b"\x89PNG\r\n\x1a\nfake")
+        persisted = resolver.resolve_todo(todo, own, "\U0001f4ce Image: what is this?", user_id, images=[img])
+        sent = seen_inputs[-1][-1]
+        check("the SDK user turn carries the text and a base64 data-URL image part",
+              sent["role"] == "user" and isinstance(sent["content"], list)
+              and sent["content"][0] == {"type": "input_text", "text": "\U0001f4ce Image: what is this?"}
+              and sent["content"][1]["type"] == "input_image"
+              and sent["content"][1]["image_url"].startswith("data:image/png;base64,"))
+        check("the persisted thread keeps only the text, not the bytes",
+              [i for i in persisted if i.get("role") == "user"][-1]["content"] == "\U0001f4ce Image: what is this?"
+              and "base64" not in json.dumps(persisted))
     finally:
         resolver.Runner, resolver._build_agent = real_runner, real_build
+
+    cmd = hermes_runner.build_command("prompt", "aib-chat-x", images=[img, "/tmp/other.jpg"])
+    check("the Hermes command attaches the first image", "--image" in cmd and cmd[cmd.index("--image") + 1] == img
+          and cmd.count("--image") == 1)
+    check("…and none without images", "--image" not in hermes_runner.build_command("prompt", "aib-chat-x"))
+    hermes_runner._run = stub_run
+    n = len(calls)
+    executor.resolve({"todo_id": "chat", "source": "chat", "title": ""}, [], "\U0001f4ce Image", user_id,
+                     None, images=[img], executor="hermes")
+    check("resolve hands the image paths to the Hermes run", len(calls) == n + 1 and seen_images[-1] == [img])
+    check("the follow-up and first-turn prompts name the path and the vision tool",
+          img in calls[-1][0] and "vision_analyze" in calls[-1][0]
+          and img in hermes_runner.build_followup_prompt("x", chat=True, images=[img]))
 
     os.environ["TODO_EXECUTOR"] = "agents_sdk"
     check("TODO_EXECUTOR selects the SDK executor",

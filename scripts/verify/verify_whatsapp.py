@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 _tmp = tempfile.mkdtemp()
 os.environ["DB_PATH"] = os.path.join(_tmp, "whatsapp.db")
+os.environ["UPLOADS_DIR"] = os.path.join(_tmp, "uploads")
 os.environ.setdefault("FLASK_SECRET_KEY", "verify-only-not-a-real-secret")
 os.environ.setdefault("GOOGLE_CLIENT_ID", "verify-client-id")
 os.environ.setdefault("GOOGLE_CLIENT_SECRET", "verify-client-secret")
@@ -56,10 +57,13 @@ def check(label: str, condition: bool) -> None:
 
 prompts: list[str] = []
 sends: list[dict] = []
+run_images: list = []
+downloads: list[str] = []
 
 
-def stub_run(prompt, session_name, cancel=None, progress=None, binding=None) -> str:
+def stub_run(prompt, session_name, cancel=None, progress=None, binding=None, images=None) -> str:
     prompts.append(prompt)
+    run_images.append(images)
     if len(prompts) == 1:
         block = json.dumps({"questions": [{
             "question": "Which day works for you?", "header": "Day",
@@ -70,8 +74,9 @@ def stub_run(prompt, session_name, cancel=None, progress=None, binding=None) -> 
     return f"**Done** — reply {len(prompts)}."
 
 
-def blocking_run(prompt, session_name, cancel=None, progress=None, binding=None) -> str:
+def blocking_run(prompt, session_name, cancel=None, progress=None, binding=None, images=None) -> str:
     prompts.append(prompt)
+    run_images.append(images)
     for _ in range(200):
         if cancel is not None and cancel.cancelled:
             raise executor.ExecutorCancelled("Stopped.")
@@ -92,6 +97,8 @@ def message(number: str, text: str | None = None, kind: str = "text", msg_id: st
         msg["text"] = {"body": text}
     elif kind == "image":
         msg["image"] = {"id": "img1", "mime_type": "image/jpeg"}
+        if text:
+            msg["image"]["caption"] = text
     elif kind == "interactive":
         msg["interactive"] = {"type": "button_reply", "button_reply": {"id": "b1", "title": text}}
     return msg
@@ -183,6 +190,12 @@ def main() -> None:
     check("parse_inbound yields every message, text or not, and skips statuses",
           [(p["number"], p["text"]) for p in parsed]
           == [(NUMBER, "hi"), ("+14155550199", None), (NUMBER, "Tomorrow")])
+    check("parse_inbound keeps an image's media id, mime type and caption",
+          [(p["text"], p["media"]) for p in whatsapp.parse_inbound(
+              delivery([message(NUMBER, "Is this the right form?", "image"), message(NUMBER, "hi")]))]
+          == [("Is this the right form?", {"id": "img1", "mime_type": "image/jpeg"}), ("hi", None)])
+    check("an image without a caption has no text",
+          parsed[1]["text"] is None and parsed[1]["media"] == {"id": "img1", "mime_type": "image/jpeg"})
     check("parse_inbound survives an unrelated change field",
           whatsapp.parse_inbound({"entry": [{"changes": [{"field": "account_update", "value": {}}]}]}) == [])
     check("first_delivery drops a repeated id",
@@ -317,9 +330,81 @@ def main() -> None:
     check("the stop notice reached the phone", "Stopped" in sends[-1]["body"])
     hermes_runner._run = stub_run
 
+    print("\n-- images --")
+    real_download = whatsapp.download_media
+
+    def fake_download(media_id):
+        downloads.append(media_id)
+        return b"\xff\xd8fake-jpeg", "image/jpeg"
+
+    whatsapp.download_media = fake_download
+    n_before, p_before = len(sends), len(prompts)
+    inbound(client, "Is this the right form?", kind="image", msg_id="wamid.img1")
+    check("an image from the linked number is acknowledged", sends[-1]["body"].startswith("On it"))
+    wait_idle(client)
+    check("the media id was downloaded", downloads == ["img1"])
+    check("the turn carried one image path", len(prompts) == p_before + 1
+          and isinstance(run_images[-1], list) and len(run_images[-1]) == 1)
+    path = run_images[-1][0]
+    check("the file is saved under UPLOADS_DIR, named for the message, typed by mime",
+          path.startswith(os.environ["UPLOADS_DIR"]) and os.path.basename(path) == "wamid.img1.jpg"
+          and open(path, "rb").read() == b"\xff\xd8fake-jpeg")
+    check("the prompt carries the caption and the path",
+          "Is this the right form?" in prompts[-1] and path in prompts[-1])
+    web = client.post("/chat/ask-ai", json={}).get_json()
+    users = [b for b in web["thread"] if b["role"] == "user"]
+    check("the web chat shows a placeholder line with the caption",
+          users[-1]["content"] == "📎 Image: Is this the right form?")
+    inbound(client, None, kind="image", msg_id="wamid.img2")
+    wait_idle(client)
+    check("an image with no caption still starts a turn, with a bare placeholder",
+          run_images[-1] == [os.path.join(os.environ["UPLOADS_DIR"], user_id, "wamid.img2.jpg")]
+          and [b for b in client.post("/chat/ask-ai", json={}).get_json()["thread"]
+               if b["role"] == "user"][-1]["content"] == "📎 Image")
+
+    def broken_download(media_id):
+        raise whatsapp.GraphError(400, 100, "media gone")
+
+    whatsapp.download_media = broken_download
+    n_before, p_before = len(sends), len(prompts)
+    inbound(client, "again", kind="image")
+    time.sleep(0.1)
+    check("a failed download sends a notice and starts nothing",
+          len(sends) == n_before + 1 and "fetch that image" in sends[-1]["body"]
+          and len(prompts) == p_before)
+    whatsapp.download_media = real_download
+
+    import io
+    import urllib.error
+    from unittest import mock
+
+    class FakeResp(io.BytesIO):
+        headers = {}
+        def __enter__(self): return self
+        def __exit__(self, *a): return False
+        def getcode(self): return 200
+
+    seen_reqs = []
+
+    def fake_urlopen(req, timeout=None):
+        seen_reqs.append(req)
+        if len(seen_reqs) == 1:
+            return FakeResp(json.dumps({"url": "https://lookaside.example/blob", "mime_type": "image/png",
+                                        "id": "img9"}).encode())
+        return FakeResp(b"PNGBYTES")
+
+    with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        data, mime = whatsapp.download_media("img9")
+    check("download_media resolves the id to a URL, then fetches the bytes",
+          (data, mime) == (b"PNGBYTES", "image/png")
+          and seen_reqs[0].full_url.endswith("/img9") and seen_reqs[1].full_url == "https://lookaside.example/blob")
+    check("both requests carry the bearer token",
+          all(r.get_header("Authorization") == "Bearer EAAverify" for r in seen_reqs))
+
     print("\n-- media, unlink, takeover --")
-    inbound(client, None, kind="image")
-    check("a non-text message gets a text-only notice", "only read text" in sends[-1]["body"])
+    inbound(client, None, kind="location")
+    check("other media gets a notice that names text and images",
+          "text or an image" in sends[-1]["body"])
     data = client.post("/settings/whatsapp/unlink").get_json()
     check("unlink clears the number", data["ok"] and data["whatsapp"]["number"] is None
           and find_user_by_whatsapp(conn, NUMBER) is None)

@@ -124,13 +124,16 @@ def validate_signature(raw_body: bytes, header: str | None, secret: str | None =
 
 
 def parse_inbound(payload: dict) -> list[dict]:
-    """Every user message in one delivery, as {id, number, text}.
+    """Every user message in one delivery, as {id, number, text, media}.
 
-    `text` is None for anything that isn't text (media, location, a contact
-    card); a tapped reply button or list row arrives as its title. Status
-    receipts ride the same webhook and are skipped. One delivery can carry
-    several messages, and the same message can be delivered more than once —
-    see `first_delivery`.
+    `text` is None for anything that isn't text (a location, a contact card,
+    an image with no caption); a tapped reply button or list row arrives as
+    its title. An image arrives as `media` = {id, mime_type} — Meta sends a
+    media id, not the bytes, and `download_media` turns it into a file — with
+    its caption, if any, as `text`. `media` is None for everything else.
+    Status receipts ride the same webhook and are skipped. One delivery can
+    carry several messages, and the same message can be delivered more than
+    once — see `first_delivery`.
     """
     out: list[dict] = []
     for entry in (payload or {}).get("entry") or []:
@@ -143,17 +146,68 @@ def parse_inbound(payload: dict) -> list[dict]:
                 if not number:
                     continue
                 text = None
+                media = None
                 kind = msg.get("type")
                 if kind == "text":
                     text = (msg.get("text") or {}).get("body")
+                elif kind == "image":
+                    image = msg.get("image") or {}
+                    text = image.get("caption") or None
+                    if image.get("id"):
+                        media = {"id": image["id"], "mime_type": image.get("mime_type") or ""}
                 elif kind == "interactive":
                     inter = msg.get("interactive") or {}
                     picked = inter.get("button_reply") or inter.get("list_reply") or {}
                     text = picked.get("title")
                 elif kind == "button":
                     text = (msg.get("button") or {}).get("text")
-                out.append({"id": msg.get("id"), "number": number, "text": text})
+                out.append({"id": msg.get("id"), "number": number, "text": text, "media": media})
     return out
+
+
+# The image types Meta accepts inbound, mapped to the extension the saved
+# file gets. Anything else is refused at the Meta end, so this is the whole list.
+MEDIA_EXTENSIONS = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+
+
+def _get(url: str, token: str) -> tuple[bytes, dict]:
+    """One authenticated GET. Returns (body, headers); raises `GraphError` on
+    a 4xx/5xx the way `_post` does."""
+    req = urllib.request.Request(url, method="GET")
+    req.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            return resp.read(), dict(resp.headers or {})
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", "replace")[:500]
+        code = None
+        message = detail
+        try:
+            err = json.loads(detail).get("error") or {}
+            code = err.get("code")
+            message = err.get("message") or detail
+        except (ValueError, AttributeError):
+            pass
+        raise GraphError(exc.code, code, message) from None
+
+
+def download_media(media_id: str) -> tuple[bytes, str]:
+    """Fetch an inbound media object. Returns (bytes, mime_type).
+
+    Two Graph calls, both with the bearer token: the id resolves to a
+    short-lived download URL (minutes), and that URL serves the bytes — it
+    needs the same token, without which it answers 4xx. Raises `GraphError`
+    on either failure; the caller decides what to tell the phone.
+    """
+    token = _access_token()
+    meta_body, _ = _get(f"https://graph.facebook.com/{GRAPH_VERSION}/{media_id}", token)
+    meta = json.loads(meta_body.decode("utf-8"))
+    url = meta.get("url")
+    if not url:
+        raise GraphError(200, None, f"media {media_id} has no download URL")
+    data, headers = _get(url, token)
+    mime = (meta.get("mime_type") or headers.get("Content-Type") or "").split(";")[0].strip()
+    return data, mime
 
 
 # Meta redelivers a message until it sees a 200, and can deliver one twice
