@@ -178,10 +178,13 @@ def resolve(
     progress=None,
     from_suggestion: bool = False,
     executor: str | None = None,
+    images: list[str] | None = None,
 ) -> tuple[list, str | None]:
     """Run one turn on `executor` — the user's choice, resolved by the caller —
-    or on the server default when none is given."""
+    or on the server default when none is given. `images` are local paths of
+    image files attached to this message, or None."""
     return _load(current_executor(executor))(
         todo, thread, user_message, user_id, state,
         cancel=cancel, progress=progress, from_suggestion=from_suggestion,
+        images=images or None,
     )

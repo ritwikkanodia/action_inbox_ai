@@ -28,5 +28,6 @@ def resolve(
     cancel=None,
     progress=None,
     from_suggestion: bool = False,
+    images: list[str] | None = None,
 ) -> tuple[list, None]:
-    return resolve_todo(todo, thread, user_message, user_id, from_suggestion), None
+    return resolve_todo(todo, thread, user_message, user_id, from_suggestion, images=images), None

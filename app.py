@@ -114,6 +114,12 @@ def fmt_dt(value: str | None) -> str:
 
 
 DB_PATH = os.environ.get("DB_PATH", "gmail_events.db")
+# Where inbound attachments (WhatsApp photos) are saved, one directory per
+# user. The executors read them from here by path, so it has to be a place
+# the agent's process can reach — local disk, not the database.
+UPLOADS_DIR = os.path.expanduser(
+    os.environ.get("UPLOADS_DIR") or "~/.action_inbox_ai/uploads"
+)
 
 
 def _ensure_db_parent_dir() -> None:
@@ -427,7 +433,7 @@ def _acted_summary(events: list[dict]) -> str:
 
 def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, state,
                      from_suggestion: bool = False, executor: str | None = None,
-                     persist=None):
+                     persist=None, images: list[str] | None = None):
     """Build the callable `agent.runs.start` will execute on its own thread.
 
     Renders its own failures into the thread rather than raising: the frontend
@@ -486,7 +492,7 @@ def _resolution_work(todo: dict, thread: list, user_message: str, user_id: str, 
             final, new_state = resolve(
                 todo, thread, user_message, user_id, state,
                 cancel=cancel, progress=observe, from_suggestion=from_suggestion,
-                executor=executor,
+                executor=executor, images=images,
             )
         except ExecutorCancelled as exc:
             app.logger.warning(
@@ -775,14 +781,17 @@ def _run_payload(run) -> dict:
     }
 
 
-def _start_chat_turn(db, user_id: str, user_message: str, on_finish=None):
+def _start_chat_turn(db, user_id: str, user_message: str, on_finish=None,
+                     images: list[str] | None = None):
     """Register one chat turn on the background registry and return the run.
 
     Shared by the web view and the WhatsApp webhook — same thread, same run
     key, so whichever surface starts a turn, the other sees it. `on_finish`
     is called with `(thread, status)` once the turn has been persisted; the
     webhook uses it to send the reply back to the phone. It is wrapped so a
-    failure in it can't change what the run records.
+    failure in it can't change what the run records. `images` are local
+    paths of files attached to the message; the thread shows only
+    `user_message`, so the caller puts a placeholder line in it.
     """
     raw_thread, state = get_chat(db, user_id)
     thread = _load_thread(raw_thread)
@@ -791,6 +800,7 @@ def _start_chat_turn(db, user_id: str, user_message: str, on_finish=None):
         chat_todo(), thread, user_message, user_id, state,
         executor=get_executor_choice(db, user_id),
         persist=lambda final, new_state: _persist_chat(user_id, final, new_state),
+        images=images,
     )
     if on_finish is not None:
         inner = work
@@ -955,13 +965,30 @@ def whatsapp_webhook():
         if not whatsapp.first_delivery(msg["id"]):
             continue
         try:
-            _handle_whatsapp_message(db, msg["number"], msg["text"])
+            _handle_whatsapp_message(db, msg["number"], msg["text"], msg.get("media"),
+                                     msg.get("id"))
         except Exception:
             app.logger.exception("WhatsApp message handling failed")
     return ("OK", 200)
 
 
-def _handle_whatsapp_message(db, number: str, text: str | None) -> None:
+def _save_whatsapp_image(user_id: str, message_id: str, media: dict) -> str:
+    """Download an inbound image and save it under UPLOADS_DIR/<user>/. Named
+    for the message id, so a redelivery that slipped past `first_delivery`
+    overwrites rather than duplicates. Raises `whatsapp.GraphError`."""
+    data, mime = whatsapp.download_media(media["id"])
+    ext = whatsapp.MEDIA_EXTENSIONS.get(mime or media.get("mime_type") or "", ".jpg")
+    safe_id = "".join(c for c in (message_id or "") if c.isalnum() or c in "._-") or "image"
+    folder = os.path.join(UPLOADS_DIR, user_id)
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, f"{safe_id}{ext}")
+    with open(path, "wb") as fh:
+        fh.write(data)
+    return path
+
+
+def _handle_whatsapp_message(db, number: str, text: str | None, media: dict | None = None,
+                             message_id: str | None = None) -> None:
     body = (text or "").strip()
 
     # A pending code is checked before the existing link: the phone that sent
@@ -987,9 +1014,11 @@ def _handle_whatsapp_message(db, number: str, text: str | None) -> None:
         )
         return
 
-    if not body:
-        # Media, a location, a contact card: nothing the agent can read yet.
-        whatsapp.send_message(number, "I can only read text here for now — send it as a message.")
+    if not body and not media:
+        # A location, a contact card, a document: nothing the agent can read yet.
+        whatsapp.send_message(
+            number, "I can only read text or an image here for now — send it as one of those."
+        )
         return
 
     active = runs.get(user_id, CHAT_TODO_ID)
@@ -999,19 +1028,32 @@ def _handle_whatsapp_message(db, number: str, text: str | None) -> None:
         )
         return
 
-    # A digit reply answers the question the agent asked last, the way a chip
-    # click does in the web view. Anything else is the message itself.
-    raw_thread, _ = get_chat(db, user_id)
-    shown = _thread_for_client(_load_thread(raw_thread))
-    last = shown[-1] if shown and shown[-1].get("role") == "assistant" else {}
-    message = whatsapp.answer_from_reply(body, last.get("questions")) or body
+    images: list[str] = []
+    if media:
+        # Fetched before the turn starts, so a failure costs a notice and not
+        # a run. The thread shows a placeholder line for the photo (the web
+        # view renders no images); the agent gets the file by path.
+        try:
+            images.append(_save_whatsapp_image(user_id, message_id or "", media))
+        except Exception:
+            app.logger.exception("WhatsApp media download failed: user=%s", user_id)
+            whatsapp.send_message(number, "I couldn't fetch that image — try sending it again.")
+            return
+        message = f"📎 Image: {body}" if body else "📎 Image"
+    else:
+        # A digit reply answers the question the agent asked last, the way a
+        # chip click does in the web view. Anything else is the message itself.
+        raw_thread, _ = get_chat(db, user_id)
+        shown = _thread_for_client(_load_thread(raw_thread))
+        last = shown[-1] if shown and shown[-1].get("role") == "assistant" else {}
+        message = whatsapp.answer_from_reply(body, last.get("questions")) or body
 
     def on_finish(final_thread, status):
         bubbles = _thread_for_client(final_thread)
         if bubbles and bubbles[-1].get("role") == "assistant":
             whatsapp.send_message(number, whatsapp.format_reply(bubbles[-1]))
 
-    _start_chat_turn(db, user_id, message, on_finish=on_finish)
+    _start_chat_turn(db, user_id, message, on_finish=on_finish, images=images or None)
     app.logger.info("WhatsApp turn started: user=%s", user_id)
     whatsapp.send_message(number, "On it — I'll reply here when it's done.")
 

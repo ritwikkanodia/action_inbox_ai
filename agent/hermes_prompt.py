@@ -347,8 +347,24 @@ FOLLOWUP_INSTRUCTIONS = FOLLOWUP_INSTRUCTIONS.replace(
 )
 
 
+def _images_section(images: list[str] | None) -> str:
+    """The user attached image files. The first rides on the CLI's --image
+    flag, so the model sees it natively; every path is named here so the agent
+    can open any of them — this turn or a later one — with vision_analyze."""
+    if not images:
+        return ""
+    lines = "\n".join(f"- {path}" for path in images)
+    return (
+        "## Attached images\n"
+        "The user attached these image files with their message. The first is "
+        "shown to you directly; open any of them with the vision_analyze tool "
+        "(pass the path) to look again or to see the others:\n" + lines
+    )
+
+
 def build_followup_prompt(
-    user_message: str, from_suggestion: bool = False, chat: bool = False
+    user_message: str, from_suggestion: bool = False, chat: bool = False,
+    images: list[str] | None = None,
 ) -> str:
     """Prompt for a resumed turn.
 
@@ -367,14 +383,18 @@ def build_followup_prompt(
             "Continue the same conversation from earlier in this session — there is no "
             "todo behind it; the user is talking to you directly.",
         )
+    attached = _images_section(images)
     if not from_suggestion:
-        return f"{instructions}{message}"
-    body = instructions.replace("The user says:\n", SUGGESTED_ROUTE_LEAD)
-    return f"{body}{message}{SUGGESTED_ROUTE_TAIL}"
+        prompt = f"{instructions}{message}"
+    else:
+        body = instructions.replace("The user says:\n", SUGGESTED_ROUTE_LEAD)
+        prompt = f"{body}{message}{SUGGESTED_ROUTE_TAIL}"
+    return f"{prompt}\n\n{attached}" if attached else prompt
 
 
 def build_prompt(
-    todo: dict, user_message: str, user_id: str, from_suggestion: bool = False
+    todo: dict, user_message: str, user_id: str, from_suggestion: bool = False,
+    images: list[str] | None = None,
 ) -> str:
     """Prompt for the first turn on a todo: instructions + context + any user message.
 
@@ -404,5 +424,9 @@ def build_prompt(
             )
         else:
             parts.append(f"## The user says\n{user_message}")
+
+    attached = _images_section(images)
+    if attached:
+        parts.append(attached)
 
     return "\n\n".join(parts)

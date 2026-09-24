@@ -194,6 +194,25 @@ the send one JSON POST,
 both stubbed by `scripts/verify/verify_whatsapp.py`. Every outbound failure is logged and
 swallowed.
 
+**Images sent to the WhatsApp number reach the agent; nothing else non-text does.** Meta
+puts no bytes in the webhook, only a media id, so `whatsapp.download_media` makes the two
+Graph calls (id → short-lived URL, URL → bytes, both bearer-authenticated) and the handler
+saves the file under `UPLOADS_DIR/<user_id>/<message_id>.<ext>` (default
+`~/.action_inbox_ai/uploads`) *before* starting the turn, so a failed fetch costs a
+"couldn't fetch that image" notice and not a run. The thread bubble is a placeholder,
+`📎 Image: <caption>` — the web Chat view renders no images, so nothing on the frontend
+changed — and the file travels out of band as `images=[path]`, a new optional argument on
+`executor.resolve` that both executors take. Hermes gets the first path on the CLI's
+`--image` flag (it takes one) and every path in an "Attached images" prompt section that
+points at its `vision_analyze` tool, which is what lets a later turn look at the file again.
+The Agents SDK sends the text plus one base64 `input_image` part per file, and
+`input_builder.strip_image_parts` reduces that turn back to its text before the thread is
+persisted, so the bytes are never re-sent on the next turn or stored in the row. A photo
+skips the digit-reply mapping: a caption of "2" is a caption, not an answer. Documents,
+stickers, audio, location and contact cards still get the text-only notice. Verified by
+`scripts/verify/verify_whatsapp.py` (parser, download, handler) and
+`scripts/verify/verify_executor.py` (the command line, the prompt, the SDK content part).
+
 ## Auth and per-user credentials
 
 Sign-in-with-Google lives in `auth.py`; Gmail *data* access is a separate OAuth grant in

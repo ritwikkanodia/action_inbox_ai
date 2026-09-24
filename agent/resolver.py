@@ -9,6 +9,8 @@ from agent.input_builder import (
     SUGGESTED_ROUTE_LEAD,
     SUGGESTED_ROUTE_TAIL,
     build_initial_inputs,
+    strip_image_parts,
+    user_turn,
 )
 from agent.prompt import INSTRUCTIONS
 from agent.tools.email import gmail_tools
@@ -57,8 +59,13 @@ def resolve_todo(
     user_message: str,
     user_id: str,
     from_suggestion: bool = False,
+    images: list[str] | None = None,
 ) -> list[Any]:
-    """Run one turn of the agent. Returns the updated thread (SDK input-list shape)."""
+    """Run one turn of the agent. Returns the updated thread (SDK input-list shape).
+
+    `images` are local paths attached to this message. They ride into the
+    model as base64 parts on this turn only; the returned thread keeps the
+    text (see `strip_image_parts`)."""
     # The agent searches the mailbox the todo came from. None (legacy todos)
     # falls back to the user's first connected account.
     agent = _build_agent(
@@ -78,7 +85,7 @@ def resolve_todo(
     if thread and _has_bootstrap(thread):
         input_items = list(thread)
         if user_message:
-            input_items.append({"role": "user", "content": framed})
+            input_items.append(user_turn(framed, images))
     elif thread:
         # A thread another executor started: plain {role, content} bubbles
         # with no task framing anywhere in them, because that executor kept
@@ -86,9 +93,11 @@ def resolve_todo(
         # agent knows what the conversation was about, then continue it.
         input_items = build_initial_inputs(todo, "", user_id) + list(thread)
         if user_message:
-            input_items.append({"role": "user", "content": framed})
+            input_items.append(user_turn(framed, images))
     else:
-        input_items = build_initial_inputs(todo, framed, user_id)
+        input_items = build_initial_inputs(todo, "", user_id)
+        if user_message:
+            input_items.append(user_turn(framed, images))
 
     result = Runner.run_sync(agent, input_items, max_turns=40)
-    return list(result.to_input_list())
+    return strip_image_parts(list(result.to_input_list()))
