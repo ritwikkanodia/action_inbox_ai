@@ -202,10 +202,32 @@ def chunk(text: str, limit: int = CHUNK_CHARS) -> list[str]:
     return parts
 
 
+# Meta refuses a free-form message to a number that has not written to the
+# business in the last 24 hours (the customer-service window) with this code;
+# only an approved template gets through then.
+REENGAGEMENT_ERROR = 131047
+
+
+class GraphError(RuntimeError):
+    """A 4xx/5xx from the Graph API, with Meta's error code when the body
+    carried one, so a caller can tell a closed window from a bad token."""
+
+    def __init__(self, status: int, code: int | None, message: str):
+        super().__init__(f"Graph API {status} (code {code}): {message}")
+        self.status = status
+        self.code = code
+
+
+def notice_template() -> str:
+    """Name of the approved template the new-todo notice falls back to outside
+    the 24-hour window. Empty means no fallback: the notice is dropped then."""
+    return os.environ.get("META_WA_NOTICE_TEMPLATE", "").strip()
+
+
 def _post(url: str, payload: dict, token: str) -> int:
     """One authenticated JSON POST to the Graph API. Returns the HTTP status,
-    raising on a 4xx/5xx with Meta's error body in the message. Module-level so
-    the verify script can replace it."""
+    raising `GraphError` on a 4xx/5xx with Meta's error code and message.
+    Module-level so the verify script can replace it."""
     body = json.dumps(payload).encode("utf-8")
     req = urllib.request.Request(url, data=body, method="POST")
     req.add_header("Authorization", f"Bearer {token}")
@@ -215,7 +237,72 @@ def _post(url: str, payload: dict, token: str) -> int:
             return resp.status
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")[:500]
-        raise RuntimeError(f"Graph API {exc.code}: {detail}") from None
+        code = None
+        message = detail
+        try:
+            err = json.loads(detail).get("error") or {}
+            code = err.get("code")
+            message = err.get("message") or detail
+        except (ValueError, AttributeError):
+            pass
+        raise GraphError(exc.code, code, message) from None
+
+
+def _messages_url() -> str:
+    return f"https://graph.facebook.com/{GRAPH_VERSION}/{_phone_number_id()}/messages"
+
+
+def _recipient(to: str) -> str:
+    """E.164 → the bare digits Meta wants, or a ValueError."""
+    number = normalize_number(to)
+    if not number:
+        raise ValueError(f"{to!r} is not a number")
+    return number.lstrip("+")
+
+
+def send_text(to: str, body: str) -> None:
+    """Send `body` to `to` (E.164) as free-form text, in chunks. Raises on
+    any failure — `GraphError` for a Meta refusal — so a caller can react to
+    the code; `send_message` is the swallowing wrapper."""
+    if not configured():
+        raise RuntimeError("WhatsApp not configured")
+    recipient = _recipient(to)
+    for part in chunk(body):
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": recipient,
+            "type": "text",
+            "text": {"preview_url": False, "body": part},
+        }
+        status = _post(_messages_url(), payload, _access_token())
+        if status >= 300:
+            raise RuntimeError(f"WhatsApp send returned {status}")
+
+
+def send_template(to: str, name: str, params: list[str], language: str = "en") -> None:
+    """Send an approved template to `to` with its body placeholders filled in
+    order. Templates are the only business-initiated message Meta delivers
+    outside the 24-hour window. Raises on any failure, like `send_text`."""
+    if not configured():
+        raise RuntimeError("WhatsApp not configured")
+    payload = {
+        "messaging_product": "whatsapp",
+        "recipient_type": "individual",
+        "to": _recipient(to),
+        "type": "template",
+        "template": {
+            "name": name,
+            "language": {"code": language},
+            "components": [{
+                "type": "body",
+                "parameters": [{"type": "text", "text": p} for p in params],
+            }],
+        },
+    }
+    status = _post(_messages_url(), payload, _access_token())
+    if status >= 300:
+        raise RuntimeError(f"WhatsApp template send returned {status}")
 
 
 def send_message(to: str, body: str) -> bool:
@@ -224,27 +311,14 @@ def send_message(to: str, body: str) -> bool:
     if not configured():
         log.info("WhatsApp not configured; dropping message to %s", to)
         return False
-    number = normalize_number(to)
-    if not number:
-        log.warning("WhatsApp send skipped: %r is not a number", to)
+    try:
+        send_text(to, body)
+    except ValueError as exc:
+        log.warning("WhatsApp send skipped: %s", exc)
         return False
-    url = f"https://graph.facebook.com/{GRAPH_VERSION}/{_phone_number_id()}/messages"
-    for part in chunk(body):
-        payload = {
-            "messaging_product": "whatsapp",
-            "recipient_type": "individual",
-            "to": number.lstrip("+"),
-            "type": "text",
-            "text": {"preview_url": False, "body": part},
-        }
-        try:
-            status = _post(url, payload, _access_token())
-        except Exception:
-            log.exception("WhatsApp send to %s failed", number)
-            return False
-        if status >= 300:
-            log.warning("WhatsApp send to %s returned %s", number, status)
-            return False
+    except Exception:
+        log.exception("WhatsApp send to %s failed", to)
+        return False
     return True
 
 

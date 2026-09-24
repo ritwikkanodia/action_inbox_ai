@@ -34,9 +34,13 @@ from db import (
 # Meta config is read per call, so it can be flipped after import. The
 # developer's .env never carries these, so they can't leak in from load_dotenv.
 for key in ("META_WA_PHONE_NUMBER_ID", "META_WA_ACCESS_TOKEN", "META_WA_APP_SECRET",
-            "META_WA_VERIFY_TOKEN", "META_WA_PHONE_NUMBER", "META_WA_TEST_NUMBER"):
+            "META_WA_VERIFY_TOKEN", "META_WA_PHONE_NUMBER", "META_WA_TEST_NUMBER",
+            "META_WA_NOTICE_TEMPLATE"):
     os.environ.pop(key, None)
 os.environ["TODO_EXECUTOR"] = "hermes"
+
+# The real Graph POST, kept before main() stubs it, for the error-parsing check.
+REAL_POST = whatsapp._post
 
 SECRET = "verify-app-secret"
 VERIFY = "verify-token-123"
@@ -76,7 +80,8 @@ def blocking_run(prompt, session_name, cancel=None, progress=None, binding=None)
 
 
 def fake_post(url, payload, token) -> int:
-    sends.append({"url": url, "token": token, "to": payload["to"], "body": payload["text"]["body"]})
+    sends.append({"url": url, "token": token, "to": payload["to"],
+                  "body": (payload.get("text") or {}).get("body"), "payload": payload})
     return 200
 
 
@@ -335,6 +340,39 @@ def main() -> None:
     whatsapp._post = broken_post
     check("a failed send returns False and raises nothing", whatsapp.send_message(NUMBER, "x") is False)
     whatsapp._post = fake_post
+
+    print("\n-- Graph errors and templates --")
+    import io
+    import urllib.error
+    from unittest import mock
+
+    def http_400(*args, **kwargs):
+        body = json.dumps({"error": {"message": "Re-engagement message", "code": 131047}}).encode()
+        raise urllib.error.HTTPError("https://graph.facebook.com/x", 400, "Bad Request", {}, io.BytesIO(body))
+
+    with mock.patch("urllib.request.urlopen", side_effect=http_400):
+        try:
+            REAL_POST("https://graph.facebook.com/x", {"to": "1"}, "tok")
+            check("_post raises on a 4xx", False)
+        except whatsapp.GraphError as exc:
+            check("_post raises GraphError carrying Meta's status and code",
+                  exc.status == 400 and exc.code == 131047 and "Re-engagement" in str(exc))
+    check("GraphError is a RuntimeError, so existing handlers still catch it",
+          issubclass(whatsapp.GraphError, RuntimeError))
+    check("the re-engagement code is named", whatsapp.REENGAGEMENT_ERROR == 131047)
+
+    sends.clear()
+    whatsapp.send_template(NUMBER, "new_todo_notice", ["gmail", "T", "S", "a", "b", "c"])
+    check("send_template posts one template message to the number",
+          len(sends) == 1 and sends[0]["to"] == NUMBER.lstrip("+"))
+    tpl = sends[0]["payload"]["template"]
+    check("…naming the template, in English, with the body parameters in order",
+          sends[0]["payload"]["type"] == "template" and tpl["name"] == "new_todo_notice"
+          and tpl["language"]["code"] == "en"
+          and [p["text"] for p in tpl["components"][0]["parameters"]] == ["gmail", "T", "S", "a", "b", "c"])
+    check("notice_template reads the env", whatsapp.notice_template() == "")
+    with mock.patch.dict(os.environ, {"META_WA_NOTICE_TEMPLATE": " new_todo_notice "}):
+        check("…trimmed", whatsapp.notice_template() == "new_todo_notice")
 
     print("\n-- auth --")
     anon = app_module.app.test_client()
