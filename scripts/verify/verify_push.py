@@ -348,6 +348,74 @@ def test_whatsapp_notify() -> None:
         check("Meta failure → 0 sends, no raise", push_notify.notify_new_todo(conn, uid, tid) == 0)
 
 
+def test_whatsapp_template_fallback() -> None:
+    """Outside Meta's 24-hour service window a free-form send is refused with
+    error 131047. With a template configured the notice is resent as that
+    template; without one the refusal is the end of it."""
+    import push_notify
+    import whatsapp
+    from agent import action_options as ao
+    from db import get_chat, set_whatsapp_number
+
+    conn = sqlite3.connect(":memory:")
+    init_db(conn)
+    uid, _ = upsert_user(conn, "dev@example.com")
+    tid = save_todo(conn, "e1", "m1", "th1", _gmail_result("Reply to Bob\nabout the\tQ4 deck"), uid, "a@x.com")
+    todo = _todo_row(conn, tid)
+    set_whatsapp_number(conn, uid, WA_NUMBER)
+
+    params = push_notify.template_params(todo, ACTIONS)
+    check("six parameters: source, title, suggested action, three labels",
+          params == ["gmail", "Reply to Bob about the Q4 deck", "—",
+                     "Reply with dates", "Decline politely", "Forward to Sam"])
+    check("fewer options are padded to three",
+          push_notify.template_params(todo, ACTIONS[:1])[3:] == ["Reply with dates", "—", "—"])
+    check("no parameter is ever empty",
+          all(push_notify.template_params({"todo_id": "x", "title": "", "source": ""}, [])))
+    check("parameters carry no newlines or tabs",
+          not any(c in "".join(params) for c in "\n\t"))
+
+    ENV = {**NO_VAPID, **WA_ENV}
+    TEMPLATE = {"META_WA_NOTICE_TEMPLATE": "new_todo_notice"}
+    NO_TEMPLATE = {"META_WA_NOTICE_TEMPLATE": ""}
+
+    def reengagement(url, payload, token):
+        if payload.get("type") == "text":
+            raise whatsapp.GraphError(400, 131047, "Re-engagement message")
+        return 200
+
+    with mock.patch.dict(os.environ, {**ENV, **NO_TEMPLATE}), \
+         mock.patch.object(ao, "generate_action_options", return_value=ACTIONS), \
+         mock.patch.object(whatsapp, "_post", side_effect=reengagement) as post:
+        check("131047 with no template → 0 sends", push_notify.notify_new_todo(conn, uid, tid) == 0)
+        check("…and only the text send was tried", post.call_count == 1)
+
+    with mock.patch.dict(os.environ, {**ENV, **TEMPLATE}), \
+         mock.patch.object(whatsapp, "_post", side_effect=reengagement) as post:
+        check("131047 with a template → 1 send", push_notify.notify_new_todo(conn, uid, tid) == 1)
+        check("text tried first, then the template",
+              [c.args[1]["type"] for c in post.call_args_list] == ["text", "template"])
+        tpl = post.call_args.args[1]["template"]
+        check("template payload names the template and language",
+              tpl["name"] == "new_todo_notice" and tpl["language"]["code"] == "en")
+        vals = [p["text"] for p in tpl["components"][0]["parameters"]]
+        check("template parameters are the six strings", vals == push_notify.template_params(todo, ACTIONS))
+        check("chat bubble appended either way", len(json.loads(get_chat(conn, uid)[0])) == 2)
+
+    def other_error(url, payload, token):
+        raise whatsapp.GraphError(400, 190, "token expired")
+
+    with mock.patch.dict(os.environ, {**ENV, **TEMPLATE}), \
+         mock.patch.object(whatsapp, "_post", side_effect=other_error) as post:
+        check("a different Meta error → 0 sends, no template attempt",
+              push_notify.notify_new_todo(conn, uid, tid) == 0 and post.call_count == 1)
+
+    with mock.patch.dict(os.environ, {**ENV, **TEMPLATE}), \
+         mock.patch.object(whatsapp, "_post", return_value=200) as post:
+        check("inside the window the text send is enough",
+              push_notify.notify_new_todo(conn, uid, tid) == 1 and post.call_count == 1)
+
+
 def _client(uid):
     import app as app_module
     app_module.app.config["TESTING"] = True
@@ -441,6 +509,7 @@ def main() -> None:
     test_ensure_action_options()
     test_push_notify()
     test_whatsapp_notify()
+    test_whatsapp_template_fallback()
     test_push_routes()
     test_ask_ai_action_index()
     print("All checks passed.")

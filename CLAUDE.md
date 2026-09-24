@@ -175,11 +175,21 @@ mentions) and the webhook pointed at `<BASE_URL>/whatsapp/webhook` — a tunnel 
 that in. The
 agent's *replies* are always user-initiated and inside the 24-hour service window: free, and
 not counted against the business-initiated limits that Meta's business verification raises.
-The new-todo notice (`push_notify.send_whatsapp`) is the one business-initiated send, and it
-goes as free-form text, which Meta only delivers inside that window — a linked number that
-has not messaged the app in the last 24 hours gets a `131047` re-engagement error, logged
-and swallowed, and the chat bubble still lands. Reliable delivery outside the window needs
-a Meta-approved message template, which is not built. No SDK: the signature is one HMAC and
+The new-todo notice (`push_notify.send_whatsapp`) is the one business-initiated send. It
+goes as free-form text first, since that carries the option details, and Meta only
+delivers that inside the window — a linked number that has not messaged the app in the
+last 24 hours gets error `131047` (`whatsapp.REENGAGEMENT_ERROR`). On exactly that code
+the notice is resent as the approved template named by `META_WA_NOTICE_TEMPLATE`
+(`whatsapp.send_template`, six placeholders from `push_notify.template_params`: source,
+title, suggested action, three option labels padded with a dash — placeholders may not be
+empty or contain newlines, so the template body carries the structure). Any other error,
+or no template configured, drops the notice; the chat bubble lands either way.
+`scripts/create_whatsapp_template.py` submits that template (`new_todo_notice`, UTILITY,
+en) to the WABA and polls for approval; the WABA id it needs is `entry[].id` on any
+webhook delivery, and Meta charges a utility rate for a template sent outside the window,
+nothing inside it. `whatsapp._post` raises `GraphError` (a `RuntimeError`, so the
+swallowing `send_message` wrapper is unchanged) carrying Meta's status and code; `send_text`
+is the raising primitive under both. No SDK: the signature is one HMAC and
 the send one JSON POST,
 both stubbed by `scripts/verify/verify_whatsapp.py`. Every outbound failure is logged and
 swallowed.

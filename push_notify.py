@@ -24,6 +24,7 @@ Nothing here may take down a poll cycle: every failure is logged and swallowed.
 import json
 import logging
 import os
+import re
 import sqlite3
 
 from pywebpush import WebPushException, webpush
@@ -168,16 +169,63 @@ def chat_notice_bubble(todo: dict, actions: list[dict]) -> dict:
     return {"role": "assistant", "content": f"{prose}\n\n```ask_user\n{block}\n```"}
 
 
+def _param(value, limit: int) -> str:
+    """One template placeholder: Meta rejects newlines, tabs and runs of
+    spaces inside a parameter, and an empty one, so whitespace is collapsed
+    and a blank becomes a dash."""
+    return _truncate(re.sub(r"\s+", " ", value or ""), limit) or "—"
+
+
+def template_params(todo: dict, actions: list[dict]) -> list[str]:
+    """The six placeholders of the `new_todo_notice` template, in order:
+    source, title, suggested action, then exactly three option labels, padded
+    with a dash when fewer were inferred. The template's body is fixed, so
+    the structure the free-form text carries in newlines lives in the
+    template itself here."""
+    labels = [a["label"] for a in actions if a.get("label")][:3]
+    labels += [""] * (3 - len(labels))
+    return [
+        _param(todo.get("source") or "inbox", 40),
+        _param(todo.get("title"), _TITLE_LIMIT),
+        _param(todo.get("suggested_action"), 200),
+        *(_param(label, 40) for label in labels),
+    ]
+
+
 def send_whatsapp(conn: sqlite3.Connection, user_id: str, number: str,
                   todo: dict, actions: list[dict]) -> int:
     """Append the notice to the chat thread and send it to the linked number.
     Returns 1 on a successful send, else 0. The bubble is appended first so
-    the digit-reply mapping is in place before the phone can answer."""
+    the digit-reply mapping is in place before the phone can answer.
+
+    Free-form text goes first, since it carries the option details. Meta only
+    delivers that inside the 24-hour window the user's last message opened;
+    outside it the send is refused with the re-engagement code, and the notice
+    is resent as the approved template named by META_WA_NOTICE_TEMPLATE. No
+    template configured means the notice is dropped there."""
     try:
         append_chat_bubble(conn, user_id, chat_notice_bubble(todo, actions))
     except Exception as exc:
         log.warning("chat notice append failed for %s: %s", todo["todo_id"], exc)
-    return 1 if whatsapp.send_message(number, build_whatsapp_text(todo, actions)) else 0
+    try:
+        whatsapp.send_text(number, build_whatsapp_text(todo, actions))
+        return 1
+    except whatsapp.GraphError as exc:
+        template = whatsapp.notice_template()
+        if exc.code != whatsapp.REENGAGEMENT_ERROR or not template:
+            log.warning("WhatsApp notice for %s failed: %s", todo["todo_id"], exc)
+            return 0
+        log.info("WhatsApp window closed for %s; resending %s as template %s",
+                 number, todo["todo_id"], template)
+        try:
+            whatsapp.send_template(number, template, template_params(todo, actions))
+            return 1
+        except Exception as exc2:
+            log.warning("WhatsApp template notice for %s failed: %s", todo["todo_id"], exc2)
+            return 0
+    except Exception as exc:
+        log.warning("WhatsApp notice for %s failed: %s", todo["todo_id"], exc)
+        return 0
 
 
 def notify_new_todo(conn: sqlite3.Connection, user_id: str, todo_id: str) -> int:
