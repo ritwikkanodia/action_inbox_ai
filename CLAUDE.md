@@ -60,13 +60,27 @@ The poller checks that flag per user, per source, every cycle, so a pause lands 
 poll interval and never needs a restart. Pausing leaves connections and cursors alone.
 The morning digest is a sender, not a discovery source, and has no per-user toggle.
 
-**Push notifications** (`push_notify.py`): each poller calls `notify_new_todo(conn, user_id,
-todo_id)` right where it branches on the `save_*_todo` return value (which is the `todo_id`,
-or `None` on a dedup), so only a real insert notifies. It returns before any LLM call when the
-user has no push subscription — eager action inference is paid for only when someone will see
-the buttons — otherwise `agent.action_options.ensure_action_options` fills the same cache the
-detail pane reads, and the payload (labels and indices, never instructions) goes out via
-`pywebpush` to every browser the user enrolled from Settings. `static/js/sw.js` shows up to
+**New-todo notifications** (`push_notify.py`): each poller calls `notify_new_todo(conn,
+user_id, todo_id)` right where it branches on the `save_*_todo` return value (which is the
+`todo_id`, or `None` on a dedup), so only a real insert notifies. It returns before any LLM
+call when the user has neither a push subscription nor a linked WhatsApp number — eager
+action inference is paid for only when someone will see the options — otherwise
+`agent.action_options.ensure_action_options` fills the same cache the detail pane reads,
+once, and the notice goes down every channel the user has. **WhatsApp**: the linked number
+gets the title, the suggested action and the three routes as a numbered list, and the same
+notice is appended to the user's chat thread (`db.append_chat_bubble`) as an assistant
+bubble carrying an `ask_user` block. That reuse is the whole design: the webhook already
+maps a digit reply against the last bubble's options, and the web Chat view already renders
+them as chips, so "2" from the phone and a chip click in the browser both send "New todo
+from gmail: <title> (<todo_id>). How should I handle it? Decline politely" to the chat
+agent, which finds the todo with `todos_get`. Only labels travel — the instruction behind
+each route stays in `todos.action_options`. One known gap: the poller appends to
+`chat:thread` from its own process, and a chat turn already in flight in the web process
+overwrites the thread when it persists, so a notice landing mid-turn is lost from the log
+(the WhatsApp message still arrives; a digit reply then reaches the agent as a bare "2").
+Verified by `scripts/verify/verify_push.py`. **Push**: the payload (labels and indices,
+never instructions) goes out via `pywebpush` to every browser the user enrolled from
+Settings. `static/js/sw.js` shows up to
 `Notification.maxActions` of them (2 on Chrome/macOS, 0 on Safari) as buttons; a click POSTs
 `{action_index}` to `/ask-ai`, which runs the instruction *it* cached with
 `from_suggestion=True` — a push can't put words in the agent's mouth. Then it focuses the app
@@ -159,9 +173,14 @@ title and is treated as text. Needs `META_WA_PHONE_NUMBER_ID`/`META_WA_ACCESS_TO
 mentions) and the webhook pointed at `<BASE_URL>/whatsapp/webhook` — a tunnel locally;
 `scripts/setup_whatsapp_meta.sh` is a guided walk through the Meta dashboard that fills all of
 that in. The
-agent never initiates, so every conversation is user-initiated and inside the 24-hour
-service window: free, and not counted against the business-initiated limits that Meta's
-business verification raises. No SDK: the signature is one HMAC and the send one JSON POST,
+agent's *replies* are always user-initiated and inside the 24-hour service window: free, and
+not counted against the business-initiated limits that Meta's business verification raises.
+The new-todo notice (`push_notify.send_whatsapp`) is the one business-initiated send, and it
+goes as free-form text, which Meta only delivers inside that window — a linked number that
+has not messaged the app in the last 24 hours gets a `131047` re-engagement error, logged
+and swallowed, and the chat bubble still lands. Reliable delivery outside the window needs
+a Meta-approved message template, which is not built. No SDK: the signature is one HMAC and
+the send one JSON POST,
 both stubbed by `scripts/verify/verify_whatsapp.py`. Every outbound failure is logged and
 swallowed.
 
