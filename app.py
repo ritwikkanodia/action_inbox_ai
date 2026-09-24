@@ -84,7 +84,7 @@ from googleapiclient.discovery import build as google_build
 from pollers.gmail.auth import get_auth_flow, get_gmail_service
 from pollers.gmail.thread_context import fetch_thread_messages
 
-BASE_URL = os.environ.get("BASE_URL", "http://localhost:5001").rstrip("/")
+BASE_URL = (os.environ.get("BASE_URL") or "http://localhost:5001").rstrip("/")
 
 # Allow OAuth over http only for local development.
 if BASE_URL.startswith("http://localhost") or BASE_URL.startswith("http://127.0.0.1"):

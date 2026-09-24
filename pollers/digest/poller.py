@@ -40,7 +40,7 @@ _IMPORTANCE_RANK = {"high": 0, "medium": 1, "low": 2}
 
 
 def _base_url() -> str:
-    return os.environ.get("BASE_URL", "http://localhost:5001").rstrip("/")
+    return (os.environ.get("BASE_URL") or "http://localhost:5001").rstrip("/")
 
 
 def _user_tz() -> ZoneInfo:
