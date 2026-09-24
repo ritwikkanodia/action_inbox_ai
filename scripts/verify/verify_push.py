@@ -244,6 +244,110 @@ def test_push_notify() -> None:
         check("unknown todo is a no-op", push_notify.notify_new_todo(conn, uid, "todo_nope") == 0)
 
 
+WA_ENV = {
+    "META_WA_PHONE_NUMBER_ID": "123", "META_WA_ACCESS_TOKEN": "tok",
+    "META_WA_APP_SECRET": "sec", "META_WA_VERIFY_TOKEN": "ver",
+}
+NO_WA = {k: "" for k in WA_ENV}
+WA_NUMBER = "+14155550100"
+
+
+def test_whatsapp_notify() -> None:
+    """A linked WhatsApp number gets the same new-todo notice as a push
+    subscription, and the notice lands in the chat thread so a digit reply
+    maps to an option the way a chip click does."""
+    import push_notify
+    import whatsapp
+    import app as app_module
+    from agent import action_options as ao
+    from db import get_chat, set_whatsapp_number
+
+    conn = sqlite3.connect(":memory:")
+    init_db(conn)
+    uid, _ = upsert_user(conn, "dev@example.com")
+    tid = save_todo(conn, "e1", "m1", "th1", _gmail_result("Reply to Bob about the Q4 deck"), uid, "a@x.com")
+    todo = _todo_row(conn, tid)
+
+    text = push_notify.build_whatsapp_text(todo, ACTIONS)
+    check("whatsapp text names the source and title",
+          "New todo" in text and "gmail" in text and "Reply to Bob about the Q4 deck" in text)
+    check("whatsapp text numbers the options",
+          "1. Reply with dates" in text and "2. Decline politely" in text and "3. Forward to Sam" in text)
+    check("whatsapp text shows an option's detail", "Offer two slots" in text)
+    check("whatsapp text never carries instructions", "Reply proposing" not in text)
+    check("whatsapp text says how to answer", "Reply with a number" in text)
+
+    bubble = push_notify.chat_notice_bubble(todo, ACTIONS)
+    check("notice bubble is an assistant turn", bubble["role"] == "assistant")
+    shown = app_module._thread_for_client([bubble])
+    qs = shown[0].get("questions") or []
+    check("notice bubble parses into one question with the three options",
+          len(qs) == 1 and [o["label"] for o in qs[0]["options"]] == [a["label"] for a in ACTIONS])
+    check("question text carries the todo id and title",
+          tid in qs[0]["question"] and "Reply to Bob about the Q4 deck" in qs[0]["question"])
+    answer = whatsapp.answer_from_reply("2", qs)
+    check("a digit reply maps to the option, with the todo named",
+          answer is not None and tid in answer and "Decline politely" in answer)
+    check("notice with no actions still renders",
+          push_notify.chat_notice_bubble(todo, [])["content"].strip() != "")
+
+    # No number, no subscription: nothing generated, nothing sent.
+    with mock.patch.dict(os.environ, {**NO_VAPID, **WA_ENV}), \
+         mock.patch.object(ao, "generate_action_options", return_value=ACTIONS) as gen, \
+         mock.patch.object(whatsapp, "_post", return_value=200) as post:
+        check("no number, no subscription → 0 sends", push_notify.notify_new_todo(conn, uid, tid) == 0)
+        check("no number → no LLM call", gen.call_count == 0)
+        check("no number → no WhatsApp POST", post.call_count == 0)
+        check("no number → chat thread untouched", get_chat(conn, uid) == (None, None))
+
+    # Number linked, VAPID unset: WhatsApp alone carries the notice.
+    set_whatsapp_number(conn, uid, WA_NUMBER)
+    with mock.patch.dict(os.environ, {**NO_VAPID, **WA_ENV}), \
+         mock.patch.object(ao, "generate_action_options", return_value=ACTIONS) as gen, \
+         mock.patch.object(whatsapp, "_post", return_value=200) as post:
+        check("linked number → 1 send", push_notify.notify_new_todo(conn, uid, tid) == 1)
+        check("linked number → actions inferred once", gen.call_count == 1)
+        check("one WhatsApp POST", post.call_count == 1)
+        body = post.call_args.args[1]
+        check("POST goes to the linked number", body["to"] == WA_NUMBER.lstrip("+"))
+        check("POST carries the notice", "1. Reply with dates" in body["text"]["body"])
+        thread_json, state = get_chat(conn, uid)
+        thread = json.loads(thread_json)
+        check("notice appended to the chat thread as one bubble",
+              len(thread) == 1 and thread[0]["role"] == "assistant" and tid in thread[0]["content"])
+        check("chat executor state untouched", state is None)
+
+    # Both channels: one LLM call, both sends, counted together.
+    conn.execute("UPDATE todos SET action_options = NULL WHERE todo_id = ?", (tid,))
+    conn.commit()
+    save_push_subscription(conn, uid, SUB_A, "Chrome")
+    with mock.patch.dict(os.environ, {**VAPID_ENV, **WA_ENV}), \
+         mock.patch.object(ao, "generate_action_options", return_value=ACTIONS) as gen, \
+         mock.patch.object(push_notify, "webpush") as wp, \
+         mock.patch.object(whatsapp, "_post", return_value=200) as post:
+        check("push + WhatsApp → 2 sends", push_notify.notify_new_todo(conn, uid, tid) == 2)
+        check("both channels share one inference", gen.call_count == 1)
+        check("webpush and WhatsApp each sent once", wp.call_count == 1 and post.call_count == 1)
+        thread = json.loads(get_chat(conn, uid)[0])
+        check("second notice appends, not replaces", len(thread) == 2)
+
+    # WhatsApp not configured: a linked number alone sends nothing and adds nothing.
+    conn.execute("DELETE FROM user_state WHERE user_id = ? AND key = 'chat:thread'", (uid,))
+    conn.commit()
+    delete_push_subscription(conn, SUB_A["endpoint"])
+    with mock.patch.dict(os.environ, {**NO_VAPID, **NO_WA}), \
+         mock.patch.object(ao, "generate_action_options", return_value=ACTIONS) as gen, \
+         mock.patch.object(whatsapp, "_post", return_value=200) as post:
+        check("Meta unconfigured → 0 sends", push_notify.notify_new_todo(conn, uid, tid) == 0)
+        check("Meta unconfigured → no LLM call, no POST", gen.call_count == 0 and post.call_count == 0)
+        check("Meta unconfigured → no chat bubble", get_chat(conn, uid) == (None, None))
+
+    # A Meta failure is swallowed and counts as no send.
+    with mock.patch.dict(os.environ, {**NO_VAPID, **WA_ENV}), \
+         mock.patch.object(whatsapp, "_post", side_effect=RuntimeError("Graph API 500")):
+        check("Meta failure → 0 sends, no raise", push_notify.notify_new_todo(conn, uid, tid) == 0)
+
+
 def _client(uid):
     import app as app_module
     app_module.app.config["TESTING"] = True
@@ -336,6 +440,7 @@ def main() -> None:
     test_subscription_helpers()
     test_ensure_action_options()
     test_push_notify()
+    test_whatsapp_notify()
     test_push_routes()
     test_ask_ai_action_index()
     print("All checks passed.")

@@ -742,6 +742,27 @@ def set_chat(conn: sqlite3.Connection, user_id: str, thread_json: str, state: st
     conn.commit()
 
 
+def append_chat_bubble(conn: sqlite3.Connection, user_id: str, bubble: dict) -> None:
+    """Append one display bubble to the chat thread, leaving executor state
+    alone. Used by the poller to drop a new-todo notice into the conversation;
+    a thread that fails to parse is replaced rather than propagated, since a
+    notice must never take a poll cycle down."""
+    raw = get_user_state(conn, user_id, CHAT_THREAD_KEY)
+    try:
+        thread = json.loads(raw) if raw else []
+        if not isinstance(thread, list):
+            thread = []
+    except (TypeError, ValueError):
+        thread = []
+    thread.append(bubble)
+    conn.execute(
+        "INSERT INTO user_state (user_id, key, value) VALUES (?, ?, ?) "
+        "ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value",
+        (user_id, CHAT_THREAD_KEY, json.dumps(thread)),
+    )
+    conn.commit()
+
+
 def clear_chat(conn: sqlite3.Connection, user_id: str) -> None:
     conn.execute(
         "DELETE FROM user_state WHERE user_id = ? AND key IN (?, ?)",

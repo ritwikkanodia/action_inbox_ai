@@ -1,13 +1,23 @@
-"""Web Push for newly discovered todos.
+"""New-todo notifications: Web Push and WhatsApp.
 
 The poller calls `notify_new_todo` right after a save. It returns before any
-LLM call when the user has no enrolled browser — action inference is paid for
-only when someone will see the buttons — and otherwise ensures the todo's
-three options are cached and pushes a small payload to every subscription.
+LLM call when the user has neither an enrolled browser nor a linked WhatsApp
+number — action inference is paid for only when someone will see the options —
+and otherwise ensures the todo's three options are cached once and sends them
+down every channel the user has.
 
-The payload carries action *labels* and indices, never instructions: the
+Push: the payload carries action *labels* and indices, never instructions: the
 service worker sends the index back to `/ask-ai`, and the server runs the
 instruction it cached. A push can't put words in the agent's mouth.
+
+WhatsApp: the same notice goes to the linked number as text with the options
+numbered, and is appended to the user's chat thread as an assistant bubble
+carrying an `ask_user` block. That is what makes a digit reply work — the
+webhook maps it against the last bubble's options exactly as it does for a
+clarifying question, and the web Chat view shows the same card with chips.
+The question text names the todo and its id, so the message the agent gets
+("New todo … (todo_x): Decline politely") is enough for it to `todos_get` it.
+Only labels travel, here too.
 
 Nothing here may take down a poll cycle: every failure is logged and swallowed.
 """
@@ -18,7 +28,13 @@ import sqlite3
 
 from pywebpush import WebPushException, webpush
 
-from db import delete_push_subscription, list_push_subscriptions
+import whatsapp
+from db import (
+    append_chat_bubble,
+    delete_push_subscription,
+    get_whatsapp_number,
+    list_push_subscriptions,
+)
 
 log = logging.getLogger("push_notify")
 
@@ -102,24 +118,94 @@ def _load_todo(conn: sqlite3.Connection, user_id: str, todo_id: str) -> dict | N
     return dict(zip(cols, row)) if row else None
 
 
-def notify_new_todo(conn: sqlite3.Connection, user_id: str, todo_id: str) -> int:
-    """Push a new-todo notification to every browser the user enrolled.
-    Returns the number of successful sends. Never raises."""
+def _notice_question(todo: dict) -> str:
+    title = _truncate(todo.get("title") or "", _TITLE_LIMIT) or "(untitled)"
+    return f"New todo from {todo.get('source') or 'inbox'}: {title} ({todo['todo_id']}). How should I handle it?"
+
+
+def build_whatsapp_text(todo: dict, actions: list[dict]) -> str:
+    """The new-todo notice as WhatsApp text: title, the suggested action, and
+    the inferred routes numbered so a digit reply picks one. Labels and
+    details only — the instruction behind each stays server-side."""
+    title = _truncate(todo.get("title") or "", _TITLE_LIMIT) or "(untitled)"
+    if todo.get("importance") == "high":
+        title = f"[high] {title}"
+    lines = [f"*New todo* ({todo.get('source') or 'inbox'}): {title}"]
+    if todo.get("suggested_action"):
+        lines.append(_truncate(todo["suggested_action"], 300))
+    labelled = [a for a in actions if a.get("label")]
+    if labelled:
+        lines.append("")
+        for i, a in enumerate(labelled, 1):
+            detail = f" — {_truncate(a['detail'], 120)}" if a.get("detail") else ""
+            lines.append(f"{i}. {_truncate(a['label'], 40)}{detail}")
+        lines.append("Reply with a number, or tell me what to do.")
+    else:
+        lines.append("Tell me what to do with it.")
+    return "\n".join(lines)
+
+
+def chat_notice_bubble(todo: dict, actions: list[dict]) -> dict:
+    """The same notice as an assistant bubble for the chat thread, with the
+    routes in an `ask_user` block so the web view renders chips and the
+    WhatsApp webhook can map a digit reply against them."""
+    title = _truncate(todo.get("title") or "", _TITLE_LIMIT) or "(untitled)"
+    prose = f"**New todo** ({todo.get('source') or 'inbox'}): {title}"
+    if todo.get("importance") == "high":
+        prose += " · high importance"
+    if todo.get("suggested_action"):
+        prose += f"\n{_truncate(todo['suggested_action'], 300)}"
+    options = [
+        {"label": _truncate(a["label"], 40), "detail": _truncate(a.get("detail") or "", 120)}
+        for a in actions if a.get("label")
+    ]
+    block = json.dumps({"questions": [{
+        "question": _notice_question(todo),
+        "header": "New todo",
+        "options": options,
+        "multiSelect": False,
+    }]})
+    return {"role": "assistant", "content": f"{prose}\n\n```ask_user\n{block}\n```"}
+
+
+def send_whatsapp(conn: sqlite3.Connection, user_id: str, number: str,
+                  todo: dict, actions: list[dict]) -> int:
+    """Append the notice to the chat thread and send it to the linked number.
+    Returns 1 on a successful send, else 0. The bubble is appended first so
+    the digit-reply mapping is in place before the phone can answer."""
     try:
-        if not configured() or not list_push_subscriptions(conn, user_id):
+        append_chat_bubble(conn, user_id, chat_notice_bubble(todo, actions))
+    except Exception as exc:
+        log.warning("chat notice append failed for %s: %s", todo["todo_id"], exc)
+    return 1 if whatsapp.send_message(number, build_whatsapp_text(todo, actions)) else 0
+
+
+def notify_new_todo(conn: sqlite3.Connection, user_id: str, todo_id: str) -> int:
+    """Send a new-todo notice to every browser the user enrolled and to their
+    linked WhatsApp number. Returns the number of successful sends across
+    both. Never raises."""
+    try:
+        push_subs = list_push_subscriptions(conn, user_id) if configured() else []
+        number = get_whatsapp_number(conn, user_id) if whatsapp.configured() else None
+        if not push_subs and not number:
             return 0
         todo = _load_todo(conn, user_id, todo_id)
         if todo is None:
             return 0
         # Imported lazily so the poller only builds the OpenAI client for this
-        # when a subscribed user actually gets a new todo.
+        # when a subscribed or linked user actually gets a new todo.
         from agent.action_options import ensure_action_options
         try:
             actions = ensure_action_options(conn, todo, user_id)
         except Exception as exc:
-            log.warning("action options failed for %s; pushing without buttons: %s", todo_id, exc)
+            log.warning("action options failed for %s; notifying without options: %s", todo_id, exc)
             actions = []
-        return send_to_user(conn, user_id, build_payload(todo, actions))
+        sent = 0
+        if push_subs:
+            sent += send_to_user(conn, user_id, build_payload(todo, actions))
+        if number:
+            sent += send_whatsapp(conn, user_id, number, todo, actions)
+        return sent
     except Exception as exc:
         log.warning("notify_new_todo failed for %s: %s", todo_id, exc)
         return 0
