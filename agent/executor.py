@@ -139,12 +139,22 @@ def readiness(name: str) -> tuple[bool, str | None]:
     """
     if name == "hermes":
         binary = os.environ.get("HERMES_BIN", "hermes")
-        if shutil.which(binary) or os.path.isfile(binary):
-            return True, None
-        return False, (
-            f"Hermes CLI not found (looked for {binary!r}). Install it, or set "
-            "HERMES_BIN to where it lives."
-        )
+        if not (shutil.which(binary) or os.path.isfile(binary)):
+            return False, (
+                f"Hermes CLI not found (looked for {binary!r}). Install it, or set "
+                "HERMES_BIN to where it lives."
+            )
+        from agent import cloud_users
+        if cloud_users.is_cloud():
+            # Each cloud user gets a home under this directory; without it the
+            # first turn would fail at `ensure`, not here.
+            homes = cloud_users.HOMES_DIR
+            if not (os.path.isdir(homes) and os.access(homes, os.W_OK)):
+                return False, (
+                    f"HERMES_HOMES_DIR ({homes}) does not exist or is not writable; "
+                    "mount the volume and create it."
+                )
+        return True, None
     if name == "agents_sdk":
         if importlib.util.find_spec("agents") is None:
             return False, "The openai-agents package is not installed."
@@ -154,12 +164,20 @@ def readiness(name: str) -> tuple[bool, str | None]:
     return False, f"Unknown executor {name!r}."
 
 
+CLOUD_HERMES_DESCRIPTION = "Browser, web search and Google tools. Runs in the cloud, signed in to nothing."
+
+
 def describe_executors(choice: str | None = None) -> dict:
     """What Settings shows: every executor, whether it is ready, and which one
     this user's turns run on."""
+    from agent import cloud_users
     options = []
     for entry in EXECUTORS:
         ready, reason = readiness(entry["name"])
+        entry = dict(entry)
+        if entry["name"] == "hermes" and cloud_users.is_cloud():
+            # The cloud Hermes has no terminal or desktop; say what it has.
+            entry["description"] = CLOUD_HERMES_DESCRIPTION
         options.append({**entry, "ready": ready, "reason": reason})
     return {
         "selected": current_executor(choice),

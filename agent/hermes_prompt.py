@@ -333,17 +333,57 @@ message with an ask_user block either way, so "I've signed in, continue" is one 
 than a sentence the user has to compose.\
 """
 
+# In the cloud (HERMES_CLOUD=1) the agent's browser is a headless Chromium on a
+# profile that carries no logins, and there is no window the user could sign
+# in to and nothing that re-copies their own browser's sessions. So the handoff
+# inverts a third way: there is no handoff. The agent says which site is in the
+# way and what it would have done there, offers the artifact for the user to
+# submit themselves, and never asks for a credential.
+
+_LOGIN_HANDOFF_CLOUD = """\
+   A login wall reaches this rule only after step 2 — you have clicked the sign-in control \
+   and tried the one-tap doors that need no secret. You are running in the cloud and are \
+   **signed in to nothing**: your browser carries none of the user's sessions, and there is \
+   no way for them to sign you in yet. When a site still needs a login after the one-tap \
+   doors, stop working that site. Say which site it is, what you were about to do there, and \
+   that signing in is not available in this version. **Never ask for a password, a code or \
+   any other credential**, and never create an account. Give them the finished artifact to \
+   submit themselves when you can — the drafted reply, the filled-in text, the exact steps. \
+   Then do whatever else the todo needs that does not sit behind that login, and end with \
+   an ask_user block offering "Do it another way" and "Skip this", so the reply leaves them \
+   something to click.\
+"""
+
+_LOGIN_HANDOFF_FOLLOWUP_CLOUD = """\
+A login wall reaches this rule only after you have actually worked it — clicked the sign-in \
+control and tried the one-tap doors. You are running in the cloud and are **signed in to \
+nothing**; there is no window the user can sign in to for you and nothing that copies their \
+sessions here. Say which site is in the way and what you were about to do there, that \
+signing in is not available in this version, and hand them the finished artifact to submit \
+themselves where you can. Never ask for a password, a code or any credential, and never \
+create an account. End with an ask_user block offering "Do it another way" and "Skip this".\
+"""
+
 _PERSISTENT_BROWSER = os.environ.get("HERMES_PERSISTENT_BROWSER", "").strip().lower() in {
     "1", "true", "yes",
 }
+_CLOUD = os.environ.get("HERMES_CLOUD", "").strip().lower() in {"1", "true", "yes"}
+
+
+def _pick(cloud: str, persistent: str, ephemeral: str) -> str:
+    if _CLOUD:
+        return cloud
+    return persistent if _PERSISTENT_BROWSER else ephemeral
+
+
 INSTRUCTIONS = INSTRUCTIONS.replace(
     "%%LOGIN_HANDOFF%%",
-    _LOGIN_HANDOFF_PERSISTENT if _PERSISTENT_BROWSER else _LOGIN_HANDOFF_EPHEMERAL,
+    _pick(_LOGIN_HANDOFF_CLOUD, _LOGIN_HANDOFF_PERSISTENT, _LOGIN_HANDOFF_EPHEMERAL),
 )
 FOLLOWUP_INSTRUCTIONS = FOLLOWUP_INSTRUCTIONS.replace(
     "%%LOGIN_HANDOFF_FOLLOWUP%%",
-    _LOGIN_HANDOFF_FOLLOWUP_PERSISTENT if _PERSISTENT_BROWSER
-    else _LOGIN_HANDOFF_FOLLOWUP_EPHEMERAL,
+    _pick(_LOGIN_HANDOFF_FOLLOWUP_CLOUD, _LOGIN_HANDOFF_FOLLOWUP_PERSISTENT,
+          _LOGIN_HANDOFF_FOLLOWUP_EPHEMERAL),
 )
 
 
