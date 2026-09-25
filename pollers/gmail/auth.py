@@ -1,6 +1,7 @@
 import json
 import os
 import sqlite3
+from datetime import datetime, timedelta, timezone
 
 from google.auth.exceptions import RefreshError
 from google.auth.transport.requests import Request
@@ -47,14 +48,45 @@ def get_auth_flow(
     )
 
 
+def _refresh_and_store(conn, user_id: str, resolved: str, info: dict, creds: Credentials) -> None:
+    """Refresh against Google and persist the new token for this one account.
+    A RefreshError means Google has revoked the grant (Testing-mode 7-day
+    expiry, user revoked access, password change): clear the stored
+    credentials for THIS account so the UI flips to "not connected" and
+    prompts re-auth, leaving the user's other accounts polling."""
+    try:
+        creds.refresh(Request())
+    except RefreshError as e:
+        clear_source_connection(conn, user_id, "gmail", resolved)
+        raise RuntimeError(
+            f"Gmail access revoked by Google for {resolved or 'this account'}. "
+            "Reconnect it in settings."
+        ) from e
+    refreshed = json.loads(creds.to_json())
+    # to_json drops keys it doesn't own; keep ours (connected_email).
+    refreshed = {**info, **refreshed}
+    set_source_credentials(
+        conn, user_id, "gmail", "oauth2", refreshed, account_id=resolved,
+    )
+
+
 def get_google_credentials(
-    conn: sqlite3.Connection, user_id: str, account_id: str | None = None
+    conn: sqlite3.Connection,
+    user_id: str,
+    account_id: str | None = None,
+    min_valid_seconds: int = 0,
 ) -> tuple[Credentials, set[str], str]:
     """Valid credentials for one connected Google account.
 
     Returns (credentials, granted scopes, resolved account id). account_id=None
     resolves to the user's first connected account, which is the fallback for
     todos created before per-account provenance existed.
+
+    `min_valid_seconds` asks for an access token good for at least that long:
+    a token nearer to expiry is refreshed now even though it is still valid.
+    The `/internal/credentials` route uses this, since it hands the agent's
+    process an access token alone — no refresh token — for a turn that can
+    run ten minutes.
 
     Refresh is done against the scopes *stored on the token*, not `SCOPES`:
     google-auth raises RefreshError when the requested set is not a subset of
@@ -78,30 +110,18 @@ def get_google_credentials(
 
     if not creds.valid:
         if creds.expired and creds.refresh_token:
-            try:
-                creds.refresh(Request())
-            except RefreshError as e:
-                # Google has revoked the refresh token (Testing-mode 7-day expiry,
-                # user revoked access, password change, etc.). Clear the stored
-                # credentials for THIS account so the UI flips to "not connected"
-                # and prompts re-auth, leaving the user's other accounts polling.
-                clear_source_connection(conn, user_id, "gmail", resolved)
-                raise RuntimeError(
-                    f"Gmail access revoked by Google for {resolved or 'this account'}. "
-                    "Reconnect it in settings."
-                ) from e
-            refreshed = json.loads(creds.to_json())
-            # to_json drops keys it doesn't own; keep ours (connected_email).
-            refreshed = {**info, **refreshed}
-            set_source_credentials(
-                conn, user_id, "gmail", "oauth2", refreshed, account_id=resolved,
-            )
+            _refresh_and_store(conn, user_id, resolved, info, creds)
         else:
             clear_source_connection(conn, user_id, "gmail", resolved)
             raise RuntimeError(
                 f"Gmail credentials expired for {resolved or 'this account'}. "
                 "Re-authorize via the settings page."
             )
+    elif min_valid_seconds and creds.refresh_token and creds.expiry is not None:
+        # google-auth keeps `expiry` as a naive UTC datetime.
+        remaining = creds.expiry - datetime.now(timezone.utc).replace(tzinfo=None)
+        if remaining < timedelta(seconds=min_valid_seconds):
+            _refresh_and_store(conn, user_id, resolved, info, creds)
 
     return creds, set(stored_scopes), resolved
 

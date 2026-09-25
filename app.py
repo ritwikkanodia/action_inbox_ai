@@ -150,6 +150,13 @@ def close_db(exc):
         db.close()
 
 
+# The agent's tools reach this user's data through /internal/* with a per-turn
+# bearer token, never by opening the database (see internal_api.py).
+import internal_api  # noqa: E402
+
+app.register_blueprint(internal_api.create_blueprint(get_db))
+
+
 _TRACKED_PATHS = {"/", "/settings"}
 
 
