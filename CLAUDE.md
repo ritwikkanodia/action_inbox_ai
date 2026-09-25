@@ -636,9 +636,13 @@ poll log.
 The cursor is the last successful poll time, but the query asks for recordings from
 `LOOKBACK_HOURS` (24) before it: Pocket filters on the *recording* date, and an item only
 exists once post-processing has finished, minutes after the recording started; dedup on
-Pocket's `actionItemId` absorbs the overlap. The search caps at 50 items with no paging,
-so a first poll after connecting backfills at most the 50 most recent. Items Pocket marks
-`COMPLETED` or `CANCELLED` are skipped client-side; `IN_PROGRESS` still counts as open.
+Pocket's `actionItemId` absorbs the overlap. **The first poll after connecting is a
+backfill**, like Gmail's: with no cursor the window is `POCKET_BACKFILL_DAYS` (30) back,
+and the search runs once per open status (`TODO`, then `IN_PROGRESS`). That is because
+the search caps at 50 items with no paging, and an unfiltered call would spend the cap on
+items the user has already closed in Pocket. Incremental polls are one unfiltered call
+over the lookback window, and items Pocket marks `COMPLETED` or `CANCELLED` are skipped
+client-side; `IN_PROGRESS` still counts as open.
 Priority maps onto `importance` with `critical` folded into `high`; `dueDate` is already
 an ISO timestamp, the form the UI stores, and passes through untouched; the suggested
 action is the reminder title or the message/email draft Pocket already wrote. Assignee

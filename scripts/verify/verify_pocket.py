@@ -196,8 +196,12 @@ def check_poller(conn, user_id) -> None:
     print("\n-- poller --")
     calls = []
 
-    def fake_search(api_key, recording_date_from=None):
-        calls.append((api_key, recording_date_from))
+    def fake_search(api_key, recording_date_from=None, status=None):
+        calls.append((api_key, recording_date_from, status))
+        if status == "TODO":
+            return [REMINDER, MESSAGE, EMAIL]
+        if status == "IN_PROGRESS":
+            return [dict(EMAIL, actionItemId="wip-1", label="Half done", status="IN_PROGRESS")]
         return [REMINDER, MESSAGE, DONE, CANCELLED, EMAIL]
 
     pocket_poller.search_action_items = fake_search
@@ -212,23 +216,32 @@ def check_poller(conn, user_id) -> None:
     set_source_credentials(conn, user_id, "pocket", "api_key", {"api_key": "pk_verify_123456"})
     before = datetime.now(timezone.utc)
     saved = pocket_poller.poll(conn, user_id)
-    check("first poll has no lower bound", calls[-1] == ("pk_verify_123456", None))
-    check("open items saved, completed and cancelled skipped", saved == 3)
+    check("first poll is a backfill: one call per open status",
+          [c[2] for c in calls] == ["TODO", "IN_PROGRESS"]
+          and all(c[0] == "pk_verify_123456" for c in calls))
+    backfill_from = datetime.fromisoformat(calls[0][1])
+    check("backfill window is POCKET_BACKFILL_DAYS back",
+          abs((before - backfill_from) - timedelta(days=pocket_poller.BACKFILL_DAYS)) < timedelta(seconds=2))
+    check("backfill saves the open items from both calls", saved == 4)
     titles = {t["title"] for t in list_todos(conn, user_id)}
-    check("skipped items never reach the list",
-          "Already done" not in titles and "Dropped" not in titles)
+    check("in-progress item counted as open", "Half done" in titles)
     cursor = get_pocket_last_polled_at(conn, user_id)
     check("cursor written after the poll",
           cursor is not None and datetime.fromisoformat(cursor) >= before.replace(microsecond=0))
 
+    calls.clear()
     saved = pocket_poller.poll(conn, user_id)
+    check("second poll is one unfiltered call", len(calls) == 1 and calls[0][2] is None)
     check("second poll re-fetches nothing new", saved == 0)
-    _, lower = calls[-1]
+    titles = {t["title"] for t in list_todos(conn, user_id)}
+    check("skipped items never reach the list",
+          "Already done" not in titles and "Dropped" not in titles)
+    _, lower, _ = calls[-1]
     lookback = datetime.fromisoformat(cursor) - datetime.fromisoformat(lower)
     check("second poll looks back 24h behind the cursor",
           abs(lookback - timedelta(hours=pocket_poller.LOOKBACK_HOURS)) < timedelta(seconds=2))
 
-    def boom(api_key, recording_date_from=None):
+    def boom(api_key, recording_date_from=None, status=None):
         raise RuntimeError("Pocket is down")
 
     pocket_poller.search_action_items = boom
@@ -259,6 +272,12 @@ def check_web(user_id) -> None:
 
     page = client.get("/settings").get_data(as_text=True)
     check("settings page renders a Pocket card", 'id="pocket-card"' in page)
+    group, fathom, pocket, after = (page.find(m) for m in
+                                    ('id="notetakers-card"', 'id="fathom-card"', 'id="pocket-card"',
+                                     'id="extra-sources"'))
+    check("Fathom and Pocket sit inside one AI notetakers card",
+          -1 < group < fathom < pocket < after
+          and page.count('class="source-card"', fathom, after) == 0)
     check("pocket is not rendered as a generic extra card",
           all(s["name"] != "pocket" for s in client.get("/settings.json").get_json()["sources"]["extra"]))
 

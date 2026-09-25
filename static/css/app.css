@@ -1309,6 +1309,22 @@
       min-width: 44px;
     }
     .source-card.paused .source-card-body { opacity: 0.55; }
+    /* A service inside a grouped card (the AI notetakers): same header row and
+       body as a card, framed as a block instead of a card of its own. */
+    .source-subcard {
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      background: var(--paper-soft);
+      overflow: hidden;
+    }
+    .source-subcard-header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--rule);
+    }
+    .source-subcard-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
+    .source-subcard.paused .source-subcard-body { opacity: 0.55; }
+    .source-subcard .source-key-input { background: var(--panel); }
     .source-card {
       border: 1px solid var(--rule);
       border-radius: 10px;
@@ -1342,8 +1358,8 @@
     .source-connected-badge.off { color: var(--ink-3); }
     .source-connected-badge.off::before { content: '○ '; }
     .source-card-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
-    #gmail-connected-row, #fathom-connected-row { display: none; gap: 8px; align-items: center; }
-    .source-card-body label {
+    #gmail-connected-row, #fathom-connected-row, #pocket-connected-row { display: none; gap: 8px; align-items: center; }
+    .source-card-body label, .source-subcard-body label {
       font-family: var(--mono);
       font-size: 10px;
       letter-spacing: 0.14em;

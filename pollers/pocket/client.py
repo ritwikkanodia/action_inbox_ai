@@ -63,13 +63,18 @@ def describe_error(exc: BaseException) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
-def search_action_items(api_key: str, recording_date_from: str | None = None) -> list[dict]:
+def search_action_items(
+    api_key: str, recording_date_from: str | None = None, status: str | None = None
+) -> list[dict]:
     """Every action item Pocket has for this key, optionally from a recording
-    date onward. Synchronous on purpose — the poller is. Any failure is one
+    date onward and in one status (`TODO`, `IN_PROGRESS`, `COMPLETED`,
+    `CANCELLED`). Synchronous on purpose — the poller is. Any failure is one
     `RuntimeError` with a readable message; the poll loop logs it."""
     arguments: dict = {}
     if recording_date_from:
         arguments["recordingDateFrom"] = recording_date_from
+    if status:
+        arguments["status"] = status
     try:
         return asyncio.run(_call_tool(api_key, SEARCH_TOOL, arguments))
     except RuntimeError:

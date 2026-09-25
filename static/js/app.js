@@ -1367,7 +1367,7 @@ function renderExecutorCard(executor) {
 // cycle, so flipping it here takes effect on the next poll. Connections are
 // untouched: a paused source keeps its accounts and keys.
 function setSourceToggle(source, enabled) {
-  const card = document.querySelector(`.source-card[data-source="${source}"]`);
+  const card = document.querySelector(`.source-card[data-source="${source}"], .source-subcard[data-source="${source}"]`);
   if (!card) return;
   const input = card.querySelector('.source-toggle-input');
   const label = card.querySelector('.source-toggle-label');
