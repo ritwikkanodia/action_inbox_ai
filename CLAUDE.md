@@ -659,8 +659,10 @@ Fathom with the meeting title), because a notetaker's item reads as a fragment o
 near-duplicate check strips that suffix before comparing, otherwise the containment rule
 would match every item from the same call. Before the
 insert, `save_pocket_todo` runs the same `similar_recent_todo` check as Gmail (14 days): the
-task Pocket heard in a call usually also arrives as the mail about it. Assignee
-`Other` items are saved too, named in the reasoning, the same as Fathom. Pocket documents
+task Pocket heard in a call usually also arrives as the mail about it. **Only the user's own items become todos**: Pocket's diarization sets `assignee` to `me`,
+`Other` or a name, and the poller keeps `me` and unset (unknown is safer shown than
+dropped), logging what it skipped; `POCKET_INCLUDE_OTHERS=1` keeps everything. Fathom
+still saves every item, named in the reasoning. Pocket documents
 no deep link to a recording, so `relevant_link` stays empty and the detail pane shows the
 recording title and Pocket's context sentence instead. A fetch failure raises to the poll
 loop and leaves the cursor alone, so the next cycle asks for the same window.

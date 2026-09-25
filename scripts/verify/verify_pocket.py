@@ -219,7 +219,9 @@ def check_poller(conn, user_id) -> None:
     def fake_search(api_key, recording_date_from=None, status=None):
         calls.append((api_key, recording_date_from, status))
         if status == "TODO":
-            return [REMINDER, MESSAGE, EMAIL]
+            return [REMINDER, MESSAGE, EMAIL,
+                    dict(EMAIL, actionItemId="unknown-1", label="Who knows", assignee=None),
+                    dict(EMAIL, actionItemId="named-1", label="Priya to send the deck", assignee="Priya")]
         if status == "IN_PROGRESS":
             return [dict(EMAIL, actionItemId="wip-1", label="Half done", status="IN_PROGRESS")]
         return [REMINDER, MESSAGE, DONE, CANCELLED, EMAIL]
@@ -242,9 +244,12 @@ def check_poller(conn, user_id) -> None:
     backfill_from = datetime.fromisoformat(calls[0][1])
     check("backfill window is POCKET_BACKFILL_DAYS back",
           abs((before - backfill_from) - timedelta(days=pocket_poller.BACKFILL_DAYS)) < timedelta(seconds=2))
-    check("backfill saves the open items from both calls", saved == 4)
+    check("backfill saves the open items assigned to me, plus unknown", saved == 4)
     titles = {t["title"] for t in list_todos(conn, user_id)}
     check("in-progress item counted as open", any(t.startswith("Half done") for t in titles))
+    check("an item with no assignee is kept", any(t.startswith("Who knows") for t in titles))
+    check("items assigned to someone else are skipped",
+          not any(t.startswith(("Review roadmap and phases", "Priya to send")) for t in titles))
     cursor = get_pocket_last_polled_at(conn, user_id)
     check("cursor written after the poll",
           cursor is not None and datetime.fromisoformat(cursor) >= before.replace(microsecond=0))
@@ -260,6 +265,13 @@ def check_poller(conn, user_id) -> None:
     lookback = datetime.fromisoformat(cursor) - datetime.fromisoformat(lower)
     check("second poll looks back 24h behind the cursor",
           abs(lookback - timedelta(hours=pocket_poller.LOOKBACK_HOURS)) < timedelta(seconds=2))
+
+    pocket_poller.INCLUDE_OTHERS = True
+    conn.execute("DELETE FROM user_state WHERE user_id = ? AND key = 'pocket_last_polled_at'", (user_id,))
+    conn.commit()
+    check("POCKET_INCLUDE_OTHERS restores the others",
+          pocket_poller.poll(conn, user_id) == 2)
+    pocket_poller.INCLUDE_OTHERS = False
 
     def boom(api_key, recording_date_from=None, status=None):
         raise RuntimeError("Pocket is down")
