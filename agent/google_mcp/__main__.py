@@ -36,13 +36,19 @@ def make_server(binding: Binding | None) -> MCPServer:
         logging.getLogger(__name__).info("no AIB binding; serving zero tools")
         return server
     from agent.google_mcp.tools import build_tools
-    from agent.todo_tools import build_todo_tools
+    from agent.todo_tools import HttpTodoBackend, build_todo_tools
     for fn in build_tools(Services(binding)):
         server.add_tool(fn)
     # Same process, same binding: the todo tools only need the user and the
-    # database, which the Google binding already names. A second MCP server
-    # would cost a second subprocess inside Hermes' startup budget for nothing.
-    for fn in build_todo_tools(binding.db_path, binding.user_id, binding.todo_id or None):
+    # database — or, in HTTP mode, the same token — which the Google binding
+    # already names. A second MCP server would cost a second subprocess inside
+    # Hermes' startup budget for nothing.
+    if binding.http:
+        from agent.internal_client import InternalClient
+        backend = HttpTodoBackend(InternalClient(binding.api_url, binding.run_token))
+    else:
+        backend = binding.db_path
+    for fn in build_todo_tools(backend, binding.user_id, binding.todo_id or None):
         server.add_tool(fn)
     return server
 

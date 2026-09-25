@@ -191,6 +191,117 @@ def check_accounts_and_gating() -> None:
           and "b@example.com" in by_email["b@example.com"]["error"])
 
 
+# ---------------------------------------------------------------------------
+# HTTP mode: the binding names the app's internal API and a run token instead
+# of a database. A stub stands in for /internal/accounts and
+# /internal/credentials; the Google clients are still Fake.
+# ---------------------------------------------------------------------------
+
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, urlparse
+
+STUB_ACCOUNTS = {
+    "a@example.com": {"token": "access-a", "scopes": sorted(FULL)},
+    "b@example.com": {"token": "access-b", "scopes": [READONLY]},
+}
+STUB_TOKEN = "run-token-1"
+stub_hits: list[str] = []
+
+
+class StubHandler(BaseHTTPRequestHandler):
+    def log_message(self, *_):
+        pass
+
+    def _send(self, status, payload):
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        stub_hits.append(self.path)
+        if self.headers.get("Authorization") != f"Bearer {STUB_TOKEN}":
+            return self._send(401, {"error": "unauthorized"})
+        url = urlparse(self.path)
+        if url.path == "/internal/accounts":
+            return self._send(200, {"accounts": list(STUB_ACCOUNTS)})
+        if url.path == "/internal/credentials":
+            account = (parse_qs(url.query).get("account") or [""])[0].lower() or "a@example.com"
+            if account not in STUB_ACCOUNTS:
+                return self._send(409, {"error": f"Gmail not connected ({account})."})
+            entry = STUB_ACCOUNTS[account]
+            return self._send(200, {"account": account, "token": entry["token"],
+                                    "expiry": None, "scopes": entry["scopes"]})
+        self._send(404, {"error": "no such route"})
+
+
+def start_stub() -> str:
+    server = HTTPServer(("127.0.0.1", 0), StubHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{server.server_address[1]}"
+
+
+def check_http_mode() -> None:
+    print("\n-- HTTP mode --")
+    url = start_stub()
+    env = {"AIB_USER_ID": "u1", "AIB_ACCOUNT_ID": "a@example.com", "AIB_TODO_ID": "todo_1",
+           "AIB_DB_PATH": "", "AIB_API_URL": url + "/", "AIB_RUN_TOKEN": STUB_TOKEN}
+    b = S.binding_from_env(env)
+    check("binding selects HTTP mode", b.http and b.api_url == url and b.run_token == STUB_TOKEN)
+    check("SQLite binding is not HTTP", not make_binding().http)
+    check("unexpanded ${AIB_API_URL} is not HTTP",
+          not S.binding_from_env({"AIB_USER_ID": "u1", "AIB_API_URL": "${AIB_API_URL}"}).http)
+
+    seen_creds = {}
+
+    def builder(kind, account, creds):
+        seen_creds[account] = creds
+        return Fake()
+
+    # HTTP mode must never touch SQLite: make any attempt blow up loudly.
+    real_connect = S.sqlite3.connect
+
+    def no_sqlite(*a, **kw):
+        raise AssertionError("HTTP mode opened the database")
+    S.sqlite3.connect = no_sqlite
+    svc = S.Services(b, builder=builder)
+    check("accounts come from the API", svc.accounts() == ["a@example.com", "b@example.com"])
+    check("default account is the bound one", svc.resolve_account(None) == "a@example.com")
+    check("scope gating reads the API's scopes",
+          svc.require("drive", "a@example.com") == "a@example.com")
+    try:
+        svc.require("gmail", "b@example.com")
+        check("readonly account over HTTP is gated", False)
+    except S.ToolError as exc:
+        check("readonly account over HTTP is gated", "has not granted Gmail access" in str(exc))
+    svc.gmail("a@example.com")
+    creds = seen_creds["a@example.com"]
+    check("client is built with the API's access token", creds.token == "access-a")
+    check("credentials carry no refresh token or client secret",
+          not getattr(creds, "refresh_token", None) and not getattr(creds, "client_secret", None))
+    S.sqlite3.connect = real_connect
+    check("no database was opened in HTTP mode", True)  # no_sqlite would have raised above
+
+    out = json.loads(tools_for(svc)["google_accounts"]())
+    check("google_accounts works end to end over HTTP",
+          [a["email"] for a in out] == ["a@example.com", "b@example.com"]
+          and out[0]["agent_access"] is True and out[1]["agent_access"] is False)
+
+    bad = S.Services(b._replace(run_token="wrong"), builder=builder)
+    line = tools_for(bad)["google_accounts"]()
+    check("a 401 from the API is an Error line naming the status",
+          line.startswith("Error:") and "401" in line)
+    stub_hits.clear()
+    names = {t.name for t in asyncio.run(make_server(b).list_tools())}
+    check("HTTP binding registers google and todo tools",
+          {"google_accounts", "gmail_search", "todos_list", "todos_update"} <= names
+          or ({"google_accounts", "todos_list", "todos_update"} <= names))
+    check("registering tools makes no API calls", stub_hits == [])
+
+
 def tools_for(svc):
     from agent.google_mcp.tools import build_tools
     return {t.__name__: t for t in build_tools(svc)}
@@ -414,4 +525,5 @@ if __name__ == "__main__":
     check_gmail()
     check_drive_docs()
     check_sheets_calendar_contacts()
+    check_http_mode()
     print("\nAll checks passed.")

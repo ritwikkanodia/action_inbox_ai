@@ -12,12 +12,19 @@ import os
 import sqlite3
 from typing import Callable, Mapping, NamedTuple
 
+from agent.internal_client import InternalApiError, InternalClient
+
 logger = logging.getLogger(__name__)
 
 _ENV_USER = "AIB_USER_ID"
 _ENV_ACCOUNT = "AIB_ACCOUNT_ID"
 _ENV_DB = "AIB_DB_PATH"
 _ENV_TODO = "AIB_TODO_ID"
+# HTTP mode: set by the cloud runner instead of a database path. The server
+# then reaches the app's /internal/* routes with a per-turn bearer token and
+# never opens SQLite — the process it runs in cannot read the file anyway.
+_ENV_API = "AIB_API_URL"
+_ENV_TOKEN = "AIB_RUN_TOKEN"
 
 
 class Binding(NamedTuple):
@@ -25,6 +32,12 @@ class Binding(NamedTuple):
     account_id: str   # '' when the todo predates multi-account
     db_path: str
     todo_id: str = ""  # '' on a chat turn, which has no todo behind it
+    api_url: str = ""  # non-empty selects HTTP mode
+    run_token: str = ""
+
+    @property
+    def http(self) -> bool:
+        return bool(self.api_url)
 
 
 def _clean(value: str | None) -> str:
@@ -44,7 +57,10 @@ def binding_from_env(environ: Mapping[str, str]) -> Binding | None:
     account = _clean(environ.get(_ENV_ACCOUNT)).lower()
     db_path = _clean(environ.get(_ENV_DB)) or os.environ.get("DB_PATH", "gmail_events.db")
     todo_id = _clean(environ.get(_ENV_TODO))
-    return Binding(user_id=user_id, account_id=account, db_path=db_path, todo_id=todo_id)
+    api_url = _clean(environ.get(_ENV_API)).rstrip("/")
+    run_token = _clean(environ.get(_ENV_TOKEN))
+    return Binding(user_id=user_id, account_id=account, db_path=db_path, todo_id=todo_id,
+                   api_url=api_url, run_token=run_token)
 
 
 class ToolError(Exception):
@@ -81,6 +97,33 @@ def _default_creds_provider(conn, user_id, account_id):
     return get_google_credentials(conn, user_id, account_id)
 
 
+def http_account_lister(client: InternalClient) -> Callable[[], list[str]]:
+    def lister() -> list[str]:
+        try:
+            data = client.get("/internal/accounts") or {}
+        except InternalApiError as exc:
+            raise ToolError(str(exc)) from None
+        return [a.lower() for a in data.get("accounts", [])]
+    return lister
+
+
+def http_creds_provider(client: InternalClient) -> Callable:
+    """Same shape as `get_google_credentials`, minus the database: the app
+    refreshes server-side and returns an access token alone, so the
+    Credentials built here carry no refresh token and no client secret."""
+    def provider(conn, user_id, account_id):
+        from google.oauth2.credentials import Credentials
+        try:
+            data = client.get("/internal/credentials", {"account": account_id})
+        except InternalApiError as exc:
+            # 409 is the app's own wording (not connected, revoked); anything
+            # else names the status so a dead API reads as such.
+            raise RuntimeError(exc.message if exc.status == 409 else str(exc)) from None
+        creds = Credentials(token=data["token"])
+        return creds, set(data.get("scopes") or []), (data.get("account") or account_id or "").lower()
+    return provider
+
+
 def _default_builder(kind: str, account: str, creds):
     from googleapiclient.discovery import build
     name, version = _CLIENTS[kind]
@@ -96,9 +139,16 @@ class Services:
         account_lister: Callable[[], list[str]] | None = None,
     ):
         self.binding = binding
-        self._creds_provider = creds_provider or _default_creds_provider
+        if binding.http:
+            client = InternalClient(binding.api_url, binding.run_token)
+            default_provider = http_creds_provider(client)
+            default_lister = http_account_lister(client)
+        else:
+            default_provider = _default_creds_provider
+            default_lister = self._list_accounts_from_db
+        self._creds_provider = creds_provider or default_provider
         self._builder = builder or _default_builder
-        self._account_lister = account_lister or self._list_accounts_from_db
+        self._account_lister = account_lister or default_lister
         self._granted: dict[str, set[str]] = {}
         self._creds: dict[str, object] = {}
         self._clients: dict[tuple[str, str], object] = {}
@@ -142,13 +192,15 @@ class Services:
     def _load(self, account: str):
         if account in self._granted:
             return
-        conn = self._open()
+        # HTTP mode never opens the database: the provider gets no connection.
+        conn = None if self.binding.http else self._open()
         try:
             creds, granted, resolved = self._creds_provider(conn, self.binding.user_id, account)
         except RuntimeError as exc:
             raise ToolError(str(exc)) from exc
         finally:
-            conn.close()
+            if conn is not None:
+                conn.close()
         self._creds[account] = creds
         self._granted[account] = set(granted)
 
