@@ -48,6 +48,35 @@ def _legacy_user_email() -> str:
     return os.environ.get("LEGACY_USER_EMAIL", LEGACY_USER_EMAIL_DEFAULT)
 
 
+# The todos table's columns, shared by the fresh CREATE and the rebuild below
+# (a CHECK constraint can't be changed in place, so the source list growing
+# means a rebuild). Add a source to _TODO_SOURCES and both follow.
+_TODO_SOURCES = ("gmail", "fathom", "pocket", "browser_history", "system", "user")
+_TODOS_COLUMNS_DDL = """
+            todo_id                TEXT PRIMARY KEY,
+            user_id                TEXT,
+            source                 TEXT NOT NULL
+                                       CHECK (source IN (""" + ",".join(f"'{x}'" for x in _TODO_SOURCES) + """)),
+            account_id             TEXT,
+            dedup_key              TEXT,
+            title                  TEXT,
+            suggested_action       TEXT,
+            importance             TEXT CHECK (importance IS NULL OR importance IN ('low','medium','high')),
+            estimated_time_minutes INTEGER,
+            due_date               TEXT,
+            relevant_link          TEXT,
+            reasoning              TEXT,
+            status                 TEXT NOT NULL DEFAULT 'open'
+                                       CHECK (status IN ('open','ongoing','closed')),
+            decision               TEXT CHECK (decision IS NULL OR decision IN ('accepted','rejected')),
+            ai_thread              TEXT,
+            executor_state         TEXT,
+            action_options         TEXT,
+            source_meta            TEXT,
+            created_at             TEXT NOT NULL,
+            updated_at             TEXT NOT NULL"""
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     # Fresh DBs get the final schema with CHECK constraints. Existing DBs are
     # migrated below via ALTER TABLE; SQLite can't add CHECK constraints to an
@@ -95,29 +124,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             payload    TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS todos (
-            todo_id                TEXT PRIMARY KEY,
-            user_id                TEXT,
-            source                 TEXT NOT NULL
-                                       CHECK (source IN ('gmail','fathom','browser_history','system','user')),
-            account_id             TEXT,
-            dedup_key              TEXT,
-            title                  TEXT,
-            suggested_action       TEXT,
-            importance             TEXT CHECK (importance IS NULL OR importance IN ('low','medium','high')),
-            estimated_time_minutes INTEGER,
-            due_date               TEXT,
-            relevant_link          TEXT,
-            reasoning              TEXT,
-            status                 TEXT NOT NULL DEFAULT 'open'
-                                       CHECK (status IN ('open','ongoing','closed')),
-            decision               TEXT CHECK (decision IS NULL OR decision IN ('accepted','rejected')),
-            ai_thread              TEXT,
-            executor_state         TEXT,
-            action_options         TEXT,
-            source_meta            TEXT,
-            created_at             TEXT NOT NULL,
-            updated_at             TEXT NOT NULL
+        CREATE TABLE IF NOT EXISTS todos (""" + _TODOS_COLUMNS_DDL + """
         );
     """)
 
@@ -305,6 +312,8 @@ def init_db(conn: sqlite3.Connection) -> None:
             )
             conn.execute("DELETE FROM state WHERE key = ?", (key,))
 
+    _rebuild_todos_if_source_check_stale(conn)
+
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS page_views (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -359,6 +368,42 @@ def init_db(conn: sqlite3.Connection) -> None:
         (_now(),),
     )
     conn.commit()
+
+
+def _rebuild_todos_if_source_check_stale(conn: sqlite3.Connection) -> None:
+    """Rebuild `todos` when its CHECK on `source` predates a source we now
+    save. SQLite can't alter a CHECK in place, and the save helpers use
+    INSERT OR IGNORE — which also ignores a CHECK violation — so a database
+    created before a source existed would drop every one of its todos
+    silently. That is how Pocket's first live poll saved nothing.
+
+    Runs after every column migration, so the old table's columns are a
+    subset of the new DDL's; rows are copied by name. The old table's
+    indexes go with it and the block after this recreates them."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='todos'"
+    ).fetchone()
+    ddl = (row[0] if row else "") or ""
+    match = re.search(r"CHECK\s*\(\s*source\s+IN\s*\(([^)]*)\)", ddl)
+    if not match:
+        return  # no constraint at all: the Python-side enum is the only gate
+    allowed = {x.strip().strip("'\"") for x in match.group(1).split(",")}
+    if set(_TODO_SOURCES) <= allowed:
+        return
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(todos)").fetchall()]
+    col_list = ", ".join(cols)
+    # One transaction: a live web process shares this file, and a rebuild
+    # that stopped between DROP and RENAME would take the inbox with it.
+    conn.executescript(
+        "BEGIN;\n"
+        "CREATE TABLE todos_new (" + _TODOS_COLUMNS_DDL + ");\n"
+        f"INSERT INTO todos_new ({col_list}) SELECT {col_list} FROM todos;\n"
+        "DROP TABLE todos;\n"
+        "ALTER TABLE todos_new RENAME TO todos;\n"
+        "COMMIT;"
+    )
+    print(f"[db] rebuilt todos: source CHECK now allows {', '.join(_TODO_SOURCES)}")
+
 
 
 # ---------------------------------------------------------------------------
@@ -685,6 +730,14 @@ def get_system_last_polled_at(conn: sqlite3.Connection, user_id: str) -> str | N
 
 def set_system_last_polled_at(conn: sqlite3.Connection, user_id: str, ts: str) -> None:
     set_user_state(conn, user_id, "system_last_polled_at", ts)
+
+
+def get_pocket_last_polled_at(conn: sqlite3.Connection, user_id: str) -> str | None:
+    return get_user_state(conn, user_id, "pocket_last_polled_at")
+
+
+def set_pocket_last_polled_at(conn: sqlite3.Connection, user_id: str, ts: str) -> None:
+    set_user_state(conn, user_id, "pocket_last_polled_at", ts)
 
 
 # Which executor resolves this user's todos (`hermes` or `agents_sdk`). Chosen
@@ -1185,6 +1238,83 @@ def save_fathom_todo(
     )
 
 
+# Pocket's priorities are `low|medium|high|critical` (the search tool returns
+# them lowercased, the update tool documents them uppercased); `importance`
+# has no "critical", so it folds into high.
+_POCKET_IMPORTANCE = {"low": "low", "medium": "medium", "high": "high", "critical": "high"}
+
+
+def _pocket_suggested_action(item: dict) -> str:
+    """The one-liner for the list: Pocket has usually drafted the thing already.
+
+    A reminder carries a fuller title than the label; a message or email
+    carries the draft itself. Anything else falls back to the label."""
+    payload = item.get("payload") or {}
+    reminder = payload.get("reminder") or {}
+    message = payload.get("message") or {}
+    email = payload.get("email") or {}
+    if reminder.get("title"):
+        return reminder["title"].strip()
+    if message.get("body"):
+        return f"Send: {message['body'].strip()}"
+    if email.get("subject") or email.get("body"):
+        subject = (email.get("subject") or "").strip()
+        body = (email.get("body") or "").strip()
+        return f"Email '{subject}': {body}" if subject else f"Email: {body}"
+    return (item.get("label") or "").strip()
+
+
+def save_pocket_todo(conn: sqlite3.Connection, user_id: str, item: dict) -> str | None:
+    """One Pocket action item (the shape `search_pocket_actionitems` returns).
+
+    Dedup is Pocket's own `actionItemId`, which survives re-generation of a
+    recording's summary. The due date is already an ISO timestamp, the same
+    form the UI stores, so it passes through untouched. Pocket documents no
+    deep link to a recording, so `relevant_link` stays empty rather than
+    guessing a URL."""
+    action_item_id = str(item.get("actionItemId") or "").strip()
+    title = (item.get("label") or "").strip()
+    if not action_item_id or not title:
+        return None
+    # Same window as Gmail: the task Pocket heard in a call usually also
+    # arrives as the mail about it, days later.
+    if similar_recent_todo(conn, user_id, title, days=14):
+        return None
+    recording_title = item.get("recordingTitle") or ""
+    assignee = item.get("assignee") or None
+    reasoning = f"Action item from Pocket recording: {recording_title}"
+    if assignee:
+        reasoning += f" — assigned to {assignee}"
+    context = (item.get("context") or "").strip()
+    if context:
+        reasoning += f". {context}"
+    priority = (item.get("priority") or "medium").lower()
+    return _save_todo(
+        conn,
+        user_id=user_id,
+        todo_id=f"todo_pocket_{user_id[:8]}_{action_item_id}",
+        source="pocket",
+        dedup_key=action_item_id,
+        title=title,
+        suggested_action=_pocket_suggested_action(item),
+        importance=_POCKET_IMPORTANCE.get(priority, "medium"),
+        due_date=item.get("dueDate") or None,
+        relevant_link="",
+        reasoning=reasoning,
+        source_meta={
+            "action_item_id": action_item_id,
+            "recording_id": item.get("recordingId"),
+            "recording_title": recording_title,
+            "recording_date": item.get("recordingDate"),
+            "action_type": item.get("actionType"),
+            "assignee": assignee,
+            "priority": item.get("priority"),
+            "context": context,
+            "payload": item.get("payload") or None,
+        },
+    )
+
+
 def _event_to_dict(event: GmailEvent) -> dict:
     return {
         "event_id": event.event_id,
@@ -1305,7 +1435,7 @@ ONBOARDING_TODOS = [
         ),
         "reasoning": (
             "📞 This is a sample of how Self-driving Inbox surfaces commitments "
-            "from your meetings. Connect Fathom in Settings and any action "
+            "from your meetings. Connect Fathom or Pocket in Settings and any action "
             "items you agree to during a call will appear here — linked back "
             "to the recording so you can replay the moment for context."
         ),

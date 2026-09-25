@@ -36,7 +36,7 @@
       ('open', 'Open', true), ('ongoing', 'Ongoing', true),
       ('closed', 'Closed', false), ('rejected', 'Rejected', false)] %}
     {% set source_opts = [
-      ('gmail', 'Gmail'), ('fathom', 'Fathom'), ('browser_history', 'Browser'),
+      ('gmail', 'Gmail'), ('fathom', 'Fathom'), ('pocket', 'Pocket'), ('browser_history', 'Browser'),
       ('system', 'System'), ('user', 'User')] %}
 
     <div class="filter-dropdown" id="statusFilter">
@@ -135,7 +135,7 @@
         <p class="empty">No todos yet.</p>
       {% else %}
         {% for t in todos %}
-        {% set is_ai = t.source in ('gmail', 'fathom', 'browser_history', 'system') %}
+        {% set is_ai = t.source in ('gmail', 'fathom', 'pocket', 'browser_history', 'system') %}
         {% set pending = is_ai and not t.decision and t.status != 'closed' %}
         {% set src_label = 'browser' if t.source == 'browser_history' else ('system' if t.source == 'system' else (t.source or 'gmail')) %}
         <div class="todo-row {{ t.status }}{% if t.decision == 'rejected' %} rejected-todo{% endif %}{% if pending %} pending-decision{% endif %}"
@@ -212,25 +212,58 @@
           <button class="btn-connect" id="gmail-connect-btn">Connect another account</button>
         </div>
       </div>
-      <div class="source-card" id="fathom-card" data-source="fathom">
+      <!-- Fathom and Pocket are both AI notetakers: one card, one block per service,
+           each with its own key, status and pause toggle. The ids inside are unchanged. -->
+      <div class="source-card" id="notetakers-card">
         <div class="source-card-header">
-          <span class="source-card-name">Fathom</span>
-          <span class="source-connected-badge off" id="fathom-status">Not connected</span>
-          <label class="source-toggle" title="Discover todos from Fathom meetings">
-            <input type="checkbox" class="source-toggle-input" data-source="fathom" checked>
-            <span class="source-toggle-track"></span>
-            <span class="source-toggle-label">On</span>
-          </label>
+          <span class="source-card-name">AI notetakers</span>
         </div>
-        <div class="source-card-body">
-          <label for="fathom-key-input">API Key</label>
-          <div class="source-key-row" id="fathom-input-row">
-            <input type="password" class="source-key-input" id="fathom-key-input" placeholder="Paste your Fathom API key" autocomplete="off">
-            <button class="btn-connect" id="fathom-connect-btn">Connect</button>
+        <div class="source-card-body notetakers-body">
+          <span class="source-card-hint">Action items from your recorded meetings and conversations.</span>
+          <div class="source-subcard" id="fathom-card" data-source="fathom">
+            <div class="source-subcard-header">
+              <span class="source-card-name">Fathom</span>
+              <span class="source-connected-badge off" id="fathom-status">Not connected</span>
+              <label class="source-toggle" title="Discover todos from Fathom meetings">
+                <input type="checkbox" class="source-toggle-input" data-source="fathom" checked>
+                <span class="source-toggle-track"></span>
+                <span class="source-toggle-label">On</span>
+              </label>
+            </div>
+            <div class="source-subcard-body">
+              <label for="fathom-key-input">API Key</label>
+              <div class="source-key-row" id="fathom-input-row">
+                <input type="password" class="source-key-input" id="fathom-key-input" placeholder="Paste your Fathom API key" autocomplete="off">
+                <button class="btn-connect" id="fathom-connect-btn">Connect</button>
+              </div>
+              <div id="fathom-connected-row">
+                <span id="fathom-key-preview" class="source-card-hint"></span>
+                <button class="btn-disconnect" id="fathom-disconnect-btn">Disconnect</button>
+              </div>
+            </div>
           </div>
-          <div id="fathom-connected-row">
-            <span id="fathom-key-preview" class="source-card-hint"></span>
-            <button class="btn-disconnect" id="fathom-disconnect-btn">Disconnect</button>
+          <div class="source-subcard" id="pocket-card" data-source="pocket">
+            <div class="source-subcard-header">
+              <span class="source-card-name">Pocket</span>
+              <span class="source-connected-badge off" id="pocket-status">Not connected</span>
+              <label class="source-toggle" title="Discover todos from Pocket recordings">
+                <input type="checkbox" class="source-toggle-input" data-source="pocket" checked>
+                <span class="source-toggle-track"></span>
+                <span class="source-toggle-label">On</span>
+              </label>
+            </div>
+            <div class="source-subcard-body">
+              <label for="pocket-key-input">API Key</label>
+              <div class="source-key-row" id="pocket-input-row">
+                <input type="password" class="source-key-input" id="pocket-key-input" placeholder="Paste your Pocket API key (pk_…)" autocomplete="off">
+                <button class="btn-connect" id="pocket-connect-btn">Connect</button>
+              </div>
+              <div id="pocket-connected-row">
+                <span id="pocket-key-preview" class="source-card-hint"></span>
+                <button class="btn-disconnect" id="pocket-disconnect-btn">Disconnect</button>
+              </div>
+              <span class="source-card-hint">Create a key in Pocket under Settings → Integrations → API keys.</span>
+            </div>
           </div>
         </div>
       </div>

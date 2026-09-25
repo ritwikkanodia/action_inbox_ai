@@ -10,10 +10,10 @@ no per-user toggle.
 """
 import os
 
-KNOWN_SOURCES = {"gmail", "fathom", "browser_history", "system", "morning_digest"}
+KNOWN_SOURCES = {"gmail", "fathom", "pocket", "browser_history", "system", "morning_digest"}
 # `browser_history` (reads Dia browser history) and `system` (snapshots
 # macOS Downloads/Desktop/Documents) are macOS-specific and opt-in.
-DEFAULT_ENABLED_SOURCES = {"gmail", "fathom", "morning_digest"}
+DEFAULT_ENABLED_SOURCES = {"gmail", "fathom", "pocket", "morning_digest"}
 
 # What Settings shows for each discovery source, in display order.
 DISCOVERY_SOURCES = (
@@ -21,6 +21,8 @@ DISCOVERY_SOURCES = (
      "description": "New mail in each connected account is read for action items."},
     {"name": "fathom", "label": "Fathom",
      "description": "Action items from your recorded meetings."},
+    {"name": "pocket", "label": "Pocket",
+     "description": "Action items Pocket extracts from your recordings."},
     {"name": "browser_history", "label": "Browser history",
      "description": "Pages you visited that look like something to follow up on. macOS only."},
     {"name": "system", "label": "Files",

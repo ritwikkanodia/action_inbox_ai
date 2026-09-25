@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 source venv/bin/activate
 
-# Poller — Gmail + Fathom + morning digest, loops forever
+# Poller — Gmail + Fathom + Pocket + morning digest, loops forever
 python main.py
 
 # Web UI — separate terminal
@@ -45,6 +45,7 @@ python scripts/verify/verify_google_mcp.py     # Google MCP server against fake 
 python scripts/verify/verify_chat.py           # todo-less chat routes; stubs Hermes, no spend
 python scripts/verify/verify_whatsapp.py       # Meta webhook, linking, replies; stubs Meta + Hermes, no spend
 python scripts/verify/verify_todo_tools.py     # agents' todo tools + the db helpers the UI shares; no spend
+python scripts/verify/verify_pocket.py         # Pocket parsing, mapping, poller, Settings; stubs the MCP call, no network
 python scripts/verify/verify_noise.py          # sign-in/OAuth filter + generators applying it; stubs OpenAI, no spend
 python scripts/verify/verify_dedup.py          # cross-source near-duplicate check in the save helpers; no spend
 ```
@@ -56,7 +57,7 @@ Two runtimes share one SQLite database (`DB_PATH`, default `gmail_events.db`):
 **Poller (`main.py`)** — a `while True` loop, 30s per cycle. For each user with at least one
 connected source (`list_active_users`), it runs each enabled source in its own `try/except` so
 one failing source never kills the cycle. Sources are gated by `ENABLED_SOURCES`; the default
-set is `gmail,fathom,morning_digest`. `browser_history` and `system` are macOS-only and opt-in.
+set is `gmail,fathom,pocket,morning_digest`. `browser_history` and `system` are macOS-only and opt-in.
 The morning digest is the exception to the per-source loop: it iterates `list_all_users`, not
 just connected ones, so unconnected users get a "connect Gmail" nudge instead of nothing.
 The source registry (`KNOWN_SOURCES`, the default set, `enabled_sources()`, and the labels
@@ -237,8 +238,8 @@ Cloud project. There is no `credentials.json` or `token.json` — every credenti
 `account_id` is the lowercased Gmail address for Gmail and `''` for
 single-connection sources. A user can connect several Gmail accounts; each has
 its own credentials, its own poll cursor, and its own place in the poll loop,
-so one revoked token never disturbs the others. Fathom is an API key the user
-pastes into Settings; there is no global fallback key.
+so one revoked token never disturbs the others. Fathom and Pocket are each an API key
+the user pastes into Settings; there is no global fallback key.
 
 The grant requested at sign-in and on reconnect is Workspace-wide (`google_scopes.py`:
 Gmail modify, Drive, Docs, Sheets, Calendar events, Contacts) so the Hermes agent's
@@ -262,11 +263,11 @@ Don't swallow that — the clear-and-reprompt is the intended behavior.
 - `users` — one row per Google sign-in
 - `user_state` — per-user key/value: Gmail cursors (`gmail:<email>:history_id`,
   `gmail:<email>:backfill_pending`, `gmail:<email>:backfilled` — one set per connected
-  account), `fathom_last_polled_at`, digest bookkeeping. (`state` is the legacy
+  account), `fathom_last_polled_at`, `pocket_last_polled_at`, digest bookkeeping. (`state` is the legacy
   single-user table, migrated away from.)
 - `source_connections` — per-user, per-source credentials
 - `events` — raw `GmailEvent` payloads as JSON, append-only
-- `todos` — the unified list. `source` ∈ `gmail|fathom|browser_history|system|user`.
+- `todos` — the unified list. `source` ∈ `gmail|fathom|pocket|browser_history|system|user`.
   `account_id` records which Gmail account a todo came from; `NULL` means unknown
   (todos predating multi-account support). `action_options` caches the three
   suggested actions as JSON; `NULL` means they haven't been inferred yet.
@@ -308,7 +309,13 @@ renamed from `urgency`, so treat old references as stale.
 **Migrations** run inside `init_db` as idempotent `ALTER TABLE` steps guarded by `PRAGMA
 table_info` checks. Fresh databases get the full schema with `CHECK` constraints; migrated ones
 can't gain constraints without a table rebuild, so the enums are *also* enforced in Python in
-the `save_*` helpers. Keep both in sync when adding an enum value.
+the `save_*` helpers. Keep both in sync when adding an enum value. **The `source` enum is the
+exception: it gets a rebuild.** `_rebuild_todos_if_source_check_stale` copies `todos` into a
+fresh table (one transaction) whenever the stored `CHECK (source IN (...))` lacks a value in
+`_TODO_SOURCES`. It exists because the `save_*` helpers use `INSERT OR IGNORE`, and OR IGNORE
+also ignores a CHECK violation: a database created before Pocket accepted every Pocket save
+and stored none of them, with no error anywhere. Adding a source means adding it to
+`_TODO_SOURCES` (which builds the DDL) and the rebuild follows on the next start.
 
 ## LLM usage
 
@@ -616,6 +623,42 @@ history record and the fetch.
 `spam_filter.py` drops events with no sender, with labels `SPAM`/`CATEGORY_PROMOTIONS`/
 `CATEGORY_FORUMS`, from a hardcoded `NOREPLY_SENDERS` set, or from the digest's own
 `RESEND_FROM` address — otherwise the app generates todos from its own digest emails.
+
+## Pocket (`pollers/pocket/`)
+
+Pocket (heypocket.com) is the second meeting notetaker, next to Fathom. Its documented
+REST API does not return action items — the only documented action-item shape is inside
+its webhook payloads — but its hosted MCP server (`https://public.heypocketai.com/mcp`,
+same `pk_…` API key as the REST API, available on every plan) does, with priority,
+context, assignee, due date and the recording it came from. So `pollers/pocket/client.py`
+speaks streamable-HTTP MCP with the `mcp` package the Google server already needs: one
+`search_pocket_actionitems` call per cycle, key in a bearer header, session opened and
+closed inside the call. It is the only file that knows the wire shape; `search_action_items`
+is what the poller calls and what `scripts/verify/verify_pocket.py` stubs. The result parser
+raises on a tool error, and `describe_error` flattens the `ExceptionGroup` anyio raises on
+a failed handshake (a bad key is an `MCPError` three groups deep) into one line for the
+poll log.
+
+The cursor is the last successful poll time, but the query asks for recordings from
+`LOOKBACK_HOURS` (24) before it: Pocket filters on the *recording* date, and an item only
+exists once post-processing has finished, minutes after the recording started; dedup on
+Pocket's `actionItemId` absorbs the overlap. **The first poll after connecting is a
+backfill**, like Gmail's: with no cursor the window is `POCKET_BACKFILL_DAYS` (7, the digest's
+age-out — wider pulled in items already overdue on arrival) back,
+and the search runs once per open status (`TODO`, then `IN_PROGRESS`). That is because
+the search caps at 50 items with no paging, and an unfiltered call would spend the cap on
+items the user has already closed in Pocket. Incremental polls are one unfiltered call
+over the lookback window, and items Pocket marks `COMPLETED` or `CANCELLED` are skipped
+client-side; `IN_PROGRESS` still counts as open.
+Priority maps onto `importance` with `critical` folded into `high`; `dueDate` is already
+an ISO timestamp, the form the UI stores, and passes through untouched; the suggested
+action is the reminder title or the message/email draft Pocket already wrote. Before the
+insert, `save_pocket_todo` runs the same `similar_recent_todo` check as Gmail (14 days): the
+task Pocket heard in a call usually also arrives as the mail about it. Assignee
+`Other` items are saved too, named in the reasoning, the same as Fathom. Pocket documents
+no deep link to a recording, so `relevant_link` stays empty and the detail pane shows the
+recording title and Pocket's context sentence instead. A fetch failure raises to the poll
+loop and leaves the cursor alone, so the next cycle asks for the same window.
 
 ## Morning digest (`pollers/digest/poller.py`)
 
