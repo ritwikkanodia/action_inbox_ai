@@ -2,6 +2,7 @@ import difflib
 import hashlib
 import json
 import os
+import secrets
 import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -326,6 +327,24 @@ def init_db(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_push_subscriptions_user
             ON push_subscriptions(user_id);
 
+        -- One row per executor turn in the cloud: the agent's MCP server presents
+        -- the plain token to /internal/*; only its SHA-256 is stored here.
+        CREATE TABLE IF NOT EXISTS run_tokens (
+            token_hash TEXT PRIMARY KEY,
+            user_id    TEXT NOT NULL,
+            todo_id    TEXT,
+            created_at TEXT NOT NULL,
+            expires_at TEXT NOT NULL
+        );
+
+        -- The OS uid each user's cloud Hermes runs as: 20000 + insertion order.
+        CREATE TABLE IF NOT EXISTS cloud_users (
+            seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    TEXT NOT NULL UNIQUE,
+            uid        INTEGER NOT NULL UNIQUE,
+            created_at TEXT NOT NULL
+        );
+
         CREATE UNIQUE INDEX IF NOT EXISTS idx_todos_dedup
             ON todos(user_id, source, dedup_key) WHERE dedup_key IS NOT NULL;
         CREATE INDEX IF NOT EXISTS idx_todos_user_status_created
@@ -507,6 +526,75 @@ def count_push_subscriptions(conn: sqlite3.Connection, user_id: str) -> int:
     return conn.execute(
         "SELECT COUNT(*) FROM push_subscriptions WHERE user_id = ?", (user_id,)
     ).fetchone()[0]
+
+
+# ---------------------------------------------------------------------------
+# Run tokens — one per cloud executor turn. The runner mints one before it
+# spawns Hermes and revokes it in its `finally`; the agent's MCP server sends
+# it as a bearer to /internal/*, which is how the agent's tools read and write
+# this user's data without the agent's process ever opening the database.
+# ---------------------------------------------------------------------------
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+
+def _iso_after(seconds: float) -> str:
+    """An ISO timestamp `seconds` from now, in the same shape `_now()` writes,
+    so `expires_at` compares as a plain string."""
+    return (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+
+
+def mint_run_token(
+    conn: sqlite3.Connection, user_id: str, todo_id: str | None, ttl_seconds: float
+) -> str:
+    """A fresh bearer token for one turn. Returns the plain token, which is
+    never stored; expired rows are swept on every mint."""
+    conn.execute("DELETE FROM run_tokens WHERE expires_at < ?", (_iso_after(0),))
+    token = secrets.token_urlsafe(32)
+    conn.execute(
+        "INSERT INTO run_tokens (token_hash, user_id, todo_id, created_at, expires_at) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (_hash_token(token), user_id, todo_id, _now(), _iso_after(ttl_seconds)),
+    )
+    conn.commit()
+    return token
+
+
+def resolve_run_token(conn: sqlite3.Connection, token: str | None) -> dict | None:
+    """`{user_id, todo_id}` for a live token, else None (unknown, expired, blank)."""
+    if not token:
+        return None
+    row = conn.execute(
+        "SELECT user_id, todo_id FROM run_tokens WHERE token_hash = ? AND expires_at >= ?",
+        (_hash_token(token), _iso_after(0)),
+    ).fetchone()
+    return {"user_id": row[0], "todo_id": row[1]} if row else None
+
+
+def revoke_run_token(conn: sqlite3.Connection, token: str | None) -> None:
+    if token:
+        conn.execute("DELETE FROM run_tokens WHERE token_hash = ?", (_hash_token(token),))
+        conn.commit()
+
+
+def ensure_cloud_user_row(conn: sqlite3.Connection, user_id: str) -> int:
+    """The stable OS uid for a user's cloud Hermes: 20000 + insertion order."""
+    row = conn.execute(
+        "SELECT uid FROM cloud_users WHERE user_id = ?", (user_id,)
+    ).fetchone()
+    if row:
+        return int(row[0])
+    cur = conn.execute(
+        "INSERT INTO cloud_users (user_id, uid, created_at) VALUES (?, ?, ?)",
+        # uid is UNIQUE, so the placeholder is the negative seq we are about to
+        # learn — never 0, which two concurrent inserts could both try.
+        (user_id, -int(conn.execute("SELECT COALESCE(MAX(seq), 0) + 1 FROM cloud_users").fetchone()[0]), _now()),
+    )
+    uid = 20000 + cur.lastrowid
+    conn.execute("UPDATE cloud_users SET uid = ? WHERE seq = ?", (uid, cur.lastrowid))
+    conn.commit()
+    return uid
 
 
 # ---------------------------------------------------------------------------
