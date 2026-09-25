@@ -1,6 +1,6 @@
 # action_inbox_ai
 
-A personal productivity assistant that turns signals from your Gmail and Fathom meetings (and optionally your browser history and macOS folders) into a prioritised todo list — with a per-task AI assistant built in.
+A personal productivity assistant that turns signals from your Gmail and your Fathom or Pocket meeting notes (and optionally your browser history and macOS folders) into a prioritised todo list — with a per-task AI assistant built in.
 
 ## Sources
 
@@ -8,10 +8,11 @@ A personal productivity assistant that turns signals from your Gmail and Fathom 
 
 - **Gmail** — incremental polling via the History API; spam, promotions, updates, and forum threads are filtered automatically. Each inbound thread is passed to GPT to extract a structured todo.
 - **Fathom** — polls recorded meetings and pulls action items from Fathom's REST API. Each user connects their own Fathom API key from the web UI Settings page.
+- **Pocket** — pulls the action items Pocket (heypocket.com) extracts from recordings, through Pocket's hosted MCP server. Each user connects their own Pocket API key (`pk_…`) from the web UI Settings page.
 
 **Optional, currently macOS-only:**
 
-Enable by setting `ENABLED_SOURCES=gmail,fathom,browser_history,system` in `.env`.
+Enable by setting `ENABLED_SOURCES=gmail,fathom,pocket,browser_history,system` in `.env`.
 
 - **Browser history** — reads the Chromium-format `History` SQLite DB and identifies pages that signal an incomplete transaction (a half-finished checkout, an open support ticket, etc.). Supports Chrome (default) and Dia; choose via `BROWSER=chrome|dia` in `.env`, or point at any other Chromium history file with `BROWSER_HISTORY_PATH=/absolute/path/to/History`. Chrome locks its history file while running, so polls may occasionally fail until you close the browser.
 - **System** — snapshots `~/Downloads`, `~/Desktop`, and `~/Documents`. GPT flags files that need attention (an uninstalled `.dmg`, an unsigned contract). macOS paths are hardcoded.
@@ -60,7 +61,7 @@ python main.py
 flask --app app run --debug --port 5001
 ```
 
-Open <http://localhost:5001/>, sign in with Google, and connect Gmail/Fathom from the Settings page.
+Open <http://localhost:5001/>, sign in with Google, and connect Gmail, Fathom or Pocket from the Settings page.
 
 ## Project layout
 
@@ -72,6 +73,7 @@ db.py                # SQLite schema + helpers
 pollers/
   gmail/             # Gmail History API, spam filter, todo generator
   fathom/            # Fathom REST API poller
+  pocket/            # Pocket action items via its hosted MCP server
   browser/           # Chromium history reader + todo generator (opt-in)
   system/            # macOS folder snapshot + todo generator (opt-in)
 agent/

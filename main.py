@@ -19,6 +19,7 @@ from pollers.gmail.spam_filter import is_spam
 from pollers.gmail.thread_context import fetch_thread_messages, build_thread_context
 from pollers.gmail.todo_generator import generate_todo
 from pollers.fathom import poller as fathom_poller
+from pollers.pocket import poller as pocket_poller
 from pollers.browser import poller as browser_history_poller
 from pollers.system import poller as system_poller
 from pollers.digest import poller as digest_poller
@@ -147,6 +148,12 @@ def main():
                         fathom_poller.poll(conn, user["user_id"])
                     except Exception as exc:
                         print(f"[fathom:{user_label}] error: {exc}")
+
+                if wants("pocket"):
+                    try:
+                        pocket_poller.poll(conn, user["user_id"])
+                    except Exception as exc:
+                        print(f"[pocket:{user_label}] error: {exc}")
 
                 if wants("browser_history"):
                     try:

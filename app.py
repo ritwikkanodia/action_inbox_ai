@@ -714,6 +714,16 @@ def todo_context(todo_id):
             "recording_url": row["relevant_link"],
         })
 
+    if source == "pocket":
+        return jsonify({
+            "source": "pocket",
+            "recording_title": meta.get("recording_title"),
+            "recording_date": meta.get("recording_date"),
+            "context": meta.get("context"),
+            "assignee": meta.get("assignee"),
+            "action_type": meta.get("action_type"),
+        })
+
     if source == "browser_history":
         return jsonify({
             "source": "browser_history",
@@ -1107,6 +1117,8 @@ def get_settings():
     server_enabled = enabled_sources()
     fathom = get_source_connection(db, user_id, "fathom")
     fathom_key = (fathom or {}).get("credentials", {}).get("api_key", "") if fathom else None
+    pocket = get_source_connection(db, user_id, "pocket")
+    pocket_key = (pocket or {}).get("credentials", {}).get("api_key", "") if pocket else None
     accounts = list_gmail_accounts(db, user_id)
     import push_notify
     return jsonify({
@@ -1115,6 +1127,11 @@ def get_settings():
                 "connected": bool(fathom),
                 "enabled": is_source_enabled(db, user_id, "fathom"),
                 "api_key_preview": f"...{fathom_key[-6:]}" if fathom_key else None,
+            },
+            "pocket": {
+                "connected": bool(pocket),
+                "enabled": is_source_enabled(db, user_id, "pocket"),
+                "api_key_preview": f"...{pocket_key[-6:]}" if pocket_key else None,
             },
             "gmail": {
                 "enabled": is_source_enabled(db, user_id, "gmail"),
@@ -1140,7 +1157,7 @@ def get_settings():
                     "enabled": is_source_enabled(db, user_id, src["name"]),
                 }
                 for src in DISCOVERY_SOURCES
-                if src["name"] not in ("gmail", "fathom") and src["name"] in server_enabled
+                if src["name"] not in ("gmail", "fathom", "pocket") and src["name"] in server_enabled
             ],
         },
         "notifications": {
@@ -1294,21 +1311,22 @@ def set_source_enabled_route(source: str):
 @app.route("/settings/sources/<source>", methods=["POST"])
 @login_required
 def update_source_settings(source: str):
-    ALLOWED_SOURCES = {"fathom", "gmail"}
+    ALLOWED_SOURCES = {"fathom", "pocket", "gmail"}
     if source not in ALLOWED_SOURCES:
         return jsonify({"error": "unknown source"}), 400
     data = request.get_json(force=True, silent=True) or {}
     db = get_db()
     user_id = current_user_id()
     assert user_id
-    if source == "fathom":
+    if source in ("fathom", "pocket"):
+        # Both are a pasted API key; the poller for each reads it back the same way.
         if data.get("disconnect"):
-            clear_source_connection(db, user_id, "fathom")
+            clear_source_connection(db, user_id, source)
             return jsonify({"ok": True, "connected": False})
         api_key = (data.get("api_key") or "").strip()
         if not api_key:
             return jsonify({"error": "api_key required"}), 400
-        set_source_credentials(db, user_id, "fathom", "api_key", {"api_key": api_key})
+        set_source_credentials(db, user_id, source, "api_key", {"api_key": api_key})
         return jsonify({"ok": True, "connected": True, "api_key_preview": f"...{api_key[-6:]}"})
     if source == "gmail":
         if data.get("disconnect"):

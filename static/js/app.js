@@ -1,6 +1,6 @@
 const IMPORTANCE_OPTIONS = ['low', 'medium', 'high'];
 const STATUS_OPTIONS  = ['open', 'ongoing', 'closed'];
-const AI_SOURCES = ['gmail', 'fathom', 'browser_history', 'system'];
+const AI_SOURCES = ['gmail', 'fathom', 'pocket', 'browser_history', 'system'];
 
 const todosById = {};
 (JSON.parse(document.getElementById('todos-data').textContent) || []).forEach(t => {
@@ -63,7 +63,7 @@ const threadCache  = {};
 
 const STATUS_LABELS = { open: 'Open', ongoing: 'Ongoing', closed: 'Closed', rejected: 'Rejected' };
 const SOURCE_LABELS = {
-  gmail: 'Gmail', fathom: 'Fathom', browser_history: 'Browser',
+  gmail: 'Gmail', fathom: 'Fathom', pocket: 'Pocket', browser_history: 'Browser',
   system: 'System', user: 'User',
 };
 const FILTER_STORE_PREFIX = 'inbox.filter.';
@@ -703,6 +703,15 @@ function renderContext(data, heading, body) {
     `;
     return;
   }
+  if (data.source === 'pocket') {
+    heading.textContent = 'Recording';
+    body.innerHTML = `
+      <div class="body-text">${escapeHtml(data.recording_title || '(no title)')}</div>
+      ${data.context ? `<div class="body-text">${escapeHtml(data.context)}</div>` : ''}
+      ${data.assignee ? `<div class="body-text assignee-hint">Assigned to ${escapeHtml(data.assignee)}</div>` : ''}
+    `;
+    return;
+  }
   if (data.source === 'browser_history') {
     heading.textContent = 'Page';
     body.innerHTML = `
@@ -1259,8 +1268,8 @@ function setSourceConnected(prefix, on, hint) {
     const hintEl = document.getElementById(`${prefix}-key-preview`) || document.getElementById(`${prefix}-email-hint`);
     if (hintEl) hintEl.textContent = hint;
   }
-  if (!on && prefix === 'fathom') {
-    document.getElementById('fathom-key-input').value = '';
+  if (!on && (prefix === 'fathom' || prefix === 'pocket')) {
+    document.getElementById(`${prefix}-key-input`).value = '';
   }
 }
 
@@ -1409,12 +1418,14 @@ function renderExtraSources(extra) {
 
 function loadSettings() {
   fetch('/settings.json').then(r => r.json()).then(data => {
-    const { fathom, gmail, extra } = data.sources;
+    const { fathom, pocket, gmail, extra } = data.sources;
     setSourceConnected('fathom', fathom.connected, fathom.api_key_preview);
+    setSourceConnected('pocket', pocket.connected, pocket.api_key_preview);
     window.__settings = { gmailGrantUrlTemplate: gmail.grant_url_template };
     renderGmailAccounts(gmail.accounts || []);
     setSourceToggle('gmail', gmail.enabled !== false);
     setSourceToggle('fathom', fathom.enabled !== false);
+    setSourceToggle('pocket', pocket.enabled !== false);
     renderExtraSources(extra || []);
     renderExecutorCard(data.executor || { selected: null, default: null, options: [] });
     renderPushCard(data.notifications || { configured: false, subscription_count: 0 });
@@ -1458,7 +1469,7 @@ window.addEventListener('popstate', () => {
   else if (location.pathname === CHAT_PATH) showChatView({ push: false });
   else showInboxView({ push: false });
 });
-document.querySelectorAll('#gmail-card .source-toggle-input, #fathom-card .source-toggle-input')
+document.querySelectorAll('#gmail-card .source-toggle-input, #fathom-card .source-toggle-input, #pocket-card .source-toggle-input')
   .forEach(bindSourceToggle);
 // ---------------- Chat view ----------------
 // The executor with no todo in front of it. One conversation per user, kept
@@ -1561,26 +1572,30 @@ if (window.__INITIAL_VIEW === 'settings' || location.pathname === SETTINGS_PATH)
   showChatView({ push: false });
 }
 
-document.getElementById('fathom-connect-btn').addEventListener('click', () => {
-  const key = document.getElementById('fathom-key-input').value.trim();
-  if (!key) { document.getElementById('fathom-key-input').focus(); return; }
-  const btn = document.getElementById('fathom-connect-btn');
-  btn.disabled = true;
-  fetch('/settings/sources/fathom', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ api_key: key }),
-  }).then(r => r.json()).then(data => {
-    if (data.ok) setSourceConnected('fathom', true, data.api_key_preview);
-    else alert(data.error || 'Failed to connect');
-  }).finally(() => { btn.disabled = false; });
-});
-document.getElementById('fathom-disconnect-btn').addEventListener('click', () => {
-  fetch('/settings/sources/fathom', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ disconnect: true }),
-  }).then(r => r.json()).then(data => { if (data.ok) setSourceConnected('fathom', false); });
+// Fathom and Pocket are both a pasted API key behind the same card layout.
+['fathom', 'pocket'].forEach(source => {
+  document.getElementById(`${source}-connect-btn`).addEventListener('click', () => {
+    const input = document.getElementById(`${source}-key-input`);
+    const key = input.value.trim();
+    if (!key) { input.focus(); return; }
+    const btn = document.getElementById(`${source}-connect-btn`);
+    btn.disabled = true;
+    fetch(`/settings/sources/${source}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_key: key }),
+    }).then(r => r.json()).then(data => {
+      if (data.ok) setSourceConnected(source, true, data.api_key_preview);
+      else alert(data.error || 'Failed to connect');
+    }).finally(() => { btn.disabled = false; });
+  });
+  document.getElementById(`${source}-disconnect-btn`).addEventListener('click', () => {
+    fetch(`/settings/sources/${source}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disconnect: true }),
+    }).then(r => r.json()).then(data => { if (data.ok) setSourceConnected(source, false); });
+  });
 });
 
 // ---------------- WhatsApp linking ----------------

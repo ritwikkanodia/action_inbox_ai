@@ -36,7 +36,7 @@
       ('open', 'Open', true), ('ongoing', 'Ongoing', true),
       ('closed', 'Closed', false), ('rejected', 'Rejected', false)] %}
     {% set source_opts = [
-      ('gmail', 'Gmail'), ('fathom', 'Fathom'), ('browser_history', 'Browser'),
+      ('gmail', 'Gmail'), ('fathom', 'Fathom'), ('pocket', 'Pocket'), ('browser_history', 'Browser'),
       ('system', 'System'), ('user', 'User')] %}
 
     <div class="filter-dropdown" id="statusFilter">
@@ -135,7 +135,7 @@
         <p class="empty">No todos yet.</p>
       {% else %}
         {% for t in todos %}
-        {% set is_ai = t.source in ('gmail', 'fathom', 'browser_history', 'system') %}
+        {% set is_ai = t.source in ('gmail', 'fathom', 'pocket', 'browser_history', 'system') %}
         {% set pending = is_ai and not t.decision and t.status != 'closed' %}
         {% set src_label = 'browser' if t.source == 'browser_history' else ('system' if t.source == 'system' else (t.source or 'gmail')) %}
         <div class="todo-row {{ t.status }}{% if t.decision == 'rejected' %} rejected-todo{% endif %}{% if pending %} pending-decision{% endif %}"
@@ -232,6 +232,29 @@
             <span id="fathom-key-preview" class="source-card-hint"></span>
             <button class="btn-disconnect" id="fathom-disconnect-btn">Disconnect</button>
           </div>
+        </div>
+      </div>
+      <div class="source-card" id="pocket-card" data-source="pocket">
+        <div class="source-card-header">
+          <span class="source-card-name">Pocket</span>
+          <span class="source-connected-badge off" id="pocket-status">Not connected</span>
+          <label class="source-toggle" title="Discover todos from Pocket recordings">
+            <input type="checkbox" class="source-toggle-input" data-source="pocket" checked>
+            <span class="source-toggle-track"></span>
+            <span class="source-toggle-label">On</span>
+          </label>
+        </div>
+        <div class="source-card-body">
+          <label for="pocket-key-input">API Key</label>
+          <div class="source-key-row" id="pocket-input-row">
+            <input type="password" class="source-key-input" id="pocket-key-input" placeholder="Paste your Pocket API key (pk_…)" autocomplete="off">
+            <button class="btn-connect" id="pocket-connect-btn">Connect</button>
+          </div>
+          <div id="pocket-connected-row">
+            <span id="pocket-key-preview" class="source-card-hint"></span>
+            <button class="btn-disconnect" id="pocket-disconnect-btn">Disconnect</button>
+          </div>
+          <span class="source-card-hint">Create a key in Pocket under Settings → Integrations → API keys.</span>
         </div>
       </div>
       <!-- Opt-in, macOS-only discovery sources; filled in only when the server runs them. -->

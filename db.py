@@ -99,7 +99,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             todo_id                TEXT PRIMARY KEY,
             user_id                TEXT,
             source                 TEXT NOT NULL
-                                       CHECK (source IN ('gmail','fathom','browser_history','system','user')),
+                                       CHECK (source IN ('gmail','fathom','pocket','browser_history','system','user')),
             account_id             TEXT,
             dedup_key              TEXT,
             title                  TEXT,
@@ -687,6 +687,14 @@ def set_system_last_polled_at(conn: sqlite3.Connection, user_id: str, ts: str) -
     set_user_state(conn, user_id, "system_last_polled_at", ts)
 
 
+def get_pocket_last_polled_at(conn: sqlite3.Connection, user_id: str) -> str | None:
+    return get_user_state(conn, user_id, "pocket_last_polled_at")
+
+
+def set_pocket_last_polled_at(conn: sqlite3.Connection, user_id: str, ts: str) -> None:
+    set_user_state(conn, user_id, "pocket_last_polled_at", ts)
+
+
 # Which executor resolves this user's todos (`hermes` or `agents_sdk`). Chosen
 # in Settings; None means the server default (TODO_EXECUTOR). Validation lives
 # in agent.executor — this is storage only.
@@ -1185,6 +1193,79 @@ def save_fathom_todo(
     )
 
 
+# Pocket's priorities are `low|medium|high|critical` (the search tool returns
+# them lowercased, the update tool documents them uppercased); `importance`
+# has no "critical", so it folds into high.
+_POCKET_IMPORTANCE = {"low": "low", "medium": "medium", "high": "high", "critical": "high"}
+
+
+def _pocket_suggested_action(item: dict) -> str:
+    """The one-liner for the list: Pocket has usually drafted the thing already.
+
+    A reminder carries a fuller title than the label; a message or email
+    carries the draft itself. Anything else falls back to the label."""
+    payload = item.get("payload") or {}
+    reminder = payload.get("reminder") or {}
+    message = payload.get("message") or {}
+    email = payload.get("email") or {}
+    if reminder.get("title"):
+        return reminder["title"].strip()
+    if message.get("body"):
+        return f"Send: {message['body'].strip()}"
+    if email.get("subject") or email.get("body"):
+        subject = (email.get("subject") or "").strip()
+        body = (email.get("body") or "").strip()
+        return f"Email '{subject}': {body}" if subject else f"Email: {body}"
+    return (item.get("label") or "").strip()
+
+
+def save_pocket_todo(conn: sqlite3.Connection, user_id: str, item: dict) -> str | None:
+    """One Pocket action item (the shape `search_pocket_actionitems` returns).
+
+    Dedup is Pocket's own `actionItemId`, which survives re-generation of a
+    recording's summary. The due date is already an ISO timestamp, the same
+    form the UI stores, so it passes through untouched. Pocket documents no
+    deep link to a recording, so `relevant_link` stays empty rather than
+    guessing a URL."""
+    action_item_id = str(item.get("actionItemId") or "").strip()
+    title = (item.get("label") or "").strip()
+    if not action_item_id or not title:
+        return None
+    recording_title = item.get("recordingTitle") or ""
+    assignee = item.get("assignee") or None
+    reasoning = f"Action item from Pocket recording: {recording_title}"
+    if assignee:
+        reasoning += f" — assigned to {assignee}"
+    context = (item.get("context") or "").strip()
+    if context:
+        reasoning += f". {context}"
+    priority = (item.get("priority") or "medium").lower()
+    return _save_todo(
+        conn,
+        user_id=user_id,
+        todo_id=f"todo_pocket_{user_id[:8]}_{action_item_id}",
+        source="pocket",
+        dedup_key=action_item_id,
+        title=title,
+        suggested_action=_pocket_suggested_action(item),
+        importance=_POCKET_IMPORTANCE.get(priority, "medium"),
+        due_date=item.get("dueDate") or None,
+        relevant_link="",
+        reasoning=reasoning,
+        source_meta={
+            "action_item_id": action_item_id,
+            "recording_id": item.get("recordingId"),
+            "recording_title": recording_title,
+            "recording_date": item.get("recordingDate"),
+            "action_type": item.get("actionType"),
+            "assignee": assignee,
+            "priority": item.get("priority"),
+            "context": context,
+            "payload": item.get("payload") or None,
+        },
+    )
+
+
 def _event_to_dict(event: GmailEvent) -> dict:
     return {
         "event_id": event.event_id,
@@ -1305,7 +1386,7 @@ ONBOARDING_TODOS = [
         ),
         "reasoning": (
             "📞 This is a sample of how Self-driving Inbox surfaces commitments "
-            "from your meetings. Connect Fathom in Settings and any action "
+            "from your meetings. Connect Fathom or Pocket in Settings and any action "
             "items you agree to during a call will appear here — linked back "
             "to the recording so you can replay the moment for context."
         ),
