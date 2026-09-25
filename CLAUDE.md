@@ -14,6 +14,11 @@ python main.py
 flask --app app run --debug --port 5001
 ```
 
+`venv/` is gitignored and exists only in the main checkout, so a git worktree under
+`.claude/worktrees/` has no `venv/bin/activate` of its own. From a worktree, use the main
+checkout's interpreter directly (`/path/to/action_inbox_ai/venv/bin/python …`) or point
+`source` at that path; do not create a second venv per worktree.
+
 Config lives entirely in `.env` (loaded with `load_dotenv(override=True)` at the top of both
 entrypoints — before any other import, since module-level code reads env vars). See
 `.env.example` for the annotated list. `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`,
