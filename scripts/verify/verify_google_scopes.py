@@ -163,7 +163,7 @@ def check_settings() -> None:
     with client.session_transaction() as sess:
         sess["user_id"] = user_id
         sess["user_email"] = "settings@example.com"
-    payload = client.get("/settings").get_json()
+    payload = client.get("/settings.json").get_json()
     by_email = {a["email"]: a for a in payload["sources"]["gmail"]["accounts"]}
     check("readonly account reports agent_access False", by_email["ro@example.com"]["agent_access"] is False)
     check("full account reports agent_access True", by_email["full@example.com"]["agent_access"] is True)
