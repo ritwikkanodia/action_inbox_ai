@@ -33,7 +33,8 @@ from db import (
     update_todo_fields,
     upsert_user,
 )
-from agent.todo_tools import build_todo_tools
+from agent.internal_client import InternalApiError, InternalClient
+from agent.todo_tools import HttpTodoBackend, SqliteTodoBackend, build_todo_tools
 
 
 def check(label: str, condition: bool) -> None:
@@ -104,10 +105,12 @@ def check_helpers(conn, alice, bob) -> None:
     check("update bumps updated_at", after["due_date"] == "2026-10-01" and after["updated_at"] >= before)
 
 
-def check_tools(conn, alice, bob) -> None:
-    print("\n-- tools --")
+def check_tools(conn, alice, bob, backend_for, label) -> None:
+    """`backend_for(user_id)` builds the backend the tools run on; the same
+    assertions hold for the in-process SQLite one and the HTTP one."""
+    print(f"\n-- tools ({label}) --")
     current = save_user_todo(conn, alice, "the current todo", "medium")
-    tools = tools_by_name(build_todo_tools(DB_PATH, alice, current))
+    tools = tools_by_name(build_todo_tools(backend_for(alice), alice, current))
     check("four tools, no delete",
           set(tools) == {"todos_list", "todos_get", "todos_create", "todos_update"})
     check("every tool has a docstring", all(fn.__doc__ for fn in tools.values()))
@@ -157,7 +160,7 @@ def check_tools(conn, alice, bob) -> None:
     check("update can clear a due date",
           json.loads(tools["todos_update"](todo_id=created["todo_id"], due_date=""))["due_date"] is None)
 
-    chat = tools_by_name(build_todo_tools(DB_PATH, alice, None))
+    chat = tools_by_name(build_todo_tools(backend_for(alice), alice, None))
     check("chat binding: update without an id is an Error line",
           chat["todos_update"](status="closed").startswith("Error:"))
     check("chat binding: list marks nothing current",
@@ -184,13 +187,128 @@ def check_wiring() -> None:
           "todos_delete" not in hermes_prompt.INSTRUCTIONS and "todos_delete" not in prompt.INSTRUCTIONS)
 
 
+# ---------------------------------------------------------------------------
+# A stand-in for the app's /internal/todos* routes: the same SqliteTodoBackend
+# behind a bearer check, answering 401 / 404 / 400 the way internal_api does.
+# ---------------------------------------------------------------------------
+
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, urlparse
+
+TOKENS: dict[str, str] = {}   # bearer -> user_id
+
+
+class StubHandler(BaseHTTPRequestHandler):
+    def log_message(self, *_):  # quiet
+        pass
+
+    def _send(self, status, payload):
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _auth(self):
+        header = self.headers.get("Authorization", "")
+        token = header[7:] if header.startswith("Bearer ") else ""
+        user = TOKENS.get(token)
+        if not user:
+            self._send(401, {"error": "unauthorized"})
+            return None
+        return SqliteTodoBackend(DB_PATH, user)
+
+    def _body(self):
+        n = int(self.headers.get("Content-Length") or 0)
+        return json.loads(self.rfile.read(n) or b"{}")
+
+    def do_GET(self):
+        backend = self._auth()
+        if backend is None:
+            return
+        url = urlparse(self.path)
+        parts = url.path.strip("/").split("/")
+        if parts == ["internal", "todos"]:
+            q = parse_qs(url.query)
+            status = (q.get("status") or ["all"])[0]
+            rows = backend.list_todos()
+            if status != "all":
+                rows = [t for t in rows if t.get("status") == status]
+            return self._send(200, rows[: int((q.get("limit") or ["500"])[0])])
+        if len(parts) == 3 and parts[:2] == ["internal", "todos"]:
+            todo = backend.get_todo(parts[2])
+            return self._send(200, todo) if todo else self._send(404, {"error": "not found"})
+        self._send(404, {"error": "no such route"})
+
+    def do_POST(self):
+        backend = self._auth()
+        if backend is None:
+            return
+        data = self._body()
+        title = (data.get("title") or "").strip()
+        importance = (data.get("importance") or "medium").lower()
+        if not title:
+            return self._send(400, {"error": "title is required"})
+        if importance not in ("low", "medium", "high"):
+            return self._send(400, {"error": "importance must be one of high, low, medium"})
+        todo = backend.create_todo(title, importance, data.get("due_date") or None,
+                                   data.get("suggested_action") or "")
+        self._send(201, todo)
+
+    def do_PATCH(self):
+        backend = self._auth()
+        if backend is None:
+            return
+        todo_id = self.path.strip("/").split("/")[-1]
+        try:
+            todo = backend.update_todo(todo_id, self._body())
+        except ValueError as exc:
+            return self._send(400, {"error": str(exc)})
+        self._send(200, todo) if todo else self._send(404, {"error": "not found"})
+
+
+def start_stub() -> str:
+    server = HTTPServer(("127.0.0.1", 0), StubHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{server.server_address[1]}"
+
+
+def check_http_client(url: str) -> None:
+    print("\n-- internal client --")
+    bad = InternalClient(url, "wrong-token")
+    try:
+        bad.get("/internal/todos")
+        check("wrong token raises InternalApiError", False)
+    except InternalApiError as exc:
+        check("wrong token raises InternalApiError with 401", exc.status == 401)
+    unreachable = InternalClient("http://127.0.0.1:9", "tok", timeout=1)
+    try:
+        unreachable.get("/internal/todos")
+        check("unreachable API raises", False)
+    except InternalApiError as exc:
+        check("unreachable API is status 0", exc.status == 0 and "unreachable" in str(exc))
+    backend = HttpTodoBackend(bad)
+    tools = tools_by_name(build_todo_tools(backend, "whoever", None))
+    check("a 401 surfaces as an Error line naming the status",
+          tools["todos_list"]().startswith("Error:") and "401" in tools["todos_list"]())
+
+
 def main() -> None:
     conn = open_db()
     init_db(conn)
     alice, _ = upsert_user(conn, "alice@example.com")
     bob, _ = upsert_user(conn, "bob@example.com")
     check_helpers(conn, alice, bob)
-    check_tools(conn, alice, bob)
+    check_tools(conn, alice, bob, lambda user: DB_PATH, "sqlite path")
+    url = start_stub()
+    TOKENS["tok-alice"] = alice
+    TOKENS["tok-bob"] = bob
+    check_tools(conn, alice, bob,
+                lambda user: HttpTodoBackend(InternalClient(url, "tok-alice" if user == alice else "tok-bob")),
+                "http")
+    check_http_client(url)
     check_wiring()
     print("\nAll checks passed.")
 

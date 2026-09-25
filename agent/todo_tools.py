@@ -1,11 +1,15 @@
 """The todo-list tools an executor agent gets, as plain closures.
 
-`build_todo_tools(db_path, user_id, current_todo_id)` returns callables whose
+`build_todo_tools(backend, user_id, current_todo_id)` returns callables whose
 names, signatures and docstrings are what the agent sees — no MCP or Agents-SDK
 types here, so the Hermes MCP server and the SDK resolver wrap the same
-functions. They call the same `db` helpers the web UI's routes do, so the agent
-can list, read, create and edit exactly what the user can from the inbox, with
-the same ordering, the same editable fields and the same validation.
+functions. `backend` is where the rows live: a database path (or
+`SqliteTodoBackend`) calls the same `db` helpers the web UI's routes do, so the
+agent can list, read, create and edit exactly what the user can from the inbox,
+with the same ordering, the same editable fields and the same validation; an
+`HttpTodoBackend` reaches those same helpers through the app's `/internal/*`
+routes, for a process that must not open the database (the cloud's per-user
+Hermes, whose MCP server holds only a per-turn token).
 
 There is deliberately no delete: an agent acting on a prompt built from email
 content must not be able to erase the user's list, and a row that stays is what
@@ -22,6 +26,8 @@ import logging
 import re
 import sqlite3
 from typing import Callable
+
+from agent.internal_client import InternalApiError, InternalClient
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +59,7 @@ def _safe(fn: Callable) -> Callable:
     def wrapper(*args, **kwargs):
         try:
             return fn(*args, **kwargs)
-        except (ToolError, ValueError) as exc:
+        except (ToolError, ValueError, InternalApiError) as exc:
             return f"Error: {_one_line(str(exc))}"
         except Exception as exc:
             logger.warning("%s failed: %s", fn.__name__, exc)
@@ -77,21 +83,113 @@ def _blank_to_none(value: str | None) -> str | None:
     return value or None
 
 
-def build_todo_tools(
-    db_path: str, user_id: str, current_todo_id: str | None
-) -> list[Callable]:
-    """Tools bound to one user and, outside the chat, to the todo this turn is
-    resolving. `current_todo_id` is None for a chat turn, where `todos_update`
-    then needs an explicit id."""
-    from db import get_todo, list_todos, save_user_todo, update_todo_fields
+class SqliteTodoBackend:
+    """The rows via `db.py`, in-process. What the local Hermes and the Agents
+    SDK executor use, and what the `/internal/todos` routes run behind."""
 
-    def _open() -> sqlite3.Connection:
-        conn = sqlite3.connect(db_path, timeout=30)
+    def __init__(self, db_path: str, user_id: str):
+        self.db_path = db_path
+        self.user_id = user_id
+
+    def _open(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = sqlite3.Row
         return conn
 
-    def _require(conn, todo_id: str) -> dict:
-        todo = get_todo(conn, user_id, todo_id)
+    def list_todos(self) -> list[dict]:
+        from db import list_todos
+        conn = self._open()
+        try:
+            return list_todos(conn, self.user_id)
+        finally:
+            conn.close()
+
+    def get_todo(self, todo_id: str) -> dict | None:
+        from db import get_todo
+        conn = self._open()
+        try:
+            return get_todo(conn, self.user_id, todo_id)
+        finally:
+            conn.close()
+
+    def create_todo(self, title: str, importance: str, due_date: str | None,
+                    suggested_action: str) -> dict:
+        from db import get_todo, save_user_todo
+        conn = self._open()
+        try:
+            todo_id = save_user_todo(conn, self.user_id, title, importance, due_date,
+                                     suggested_action)
+            return get_todo(conn, self.user_id, todo_id)
+        finally:
+            conn.close()
+
+    def update_todo(self, todo_id: str, updates: dict) -> dict | None:
+        """The row after the change, or None when the id is not this user's.
+        Raises ValueError on a bad enum, as `update_todo_fields` does."""
+        from db import get_todo, update_todo_fields
+        conn = self._open()
+        try:
+            if not update_todo_fields(conn, self.user_id, todo_id, updates):
+                return None
+            return get_todo(conn, self.user_id, todo_id)
+        finally:
+            conn.close()
+
+
+class HttpTodoBackend:
+    """The same rows through `/internal/todos*`, scoped by the bearer token the
+    client carries. 404 is None, 400 is ValueError, so the tools above the
+    seam cannot tell the two backends apart."""
+
+    def __init__(self, client: InternalClient):
+        self.client = client
+
+    def list_todos(self) -> list[dict]:
+        return self.client.get("/internal/todos", {"status": "all", "limit": 500}) or []
+
+    def get_todo(self, todo_id: str) -> dict | None:
+        try:
+            return self.client.get(f"/internal/todos/{todo_id}")
+        except InternalApiError as exc:
+            if exc.status == 404:
+                return None
+            raise
+
+    def create_todo(self, title: str, importance: str, due_date: str | None,
+                    suggested_action: str) -> dict:
+        try:
+            return self.client.post("/internal/todos", {
+                "title": title, "importance": importance, "due_date": due_date,
+                "suggested_action": suggested_action,
+            })
+        except InternalApiError as exc:
+            if exc.status == 400:
+                raise ValueError(exc.message) from None
+            raise
+
+    def update_todo(self, todo_id: str, updates: dict) -> dict | None:
+        try:
+            return self.client.patch(f"/internal/todos/{todo_id}", updates)
+        except InternalApiError as exc:
+            if exc.status == 404:
+                return None
+            if exc.status == 400:
+                raise ValueError(exc.message) from None
+            raise
+
+
+def build_todo_tools(
+    backend, user_id: str, current_todo_id: str | None
+) -> list[Callable]:
+    """Tools bound to one user and, outside the chat, to the todo this turn is
+    resolving. `current_todo_id` is None for a chat turn, where `todos_update`
+    then needs an explicit id. `backend` is a `SqliteTodoBackend`, an
+    `HttpTodoBackend`, or a database path (wrapped in the former)."""
+    if isinstance(backend, str):
+        backend = SqliteTodoBackend(backend, user_id)
+
+    def _require(todo_id: str) -> dict:
+        todo = backend.get_todo(todo_id)
         if todo is None:
             raise ToolError(f"No todo with id {todo_id} on this user's list.")
         return todo
@@ -124,11 +222,7 @@ def build_todo_tools(
         status = (status or "open").strip().lower()
         if status not in _STATUS_FILTERS:
             raise ToolError(f"status must be one of {', '.join(_STATUS_FILTERS)}.")
-        conn = _open()
-        try:
-            rows = list_todos(conn, user_id)
-        finally:
-            conn.close()
+        rows = backend.list_todos()
         if status != "all":
             rows = [t for t in rows if t.get("status") == status]
         out = []
@@ -143,11 +237,7 @@ def build_todo_tools(
     def todos_get(todo_id: str) -> str:
         """Read one todo in full: everything todos_list shows plus relevant_link,
         reasoning (why it was created) and updated_at. Returns JSON."""
-        conn = _open()
-        try:
-            todo = _require(conn, (todo_id or "").strip())
-        finally:
-            conn.close()
+        todo = _require((todo_id or "").strip())
         return _dumps(_project(todo, _AGENT_FIELDS))
 
     @register
@@ -169,15 +259,8 @@ def build_todo_tools(
         importance = (importance or "medium").strip().lower()
         if importance not in ("low", "medium", "high"):
             raise ToolError("importance must be one of low, medium, high.")
-        conn = _open()
-        try:
-            todo_id = save_user_todo(
-                conn, user_id, title, importance, _blank_to_none(due_date),
-                (suggested_action or "").strip(),
-            )
-            todo = _require(conn, todo_id)
-        finally:
-            conn.close()
+        todo = backend.create_todo(title, importance, _blank_to_none(due_date),
+                                   (suggested_action or "").strip())
         return _dumps(_project(todo, _AGENT_FIELDS))
 
     @register
@@ -218,14 +301,13 @@ def build_todo_tools(
                 "Nothing to change: pass at least one of title, due_date, importance, "
                 "status, decision, suggested_action."
             )
-        conn = _open()
+        _require(target)
         try:
-            _require(conn, target)
-            if not update_todo_fields(conn, user_id, target, updates):
-                raise ToolError(f"No todo with id {target} on this user's list.")
-            todo = _require(conn, target)
-        finally:
-            conn.close()
+            todo = backend.update_todo(target, updates)
+        except ValueError as exc:
+            raise ToolError(str(exc)) from None
+        if todo is None:
+            raise ToolError(f"No todo with id {target} on this user's list.")
         return _dumps(_project(todo, _AGENT_FIELDS))
 
     return tools
