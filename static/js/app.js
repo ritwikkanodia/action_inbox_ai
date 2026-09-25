@@ -339,7 +339,13 @@ function bindEditable(cell, todo) {
 }
 
 function applyDecision(t, decision) {
+  const wasRejected = t.decision === 'rejected';
   t.decision = decision;
+  // The server closes a rejected todo and reopens one accepted out of
+  // rejection (db.update_todo_fields); mirror that so the status pill and
+  // the row class agree with what a reload would show.
+  if (decision === 'rejected' && t.status !== 'closed') applyFieldChange(t, 'status', 'closed');
+  else if (decision === 'accepted' && wasRejected && t.status === 'closed') applyFieldChange(t, 'status', 'open');
   const row = document.querySelector(`.todo-row[data-id="${t.todo_id}"]`);
   if (row) {
     row.classList.remove('pending-decision', 'rejected-todo');

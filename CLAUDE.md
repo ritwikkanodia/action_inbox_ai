@@ -45,6 +45,8 @@ python scripts/verify/verify_google_mcp.py     # Google MCP server against fake 
 python scripts/verify/verify_chat.py           # todo-less chat routes; stubs Hermes, no spend
 python scripts/verify/verify_whatsapp.py       # Meta webhook, linking, replies; stubs Meta + Hermes, no spend
 python scripts/verify/verify_todo_tools.py     # agents' todo tools + the db helpers the UI shares; no spend
+python scripts/verify/verify_noise.py          # sign-in/OAuth filter + generators applying it; stubs OpenAI, no spend
+python scripts/verify/verify_dedup.py          # cross-source near-duplicate check in the save helpers; no spend
 ```
 
 ## Architecture
@@ -117,7 +119,14 @@ fine — a confusing way to lose an afternoon. Key routes:
 - `GET /` — todos for the current user, ordered closed-last, then importance, then recency
 - `POST /todos` — user-entered todo (`source='user'`)
 - `PATCH /todos/<id>` — any of `db.TODO_EDITABLE_FIELDS` (`title`, `due_date`, `importance`,
-  `status`, `decision`, `suggested_action`); 400 on a bad enum, 404 on another user's id
+  `status`, `decision`, `suggested_action`); 400 on a bad enum, 404 on another user's id.
+  **Rejecting closes the todo** and accepting a rejected one reopens it (`db.update_todo_fields`,
+  so the agents' `todos_update` gets the same rule); an explicit `status` in the same update
+  wins. Before this, a rejection only hid the row from the digest, and every one of the 16
+  "overdue" todos on the first three weeks of data was a rejected row nobody was ever going to
+  do. `init_db` closes any rejected-but-open rows left from that era, idempotently. The
+  frontend mirrors the status change in `applyDecision` so the row and the status pill agree
+  with a reload.
 - `GET /todos/<id>/actions` — the three inferred ways to close the todo; `?refresh=1` re-infers
 - `POST /todos/<id>/ask-ai` — starts one agent turn in the background and returns immediately;
   posting with no message returns the existing thread without an LLM call
@@ -266,6 +275,31 @@ Don't swallow that — the clear-and-reprompt is the intended behavior.
 **Dedup** is a unique partial index on `(user_id, source, dedup_key)` where `dedup_key IS NOT NULL`,
 and the `save_*_todo` helpers use `INSERT OR IGNORE`. Re-polling the same message or meeting is
 always safe. Any new source must set a stable `dedup_key`.
+
+**Near-duplicates are caught across sources before insert.** The index only stops the *same*
+message or URL; on real data twelve tasks still produced 37 todos, because a reminder mail, a
+second connected account and the page the mail linked to each carry a different key. So the
+Gmail, browser-history and system save helpers first call `db.similar_recent_todo`, which
+compares the new title against every todo the user has from *any* source and in *any* status
+(a closed or rejected task must not come back under a new id) inside a window: 14 days for
+Gmail (long enough for a reminder cycle, short enough that a monthly bill returns), 30 for the
+others. `db.titles_similar` is the matcher: a character ratio above 0.80, or a stemmed
+content-word overlap of 55%, or three-quarters of the shorter title's words (at least three)
+inside the longer. Those thresholds were tuned on 13 known duplicate pairs and 15 lookalike
+pairs that are different tasks (two co-founder invites from different people, two LinkedIn
+invites); `scripts/verify/verify_dedup.py` pins both lists, so a retune fails loudly. User-typed
+todos are never suppressed, but a generated todo matching one is.
+
+**Sign-in, OAuth, consent and verification steps never become todos** (`pollers/noise.py`).
+Both generator prompts say so, and both are backed by a deterministic filter because the
+poller-tier model kept emitting them anyway: 25 of the first 27 such todos were rejected, and
+browser history ran at 93% rejected almost entirely from login walls visited on the way to
+something else. `is_auth_page(url, title)` drops a visit before it reaches the browser digest;
+`is_auth_noise_title` turns a generated todo that still describes one into a first-class skip
+with the reason in the log, whichever source produced it. The title pattern is deliberately
+narrower than the page pattern: "verification" alone is a real task (video KYC), so it only
+counts beside a sign-in word, and "confirm … account" is the activation-mail family. Real
+titles on both sides of the line are pinned by `scripts/verify/verify_noise.py`.
 
 **`importance` is not urgency.** `importance` (`low|medium|high`) is how much the outcome
 matters, independent of timing; urgency is derived from `due_date` at read time. The column was

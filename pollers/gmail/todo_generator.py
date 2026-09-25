@@ -10,6 +10,7 @@ from openai import OpenAI
 from pollers.gmail.events import GmailEvent
 
 import llm_models
+from pollers.noise import is_auth_noise_title
 
 load_dotenv()
 
@@ -46,6 +47,7 @@ Set "todo" to null if "should_generate_todo" is false.
 Guidelines:
 - Only generate a todo if the email genuinely requires a response or action from the user.
 - Newsletters, notifications, receipts, OTPs, sign in requests and automated messages should not generate todos.
+- Account-security and authentication mail never generates a todo: sign-in or new-device alerts, "verify it's you", two-step / authenticator setup, OAuth or consent confirmations, "confirm your account" activation mail, password resets, "log in to keep your account". Even when phrased as "action required", the only action is signing in, which is not a task.
 - If the user has already replied recently, lower the importance or skip entirely.
 - "importance" reflects how much the outcome matters (significance / consequences), NOT how soon it's due — time pressure is captured separately by "due_date".
 - "due_date" should only be set if a concrete deadline is mentioned or strongly implied (e.g. a meeting time, an explicit deadline).
@@ -76,4 +78,19 @@ def generate_todo(thread_context: str, event: GmailEvent) -> dict:
     result = json.loads(raw)
     log.debug(f"Generated todo result: {result}")
     result["_raw"] = raw
+    return _drop_auth_noise(result)
+
+
+def _drop_auth_noise(result: dict) -> dict:
+    """Turn a todo whose title still describes a sign-in, consent or
+    verification step into a first-class skip. The prompt already forbids
+    these; the poller-tier model follows the concrete rule less reliably
+    than the deterministic one, and the log shows why it was skipped."""
+    todo = result.get("todo") or {}
+    if result.get("should_generate_todo") and is_auth_noise_title(todo.get("title")):
+        result["should_generate_todo"] = False
+        result["reasoning"] = (
+            f"sign-in/consent step, not a task ({result.get('reasoning', '')})"
+        )
+        result["todo"] = None
     return result

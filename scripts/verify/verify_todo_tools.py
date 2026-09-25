@@ -103,6 +103,35 @@ def check_helpers(conn, alice, bob) -> None:
     after = get_todo(conn, alice, high)
     check("update bumps updated_at", after["due_date"] == "2026-10-01" and after["updated_at"] >= before)
 
+    # Rejecting is a decision about the todo's future, so it closes the todo;
+    # accepting a rejected one reopens it; an explicit status always wins.
+    print("\n-- reject closes, accept reopens --")
+    rej = save_user_todo(conn, alice, "to be rejected", "medium")
+    update_todo_fields(conn, alice, rej, {"decision": "rejected"})
+    got = get_todo(conn, alice, rej)
+    check("reject closes the todo", got["decision"] == "rejected" and got["status"] == "closed")
+    update_todo_fields(conn, alice, rej, {"decision": "accepted"})
+    got = get_todo(conn, alice, rej)
+    check("accepting a rejected todo reopens it", got["decision"] == "accepted" and got["status"] == "open")
+    update_todo_fields(conn, alice, rej, {"status": "closed"})
+    update_todo_fields(conn, alice, rej, {"decision": "accepted"})
+    check("accepting a todo the user closed leaves it closed",
+          get_todo(conn, alice, rej)["status"] == "closed")
+    update_todo_fields(conn, alice, rej, {"decision": "rejected", "status": "ongoing"})
+    check("an explicit status in the same update wins over the rule",
+          get_todo(conn, alice, rej)["status"] == "ongoing")
+    check("rejecting another user's row still returns False",
+          update_todo_fields(conn, bob, rej, {"decision": "rejected"}) is False)
+    # Rows rejected before the rule existed are closed by init_db, idempotently.
+    legacy = save_user_todo(conn, alice, "rejected before the rule", "low")
+    conn.execute("UPDATE todos SET decision = 'rejected', status = 'open' WHERE todo_id = ?", (legacy,))
+    conn.commit()
+    init_db(conn)
+    check("init_db closes rejected-but-open rows left by the old rule",
+          get_todo(conn, alice, legacy)["status"] == "closed")
+    init_db(conn)
+    check("and is idempotent", get_todo(conn, alice, legacy)["status"] == "closed")
+
 
 def check_tools(conn, alice, bob) -> None:
     print("\n-- tools --")

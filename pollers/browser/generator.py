@@ -5,6 +5,7 @@ from dotenv import load_dotenv
 from openai import OpenAI
 
 import llm_models
+from pollers.noise import is_auth_noise_title
 
 load_dotenv()
 
@@ -60,6 +61,12 @@ with no commitment marker:
 - Entertainment: YouTube, Netflix, Spotify, Reddit, Twitter/X, Instagram
 - Research: multiple pages on a topic with no transaction in any of them
 - Generic search results (google.com/search, duckduckgo, bing)
+- Authentication steps: sign-in / log-in pages, OAuth or SSO consent
+  screens, "choose an account", two-step or two-factor prompts, email or
+  device verification, password resets, account-confirmation pages. These
+  are on the way to something, never the thing itself — never emit
+  "Sign in to X", "Complete X login", "Confirm X OAuth consent" or
+  "Verify X authenticator".
 - LinkedIn/Indeed feed without a specific in-progress application
 - Shopping browsing without a cart, checkout, or order URL
 
@@ -117,10 +124,16 @@ def generate_todos(
             flag = t.get("should_generate_todo")
             title = t.get("title", "(no title)")
             reasoning = t.get("reasoning", "")
+            if flag and is_auth_noise_title(title):
+                # The prompt says to drop these; the model at this price point
+                # does not always listen. Overriding here keeps the log honest.
+                t["should_generate_todo"] = False
+                t["reasoning"] = f"sign-in/consent step, not a task ({reasoning})"
+                flag = False
             if flag:
                 print(f"[browser_history/llm] EMIT  {title!r} | {reasoning}")
             else:
-                print(f"[browser_history/llm] DROP  {title!r} | {reasoning}")
+                print(f"[browser_history/llm] DROP  {title!r} | {t.get('reasoning', reasoning)}")
         return [t for t in todos if isinstance(t, dict) and t.get("should_generate_todo")]
     except Exception as exc:
         print(f"[browser_history] LLM call failed: {exc}")
