@@ -61,7 +61,7 @@ run_images: list = []
 downloads: list[str] = []
 
 
-def stub_run(prompt, session_name, cancel=None, progress=None, binding=None, images=None) -> str:
+def stub_run(prompt, session_name, cancel=None, progress=None, binding=None, images=None, user_id=None) -> str:
     prompts.append(prompt)
     run_images.append(images)
     if len(prompts) == 1:
@@ -74,7 +74,7 @@ def stub_run(prompt, session_name, cancel=None, progress=None, binding=None, ima
     return f"**Done** — reply {len(prompts)}."
 
 
-def blocking_run(prompt, session_name, cancel=None, progress=None, binding=None, images=None) -> str:
+def blocking_run(prompt, session_name, cancel=None, progress=None, binding=None, images=None, user_id=None) -> str:
     prompts.append(prompt)
     run_images.append(images)
     for _ in range(200):

@@ -1,6 +1,10 @@
 {
   "$schema": "https://railway.com/railway.schema.json",
+  "build": {
+    "builder": "DOCKERFILE",
+    "dockerfilePath": "Dockerfile"
+  },
   "deploy": {
-    "startCommand": "python main.py & exec gunicorn --bind 0.0.0.0:${PORT:-8000} app:app"
+    "startCommand": "bash /app/scripts/cloud_start.sh"
   }
 }

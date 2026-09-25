@@ -149,10 +149,17 @@ def _run(prompt: str, session_name: str, cancel=None, progress=None, binding=Non
         finally:
             conn.close()
         cloud_users.write_config(cloud_user, sys.executable, REPO_ROOT)
+        cloud_users.grant_files(cloud_user, images or [])
         binding = {**(binding or {}), "AIB_API_URL": INTERNAL_URL,
                    "AIB_RUN_TOKEN": run_token, "AIB_DB_PATH": ""}
         env = cloud_users.subprocess_env(cloud_user, binding)
+        # user/group drop the privileges; extra_groups=[] also sheds root's
+        # supplementary groups, which Popen would otherwise leave in place.
+        # (setgroups needs root, so it is skipped when the verify script runs
+        # this branch unprivileged as itself.)
         popen_kwargs = {"user": cloud_user.uid, "group": cloud_user.gid, "cwd": cloud_user.home}
+        if os.geteuid() == 0:
+            popen_kwargs["extra_groups"] = []
         watcher = ActivityWatcher(session_name, progress,
                                   state_db=os.path.join(cloud_user.home, "state.db"))
     else:

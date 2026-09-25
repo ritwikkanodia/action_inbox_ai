@@ -1,0 +1,17 @@
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.claude/
+.env
+*.db
+*.db-*
+*.bak
+logs/
+*.log
+docs/
+credentials.json
+token.json
+.DS_Store

@@ -39,6 +39,18 @@ def _ensure_db_parent_dir() -> None:
         os.makedirs(parent, exist_ok=True)
 
 
+def _restrict_db_file() -> None:
+    """Owner-only on the database file. In the cloud the app runs as root and
+    every agent as an unprivileged per-user account; this is what keeps the
+    tokens in `source_connections` out of their reach. Best effort: a
+    filesystem that refuses (or a file not yet created) is not an error."""
+    try:
+        if os.path.exists(DB_PATH):
+            os.chmod(DB_PATH, 0o600)
+    except OSError:
+        pass
+
+
 def _truncate(s: str, n: int) -> str:
     s = s or ""
     return s if len(s) <= n else s[: n - 1] + "…"
@@ -120,6 +132,7 @@ def main():
     _ensure_db_parent_dir()
     conn = sqlite3.connect(DB_PATH, timeout=30)
     init_db(conn)
+    _restrict_db_file()
     print(f"Polling every {POLL_INTERVAL_SECONDS}s...")
     print(f"Enabled sources: {', '.join(sorted(enabled_sources)) or '(none)'}")
 

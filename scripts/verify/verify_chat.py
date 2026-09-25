@@ -39,14 +39,14 @@ def check(label: str, condition: bool) -> None:
 calls: list[tuple[str, str | None]] = []
 
 
-def stub_run(prompt, session_name, cancel=None, progress=None, binding=None, images=None) -> str:
+def stub_run(prompt, session_name, cancel=None, progress=None, binding=None, images=None, user_id=None) -> str:
     calls.append((prompt, session_name))
     if progress is not None:
         progress({"tool": "terminal", "detail": "stubbed step"})
     return f"reply {len(calls)}"
 
 
-def blocking_run(prompt, session_name, cancel=None, progress=None, binding=None, images=None) -> str:
+def blocking_run(prompt, session_name, cancel=None, progress=None, binding=None, images=None, user_id=None) -> str:
     calls.append((prompt, session_name))
     for _ in range(200):
         if cancel is not None and cancel.cancelled:

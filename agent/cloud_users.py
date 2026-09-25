@@ -39,7 +39,7 @@ CLOUD_MODEL = os.environ.get("HERMES_CLOUD_MODEL", "gpt-6-astra").strip() or "gp
 # is the one shared secret that does cross: Hermes needs it to run the model,
 # and it cannot read anyone's data.
 ENV_ALLOWLIST = ("PATH", "HOME", "HERMES_HOME", "LANG", "PLAYWRIGHT_BROWSERS_PATH",
-                 "OPENAI_API_KEY")
+                 "OPENAI_API_KEY", "HERMES_DISABLE_LAZY_INSTALLS")
 
 # What the cloud agent may use. No terminal, no file tools, no skills, no cron:
 # the todo/Google tools come from the MCP server below, memory is per home
@@ -135,3 +135,24 @@ def subprocess_env(user: CloudUser, binding: dict[str, str]) -> dict[str, str]:
     env["HERMES_HOME"] = user.home
     env.update(binding)
     return env
+
+
+def grant_files(user: CloudUser, paths: list[str]) -> None:
+    """Hand the user's own attached files (WhatsApp photos under UPLOADS_DIR)
+    to their agent: each file becomes theirs, 0600, and the directories above
+    it traversable. Root-only work; a no-op when not root, and a missing file
+    is left for the turn to report."""
+    if os.geteuid() != 0:
+        return
+    for path in paths or []:
+        try:
+            os.chown(path, user.uid, user.gid)
+            os.chmod(path, 0o600)
+            parent = os.path.dirname(path)
+            while parent and parent != "/":
+                # Traversable (o+x), never listable: a sibling user's agent
+                # cannot enumerate other users' upload folders.
+                os.chmod(parent, os.stat(parent).st_mode | 0o011)
+                parent = os.path.dirname(parent)
+        except OSError:
+            continue

@@ -128,12 +128,25 @@ def _ensure_db_parent_dir() -> None:
         os.makedirs(parent, exist_ok=True)
 
 
+def _restrict_db_file() -> None:
+    """Owner-only on the database file. In the cloud the app runs as root and
+    every agent as an unprivileged per-user account; this is what keeps the
+    tokens in `source_connections` out of their reach. Best effort: a
+    filesystem that refuses (or a file not yet created) is not an error."""
+    try:
+        if os.path.exists(DB_PATH):
+            os.chmod(DB_PATH, 0o600)
+    except OSError:
+        pass
+
+
 def get_db():
     if "db" not in g:
         _ensure_db_parent_dir()
         g.db = sqlite3.connect(DB_PATH, timeout=30)
         g.db.row_factory = sqlite3.Row
         init_db(g.db)
+        _restrict_db_file()
     return g.db
 
 
