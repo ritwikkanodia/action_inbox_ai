@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from pollers.browser import generator as browser_history_generator
+from pollers.noise import is_auth_page
 from push_notify import notify_new_todo
 from db import (
     _normalize_url,
@@ -91,7 +92,7 @@ def _has_completion_marker(url: str) -> bool:
 def _to_webkit_micros(dt: datetime) -> int:
     return int((dt - _WEBKIT_EPOCH).total_seconds() * 1_000_000)
 
-def _is_noise(url: str, domain: str) -> bool:
+def _is_noise(url: str, domain: str, title: str | None = None) -> bool:
     if not url or not domain:
         return True
     if url.startswith(NOISE_PREFIXES):
@@ -101,6 +102,11 @@ def _is_noise(url: str, domain: str) -> bool:
     # Skip Gmail itself (already covered by gmail_poller) and bare search pages.
     if domain in {"mail.google.com"}:
         return True
+    # A login wall, OAuth consent screen or two-step prompt is a step on the
+    # way to a page, not a task; keeping it in the digest is what produced a
+    # 93% rejection rate on this source (see pollers/noise.py).
+    if is_auth_page(url, title):
+        return True
     return False
 
 
@@ -108,7 +114,7 @@ def _aggregate_visits_by_url(rows: list[tuple[str, str, int, int]]) -> dict[str,
     per_url: dict[str, dict] = {}
     for url, title, _visit_count, visit_time in rows:
         domain = urlparse(url).netloc
-        if _is_noise(url, domain):
+        if _is_noise(url, domain, title):
             continue
         entry = per_url.get(url)
         if entry is None:

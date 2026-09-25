@@ -2,6 +2,7 @@ import difflib
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -348,6 +349,15 @@ def init_db(conn: sqlite3.Connection) -> None:
             "CREATE UNIQUE INDEX idx_todos_dedup "
             "ON todos(user_id, source, dedup_key) WHERE dedup_key IS NOT NULL"
         )
+    # Rejecting now closes (see update_todo_fields). Rows rejected before that
+    # rule existed are still open; bring them in line. Idempotent, and the
+    # only path that can recreate a rejected-open row is a caller passing an
+    # explicit status alongside the decision, which is deliberate.
+    conn.execute(
+        "UPDATE todos SET status = 'closed', updated_at = ? "
+        "WHERE decision = 'rejected' AND status = 'open'",
+        (_now(),),
+    )
     conn.commit()
 
 
@@ -953,6 +963,24 @@ def update_todo_fields(
     for field, allowed in _TODO_ENUMS.items():
         if field in fields and fields[field] is not None and fields[field] not in allowed:
             raise ValueError(f"{field} must be one of {', '.join(sorted(allowed))}")
+    # A rejection is a decision about the todo's future, so it ends the todo:
+    # rejected-but-open rows were the bulk of the "overdue" list (16 of 16
+    # on the first three weeks of data), hidden from the digest by the
+    # decision but never actually done with. Accepting a rejected todo undoes
+    # exactly that close. An explicit `status` in the same update wins, so a
+    # caller that means "rejected but keep it open" can still say so.
+    if "status" not in fields and fields.get("decision") in ("rejected", "accepted"):
+        row = conn.execute(
+            "SELECT status, decision FROM todos WHERE todo_id = ? AND user_id = ?",
+            (todo_id, user_id),
+        ).fetchone()
+        if row is None:
+            return False
+        status, decision = row[0], row[1]
+        if fields["decision"] == "rejected" and status != "closed":
+            fields["status"] = "closed"
+        elif fields["decision"] == "accepted" and status == "closed" and decision == "rejected":
+            fields["status"] = "open"
     sets = ", ".join(f"{k} = ?" for k in fields) + ", updated_at = ?"
     cur = conn.execute(
         f"UPDATE todos SET {sets} WHERE todo_id = ? AND user_id = ?",
@@ -960,6 +988,91 @@ def update_todo_fields(
     )
     conn.commit()
     return cur.rowcount > 0
+
+
+# Words that carry no identity for near-duplicate detection. Kept short on
+# purpose: the point is to let "Pay Jio bill" match "Pay Jio Postpaid Mobile
+# bill", not to do NLP.
+_TITLE_STOPWORDS = frozenset(
+    "a an and at by for from in into is it its of on or re s t that the this to "
+    "with your you our my before after about re: via per".split()
+)
+
+
+def _stem(word: str) -> str:
+    # Enough to make "linking" meet "link" and "documents" meet "document".
+    # Not a stemmer; a stemmer would be a dependency for three suffixes.
+    if len(word) > 5 and word.endswith("ing"):
+        return word[:-3]
+    if len(word) > 5 and word.endswith("ed"):
+        return word[:-2]
+    if len(word) > 4 and word.endswith("s"):
+        return word[:-1]
+    return word
+
+
+def _title_tokens(title: str) -> set[str]:
+    """Content words of a title: lower-cased, stemmed, stopwords and bare
+    numbers dropped (an amount or an order number is the part of a title
+    most likely to differ between two mails about the same thing)."""
+    return {
+        _stem(w) for w in re.sub(r"[^a-z0-9\s]", " ", title.lower()).split()
+        if w not in _TITLE_STOPWORDS and not w.isdigit() and len(w) >= 2
+    }
+
+
+# Tuned on the first three weeks of real data: 13 known duplicate pairs and
+# 15 pairs that look alike but are different tasks (two co-founder invites
+# from different people, two LinkedIn invites, two job postings). These
+# thresholds catch 12 of the 13 and none of the 15; the verify script pins
+# those examples so a retune shows up as a failure, not a surprise.
+_JACCARD_DUP = 0.55
+_CONTAINMENT_DUP = 0.75
+
+
+def titles_similar(a: str, b: str, ratio: float = 0.80) -> bool:
+    """True when two todo titles describe the same task. Three signals, any
+    one enough: a character-level match (the old rule, catches rewordings
+    like "Reply to" vs "Respond to"); a token overlap of at least 55%
+    (catches reorderings: "Upload Rentomojo KYC documents" vs "Upload KYC
+    documents for Rentomojo order"); or three-quarters of the shorter
+    title's content words appearing in the longer one, when it has at least
+    three ("Confirm Zoho account" inside "Confirm Zoho account before
+    closure" — but not "Reply to Madhav" inside every later mail from
+    Madhav)."""
+    a_l, b_l = a.lower().strip(), b.lower().strip()
+    if not a_l or not b_l:
+        return False
+    if difflib.SequenceMatcher(None, a_l, b_l).ratio() > ratio:
+        return True
+    ta, tb = _title_tokens(a), _title_tokens(b)
+    if not ta or not tb:
+        return False
+    if len(ta & tb) / len(ta | tb) >= _JACCARD_DUP:
+        return True
+    small, large = (ta, tb) if len(ta) <= len(tb) else (tb, ta)
+    return len(small) >= 3 and len(small & large) / len(small) >= _CONTAINMENT_DUP
+
+
+def similar_recent_todo(
+    conn: sqlite3.Connection, user_id: str, title: str, days: int, ratio: float = 0.80
+) -> str | None:
+    """The title of an existing todo for this user, from any source and in
+    any status, created in the last `days` days, that `titles_similar` says
+    is the same task — or None. Any source, because the same task arrives
+    from more than one: a reminder email plus the page it links to, or a
+    todo the user typed plus the mail about it. Any status, because a task
+    the user closed or rejected must not come back under a new id."""
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = conn.execute(
+        "SELECT title FROM todos WHERE user_id = ? AND created_at >= ? "
+        "AND title IS NOT NULL AND title != ''",
+        (user_id, cutoff),
+    ).fetchall()
+    for (existing,) in rows:
+        if titles_similar(title, existing, ratio):
+            return existing
+    return None
 
 
 def _save_todo(
@@ -1024,17 +1137,8 @@ def save_browser_history_todo(
     norm = _normalize_url(todo.get("relevant_link"))
     if not norm:
         return None
-    # Fuzzy-match guard against any browser_history todo (any status) in last 30d
-    # for THIS user.
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-    existing = conn.execute(
-        "SELECT title FROM todos "
-        "WHERE user_id = ? AND source = 'browser_history' AND created_at >= ?",
-        (user_id, cutoff),
-    ).fetchall()
-    for (et,) in existing:
-        if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.80:
-            return None
+    if similar_recent_todo(conn, user_id, title, days=30):
+        return None
     dedup = hashlib.sha1(norm.encode()).hexdigest()[:12]
     return _save_todo(
         conn,
@@ -1138,15 +1242,12 @@ def save_todo(
     title = (todo.get("title") or "").strip()
     if not title:
         return None
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
-    existing = conn.execute(
-        "SELECT title FROM todos "
-        "WHERE user_id = ? AND source = 'gmail' AND created_at >= ?",
-        (user_id, cutoff),
-    ).fetchall()
-    for (et,) in existing:
-        if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.80:
-            return None
+    # 14 days, not the 2 this used to be: the duplicate clusters in real data
+    # (Zoho, QRFY, the summit pass) were reminder mails a week or more apart.
+    # Long enough to absorb a reminder cycle, short enough that a genuinely
+    # monthly task (a bill) still comes back next month.
+    if similar_recent_todo(conn, user_id, title, days=14):
+        return None
     relevant_link = todo.get("relevant_link") or gmail_thread_url(thread_id, account_id)
     return _save_todo(
         conn,
@@ -1275,15 +1376,8 @@ def save_system_todo(conn: sqlite3.Connection, user_id: str, todo: dict) -> str 
     title = (todo.get("title") or "").strip()
     if not title:
         return None
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=30)).isoformat()
-    existing = conn.execute(
-        "SELECT title FROM todos "
-        "WHERE user_id = ? AND source = 'system' AND created_at >= ?",
-        (user_id, cutoff),
-    ).fetchall()
-    for (et,) in existing:
-        if et and difflib.SequenceMatcher(None, title.lower(), et.lower()).ratio() > 0.60:
-            return None
+    if similar_recent_todo(conn, user_id, title, days=30, ratio=0.60):
+        return None
     uid = uuid.uuid4().hex[:12]
     return _save_todo(
         conn,
