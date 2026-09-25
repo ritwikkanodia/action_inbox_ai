@@ -637,7 +637,8 @@ The cursor is the last successful poll time, but the query asks for recordings f
 `LOOKBACK_HOURS` (24) before it: Pocket filters on the *recording* date, and an item only
 exists once post-processing has finished, minutes after the recording started; dedup on
 Pocket's `actionItemId` absorbs the overlap. **The first poll after connecting is a
-backfill**, like Gmail's: with no cursor the window is `POCKET_BACKFILL_DAYS` (30) back,
+backfill**, like Gmail's: with no cursor the window is `POCKET_BACKFILL_DAYS` (7, the digest's
+age-out — wider pulled in items already overdue on arrival) back,
 and the search runs once per open status (`TODO`, then `IN_PROGRESS`). That is because
 the search caps at 50 items with no paging, and an unfiltered call would spend the cap on
 items the user has already closed in Pocket. Incremental polls are one unfiltered call
@@ -645,7 +646,9 @@ over the lookback window, and items Pocket marks `COMPLETED` or `CANCELLED` are 
 client-side; `IN_PROGRESS` still counts as open.
 Priority maps onto `importance` with `critical` folded into `high`; `dueDate` is already
 an ISO timestamp, the form the UI stores, and passes through untouched; the suggested
-action is the reminder title or the message/email draft Pocket already wrote. Assignee
+action is the reminder title or the message/email draft Pocket already wrote. Before the
+insert, `save_pocket_todo` runs the same `similar_recent_todo` check as Gmail (14 days): the
+task Pocket heard in a call usually also arrives as the mail about it. Assignee
 `Other` items are saved too, named in the reasoning, the same as Fathom. Pocket documents
 no deep link to a recording, so `relevant_link` stays empty and the detail pane shows the
 recording title and Pocket's context sentence instead. A fetch failure raises to the poll

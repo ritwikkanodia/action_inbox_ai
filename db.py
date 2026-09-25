@@ -1231,6 +1231,10 @@ def save_pocket_todo(conn: sqlite3.Connection, user_id: str, item: dict) -> str 
     title = (item.get("label") or "").strip()
     if not action_item_id or not title:
         return None
+    # Same window as Gmail: the task Pocket heard in a call usually also
+    # arrives as the mail about it, days later.
+    if similar_recent_todo(conn, user_id, title, days=14):
+        return None
     recording_title = item.get("recordingTitle") or ""
     assignee = item.get("assignee") or None
     reasoning = f"Action item from Pocket recording: {recording_title}"

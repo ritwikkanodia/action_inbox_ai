@@ -34,6 +34,7 @@ from db import (  # noqa: E402
     init_db,
     list_todos,
     save_pocket_todo,
+    save_user_todo,
     set_source_credentials,
     upsert_user,
 )
@@ -191,6 +192,15 @@ def check_mapping(conn, user_id) -> None:
     check("missing priority defaults to medium", brow["importance"] == "medium")
     check("missing payload falls back to the label", brow["suggested_action"] == "Bare item")
 
+    # Cross-source near-duplicates: the same task arriving as a Pocket item
+    # and as the mail (or the typed todo) about it must not become two rows.
+    save_user_todo(conn, user_id, "Send the NDA to the healthcare client")
+    twin = dict(EMAIL, actionItemId="twin-1", label="Send NDA to the healthcare client")
+    check("a near-duplicate of a recent todo from another source is skipped",
+          save_pocket_todo(conn, user_id, twin) is None)
+    fresh = dict(EMAIL, actionItemId="fresh-1", label="Book the venue for the offsite")
+    check("a genuinely new title still saves", save_pocket_todo(conn, user_id, fresh) is not None)
+
 
 def check_poller(conn, user_id) -> None:
     print("\n-- poller --")
@@ -257,6 +267,8 @@ def check_poller(conn, user_id) -> None:
 
 def check_registry() -> None:
     print("\n-- registry --")
+    if "POCKET_BACKFILL_DAYS" not in os.environ:
+        check("backfill defaults to a week, the digest's age-out", pocket_poller.BACKFILL_DAYS == 7)
     check("pocket is a known source", "pocket" in KNOWN_SOURCES)
     check("pocket is on by default", "pocket" in DEFAULT_ENABLED_SOURCES)
     check("pocket has a Settings entry", "pocket" in DISCOVERY_SOURCE_NAMES)

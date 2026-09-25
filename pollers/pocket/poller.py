@@ -26,7 +26,9 @@ from pollers.pocket.client import search_action_items
 from push_notify import notify_new_todo
 
 LOOKBACK_HOURS = 24
-BACKFILL_DAYS = int(os.environ.get("POCKET_BACKFILL_DAYS", "30"))
+# A week, the digest's age-out: wider pulls in items whose due dates have
+# already passed, which arrive as noise rather than work.
+BACKFILL_DAYS = int(os.environ.get("POCKET_BACKFILL_DAYS", "7"))
 # Items the user has already closed in Pocket. IN_PROGRESS is still open work.
 OPEN_STATUSES = ("TODO", "IN_PROGRESS")
 SKIP_STATUSES = {"COMPLETED", "CANCELLED"}
