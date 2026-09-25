@@ -309,7 +309,13 @@ renamed from `urgency`, so treat old references as stale.
 **Migrations** run inside `init_db` as idempotent `ALTER TABLE` steps guarded by `PRAGMA
 table_info` checks. Fresh databases get the full schema with `CHECK` constraints; migrated ones
 can't gain constraints without a table rebuild, so the enums are *also* enforced in Python in
-the `save_*` helpers. Keep both in sync when adding an enum value.
+the `save_*` helpers. Keep both in sync when adding an enum value. **The `source` enum is the
+exception: it gets a rebuild.** `_rebuild_todos_if_source_check_stale` copies `todos` into a
+fresh table (one transaction) whenever the stored `CHECK (source IN (...))` lacks a value in
+`_TODO_SOURCES`. It exists because the `save_*` helpers use `INSERT OR IGNORE`, and OR IGNORE
+also ignores a CHECK violation: a database created before Pocket accepted every Pocket save
+and stored none of them, with no error anywhere. Adding a source means adding it to
+`_TODO_SOURCES` (which builds the DDL) and the rebuild follows on the next start.
 
 ## LLM usage
 

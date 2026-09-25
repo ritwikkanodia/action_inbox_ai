@@ -265,6 +265,56 @@ def check_poller(conn, user_id) -> None:
           get_pocket_last_polled_at(conn, user_id) == stale)
 
 
+def check_migration() -> None:
+    """A database created before Pocket carries a CHECK on `source` without
+    it. SQLite can't loosen a CHECK in place, and INSERT OR IGNORE swallows
+    the violation, so without a rebuild every Pocket save silently returns
+    None — which is exactly how this surfaced against a real database."""
+    print("\n-- migration --")
+    path = os.path.join(_tmp, "pre_pocket.db")
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    init_db(conn)  # current schema...
+    conn.executescript("""
+        DROP TABLE todos;
+        CREATE TABLE todos (
+            todo_id TEXT PRIMARY KEY, user_id TEXT,
+            source TEXT NOT NULL CHECK (source IN ('gmail','fathom','browser_history','system','user')),
+            account_id TEXT, dedup_key TEXT, title TEXT, suggested_action TEXT,
+            importance TEXT, estimated_time_minutes INTEGER, due_date TEXT, relevant_link TEXT,
+            reasoning TEXT, status TEXT NOT NULL DEFAULT 'open', decision TEXT, ai_thread TEXT,
+            executor_state TEXT, action_options TEXT, source_meta TEXT,
+            created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+        );
+        CREATE UNIQUE INDEX idx_todos_dedup ON todos(user_id, source, dedup_key) WHERE dedup_key IS NOT NULL;
+        INSERT INTO todos (todo_id,user_id,source,dedup_key,title,status,ai_thread,created_at,updated_at)
+        VALUES ('t1','u1','gmail','m1','Existing gmail todo','open','[{"role":"user","content":"hi"}]','2026-01-01','2026-01-01');
+    """)  # ...then the todos table as a pre-Pocket database has it
+    conn.commit()
+    try:
+        conn.execute("INSERT INTO todos (todo_id,user_id,source,status,created_at,updated_at) "
+                     "VALUES ('p','u1','pocket','open','','')")
+        check("fixture really rejects pocket", False)
+    except sqlite3.IntegrityError:
+        check("fixture really rejects pocket", True)
+    conn.rollback()
+
+    init_db(conn)
+    check("save works after migration", save_pocket_todo(conn, "u1", REMINDER) is not None)
+    row = conn.execute("SELECT title, ai_thread FROM todos WHERE todo_id = 't1'").fetchone()
+    check("existing rows survive the rebuild with their data",
+          row is not None and row["title"] == "Existing gmail todo" and "hi" in row["ai_thread"])
+    check("dedup still enforced after the rebuild", save_pocket_todo(conn, "u1", REMINDER) is None)
+    idx = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'idx_todos_dedup'").fetchone()
+    check("dedup index recreated with user_id", idx is not None and "user_id" in idx[0])
+    ddl = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'todos'").fetchone()[0]
+    check("rebuilt table carries the current CHECK", "'pocket'" in ddl)
+    init_db(conn)
+    check("migration is idempotent",
+          conn.execute("SELECT COUNT(*) FROM todos").fetchone()[0] == 2)
+    conn.close()
+
+
 def check_registry() -> None:
     print("\n-- registry --")
     if "POCKET_BACKFILL_DAYS" not in os.environ:
@@ -333,6 +383,7 @@ def main() -> None:
     check_parsing()
     check_mapping(conn, user_id)
     check_poller(conn, user_id)
+    check_migration()
     check_registry()
     set_source_credentials(conn, user_id, "pocket", "api_key", {"api_key": "pk_verify_123456"})
     conn.close()

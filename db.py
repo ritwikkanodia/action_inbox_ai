@@ -48,6 +48,35 @@ def _legacy_user_email() -> str:
     return os.environ.get("LEGACY_USER_EMAIL", LEGACY_USER_EMAIL_DEFAULT)
 
 
+# The todos table's columns, shared by the fresh CREATE and the rebuild below
+# (a CHECK constraint can't be changed in place, so the source list growing
+# means a rebuild). Add a source to _TODO_SOURCES and both follow.
+_TODO_SOURCES = ("gmail", "fathom", "pocket", "browser_history", "system", "user")
+_TODOS_COLUMNS_DDL = """
+            todo_id                TEXT PRIMARY KEY,
+            user_id                TEXT,
+            source                 TEXT NOT NULL
+                                       CHECK (source IN (""" + ",".join(f"'{x}'" for x in _TODO_SOURCES) + """)),
+            account_id             TEXT,
+            dedup_key              TEXT,
+            title                  TEXT,
+            suggested_action       TEXT,
+            importance             TEXT CHECK (importance IS NULL OR importance IN ('low','medium','high')),
+            estimated_time_minutes INTEGER,
+            due_date               TEXT,
+            relevant_link          TEXT,
+            reasoning              TEXT,
+            status                 TEXT NOT NULL DEFAULT 'open'
+                                       CHECK (status IN ('open','ongoing','closed')),
+            decision               TEXT CHECK (decision IS NULL OR decision IN ('accepted','rejected')),
+            ai_thread              TEXT,
+            executor_state         TEXT,
+            action_options         TEXT,
+            source_meta            TEXT,
+            created_at             TEXT NOT NULL,
+            updated_at             TEXT NOT NULL"""
+
+
 def init_db(conn: sqlite3.Connection) -> None:
     # Fresh DBs get the final schema with CHECK constraints. Existing DBs are
     # migrated below via ALTER TABLE; SQLite can't add CHECK constraints to an
@@ -95,29 +124,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             payload    TEXT NOT NULL
         );
 
-        CREATE TABLE IF NOT EXISTS todos (
-            todo_id                TEXT PRIMARY KEY,
-            user_id                TEXT,
-            source                 TEXT NOT NULL
-                                       CHECK (source IN ('gmail','fathom','pocket','browser_history','system','user')),
-            account_id             TEXT,
-            dedup_key              TEXT,
-            title                  TEXT,
-            suggested_action       TEXT,
-            importance             TEXT CHECK (importance IS NULL OR importance IN ('low','medium','high')),
-            estimated_time_minutes INTEGER,
-            due_date               TEXT,
-            relevant_link          TEXT,
-            reasoning              TEXT,
-            status                 TEXT NOT NULL DEFAULT 'open'
-                                       CHECK (status IN ('open','ongoing','closed')),
-            decision               TEXT CHECK (decision IS NULL OR decision IN ('accepted','rejected')),
-            ai_thread              TEXT,
-            executor_state         TEXT,
-            action_options         TEXT,
-            source_meta            TEXT,
-            created_at             TEXT NOT NULL,
-            updated_at             TEXT NOT NULL
+        CREATE TABLE IF NOT EXISTS todos (""" + _TODOS_COLUMNS_DDL + """
         );
     """)
 
@@ -305,6 +312,8 @@ def init_db(conn: sqlite3.Connection) -> None:
             )
             conn.execute("DELETE FROM state WHERE key = ?", (key,))
 
+    _rebuild_todos_if_source_check_stale(conn)
+
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS page_views (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -359,6 +368,42 @@ def init_db(conn: sqlite3.Connection) -> None:
         (_now(),),
     )
     conn.commit()
+
+
+def _rebuild_todos_if_source_check_stale(conn: sqlite3.Connection) -> None:
+    """Rebuild `todos` when its CHECK on `source` predates a source we now
+    save. SQLite can't alter a CHECK in place, and the save helpers use
+    INSERT OR IGNORE — which also ignores a CHECK violation — so a database
+    created before a source existed would drop every one of its todos
+    silently. That is how Pocket's first live poll saved nothing.
+
+    Runs after every column migration, so the old table's columns are a
+    subset of the new DDL's; rows are copied by name. The old table's
+    indexes go with it and the block after this recreates them."""
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='todos'"
+    ).fetchone()
+    ddl = (row[0] if row else "") or ""
+    match = re.search(r"CHECK\s*\(\s*source\s+IN\s*\(([^)]*)\)", ddl)
+    if not match:
+        return  # no constraint at all: the Python-side enum is the only gate
+    allowed = {x.strip().strip("'\"") for x in match.group(1).split(",")}
+    if set(_TODO_SOURCES) <= allowed:
+        return
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(todos)").fetchall()]
+    col_list = ", ".join(cols)
+    # One transaction: a live web process shares this file, and a rebuild
+    # that stopped between DROP and RENAME would take the inbox with it.
+    conn.executescript(
+        "BEGIN;\n"
+        "CREATE TABLE todos_new (" + _TODOS_COLUMNS_DDL + ");\n"
+        f"INSERT INTO todos_new ({col_list}) SELECT {col_list} FROM todos;\n"
+        "DROP TABLE todos;\n"
+        "ALTER TABLE todos_new RENAME TO todos;\n"
+        "COMMIT;"
+    )
+    print(f"[db] rebuilt todos: source CHECK now allows {', '.join(_TODO_SOURCES)}")
+
 
 
 # ---------------------------------------------------------------------------
