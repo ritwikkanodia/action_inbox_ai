@@ -52,13 +52,13 @@ guessed inputs, and isolation bounds what a misled agent can reach.
 Railway service (one container)
 ├── gunicorn app:app  (root)         ── web UI, OAuth, WhatsApp webhook, /internal/*
 ├── python main.py    (root)         ── pollers, digest, push
-└── per turn: hermes chat ... (OS user aib-<n>, HERMES_HOME=/data/hermes/<n>)
+└── per turn: hermes chat ... (OS user aib-<uid>, HERMES_HOME=/data/hermes/<uid>)
     └── spawns: python -m agent.google_mcp  (same OS user)
         └── HTTP to http://127.0.0.1:$PORT/internal/*  with a run token
 
 /data (volume)
 ├── gmail_events.db        root, 0600
-└── hermes/<n>/            aib-<n>, 0700  — config.yaml, state.db, memory, browser profile
+└── hermes/<uid>/          aib-<uid>, 0700  — config.yaml, state.db, memory, browser profile
 ```
 
 The two app processes run as root, which is normal inside a single-service
@@ -224,7 +224,7 @@ done, close the turn, and never ask the user for a password.
    `HERMES_CLOUD_MODEL`, VAPID keys from `scripts/gen_vapid_keys.py`, the
    Resend key and verified sender, the Meta WhatsApp block with a permanent
    System User token and the webhook at `<BASE_URL>/whatsapp/webhook`.
-3. Google Cloud: add `<BASE_URL>/auth/callback` and the Gmail callback to the
+3. Google Cloud: add `<BASE_URL>/oauth/login/callback` and `<BASE_URL>/oauth/gmail/callback` to the
    authorised redirect URIs; add each tester's address to the OAuth consent
    screen's test users.
 4. Smoke test on the deployed URL: sign in, connect Gmail, wait for a todo,
