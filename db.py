@@ -313,6 +313,7 @@ def init_db(conn: sqlite3.Connection) -> None:
             conn.execute("DELETE FROM state WHERE key = ?", (key,))
 
     _rebuild_todos_if_source_check_stale(conn)
+    _backfill_notetaker_title_context(conn)
 
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS page_views (
@@ -368,6 +369,43 @@ def init_db(conn: sqlite3.Connection) -> None:
         (_now(),),
     )
     conn.commit()
+
+
+# A notetaker's action item reads as a fragment on its own ("Friday follow-up
+# call"); the recording it came from is what makes it legible in a list.
+_TITLE_CONTEXT_SEP = " — "
+
+
+def _title_with_context(title: str, context: str | None) -> str:
+    context = (context or "").strip()
+    if not context or title.endswith(_TITLE_CONTEXT_SEP + context):
+        return title
+    return f"{title}{_TITLE_CONTEXT_SEP}{context}"
+
+
+def _strip_title_context(title: str) -> str:
+    """The task part of a title, without the "— <recording>" suffix."""
+    return title.split(_TITLE_CONTEXT_SEP, 1)[0] if title else title
+
+
+def _backfill_notetaker_title_context(conn: sqlite3.Connection) -> None:
+    """Rows saved before titles carried the recording: the context is in
+    source_meta, so add it. Idempotent — a title that already ends with its
+    recording is left alone."""
+    rows = conn.execute(
+        "SELECT todo_id, source, title, source_meta FROM todos "
+        "WHERE source IN ('pocket', 'fathom') AND title IS NOT NULL AND source_meta IS NOT NULL"
+    ).fetchall()
+    for todo_id, source, title, meta_json in rows:
+        try:
+            meta = json.loads(meta_json) or {}
+        except (TypeError, ValueError):
+            continue
+        context = meta.get("recording_title") if source == "pocket" else meta.get("meeting_title")
+        new_title = _title_with_context(title, context)
+        if new_title != title:
+            conn.execute("UPDATE todos SET title = ? WHERE todo_id = ?", (new_title, todo_id))
+
 
 
 def _rebuild_todos_if_source_check_stale(conn: sqlite3.Connection) -> None:
@@ -1123,7 +1161,10 @@ def similar_recent_todo(
         (user_id, cutoff),
     ).fetchall()
     for (existing,) in rows:
-        if titles_similar(title, existing, ratio):
+        # Compare the task, not the recording it came from: a notetaker
+        # title carries "— <recording>" (see _title_with_context), and the
+        # containment rule would otherwise match every item from one call.
+        if titles_similar(title, _strip_title_context(existing), ratio):
             return existing
     return None
 
@@ -1224,7 +1265,7 @@ def save_fathom_todo(
         todo_id=f"todo_fathom_{user_id[:8]}_{dedup}",
         source="fathom",
         dedup_key=dedup,
-        title=item.get("description", "(no description)"),
+        title=_title_with_context(item.get("description", "(no description)"), meeting_title),
         suggested_action=item.get("description", ""),
         importance="medium",
         relevant_link=item.get("recording_playback_url") or meeting.get("url", ""),
@@ -1295,7 +1336,7 @@ def save_pocket_todo(conn: sqlite3.Connection, user_id: str, item: dict) -> str 
         todo_id=f"todo_pocket_{user_id[:8]}_{action_item_id}",
         source="pocket",
         dedup_key=action_item_id,
-        title=title,
+        title=_title_with_context(title, recording_title),
         suggested_action=_pocket_suggested_action(item),
         importance=_POCKET_IMPORTANCE.get(priority, "medium"),
         due_date=item.get("dueDate") or None,

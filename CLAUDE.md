@@ -652,7 +652,12 @@ over the lookback window, and items Pocket marks `COMPLETED` or `CANCELLED` are 
 client-side; `IN_PROGRESS` still counts as open.
 Priority maps onto `importance` with `critical` folded into `high`; `dueDate` is already
 an ISO timestamp, the form the UI stores, and passes through untouched; the suggested
-action is the reminder title or the message/email draft Pocket already wrote. Before the
+action is the reminder title or the message/email draft Pocket already wrote. **Titles carry
+the recording**: `<label> — <recording title>` (`db._title_with_context`, also applied to
+Fathom with the meeting title), because a notetaker's item reads as a fragment on its own;
+`init_db` adds the suffix to rows saved before this, from `source_meta`, once. The
+near-duplicate check strips that suffix before comparing, otherwise the containment rule
+would match every item from the same call. Before the
 insert, `save_pocket_todo` runs the same `similar_recent_todo` check as Gmail (14 days): the
 task Pocket heard in a call usually also arrives as the mail about it. Assignee
 `Other` items are saved too, named in the reasoning, the same as Fathom. Pocket documents

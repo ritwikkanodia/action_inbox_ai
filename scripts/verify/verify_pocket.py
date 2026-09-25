@@ -33,6 +33,7 @@ from db import (  # noqa: E402
     get_todo,
     init_db,
     list_todos,
+    save_fathom_todo,
     save_pocket_todo,
     save_user_todo,
     set_source_credentials,
@@ -153,7 +154,16 @@ def check_mapping(conn, user_id) -> None:
     tid = save_pocket_todo(conn, user_id, REMINDER)
     check("reminder saves", bool(tid))
     row = get_todo(conn, user_id, tid)
-    check("title is the label", row["title"] == "Update roadmap with EU channels")
+    check("title is the label with the recording for context",
+          row["title"] == "Update roadmap with EU channels — Phase One Pilot and Commercials Review")
+    untitled = dict(REMINDER, actionItemId="untitled-1", label="Item from an untitled recording",
+                    recordingTitle="")
+    urow = get_todo(conn, user_id, save_pocket_todo(conn, user_id, untitled))
+    check("no recording title means no suffix", urow["title"] == "Item from an untitled recording")
+    meeting = {"recording_id": "rec1", "title": "Standup", "url": "https://x"}
+    fid = save_fathom_todo(conn, user_id, meeting, 0, {"description": "Send the deck"})
+    check("Fathom titles carry the meeting too",
+          get_todo(conn, user_id, fid)["title"] == "Send the deck — Standup")
     check("importance follows priority", row["importance"] == "high")
     check("due date passes through as ISO", row["due_date"] == "2026-08-27T00:00:00.000Z")
     check("suggested action is the reminder title",
@@ -234,7 +244,7 @@ def check_poller(conn, user_id) -> None:
           abs((before - backfill_from) - timedelta(days=pocket_poller.BACKFILL_DAYS)) < timedelta(seconds=2))
     check("backfill saves the open items from both calls", saved == 4)
     titles = {t["title"] for t in list_todos(conn, user_id)}
-    check("in-progress item counted as open", "Half done" in titles)
+    check("in-progress item counted as open", any(t.startswith("Half done") for t in titles))
     cursor = get_pocket_last_polled_at(conn, user_id)
     check("cursor written after the poll",
           cursor is not None and datetime.fromisoformat(cursor) >= before.replace(microsecond=0))
@@ -245,7 +255,7 @@ def check_poller(conn, user_id) -> None:
     check("second poll re-fetches nothing new", saved == 0)
     titles = {t["title"] for t in list_todos(conn, user_id)}
     check("skipped items never reach the list",
-          "Already done" not in titles and "Dropped" not in titles)
+          not any(t.startswith(("Already done", "Dropped")) for t in titles))
     _, lower, _ = calls[-1]
     lookback = datetime.fromisoformat(cursor) - datetime.fromisoformat(lower)
     check("second poll looks back 24h behind the cursor",
@@ -312,6 +322,28 @@ def check_migration() -> None:
     init_db(conn)
     check("migration is idempotent",
           conn.execute("SELECT COUNT(*) FROM todos").fetchone()[0] == 2)
+
+    # Rows saved before titles carried the recording: the context is in
+    # source_meta, so init_db adds it. Once, not on every start.
+    conn.execute(
+        "INSERT INTO todos (todo_id,user_id,source,dedup_key,title,source_meta,status,created_at,updated_at) VALUES "
+        "('p-old','u1','pocket','old-1','Friday follow-up call',"
+        "'{\"recording_title\": \"Hospital Automation\"}','open','2026-09-01','2026-09-01'),"
+        "('f-old','u1','fathom','old-2','Send the deck',"
+        "'{\"meeting_title\": \"Standup\"}','open','2026-09-01','2026-09-01'),"
+        "('p-none','u1','pocket','old-3','No recording known','{\"recording_title\": \"\"}','open','2026-09-01','2026-09-01')"
+    )
+    conn.commit()
+    init_db(conn)
+    titles = {r[0]: r[1] for r in conn.execute("SELECT todo_id, title FROM todos")}
+    check("old Pocket titles gain the recording",
+          titles["p-old"] == "Friday follow-up call — Hospital Automation")
+    check("old Fathom titles gain the meeting", titles["f-old"] == "Send the deck — Standup")
+    check("no known recording, title untouched", titles["p-none"] == "No recording known")
+    init_db(conn)
+    check("title backfill is idempotent",
+          conn.execute("SELECT title FROM todos WHERE todo_id='p-old'").fetchone()[0]
+          == "Friday follow-up call — Hospital Automation")
     conn.close()
 
 
