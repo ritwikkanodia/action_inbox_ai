@@ -10,14 +10,28 @@ implements the contract in `agent/executor.py`, which is what app.py calls.
 
 import os
 import subprocess
+import sys
+import threading
 import uuid
 
-from agent import agent_browser, chrome_profile
+from agent import agent_browser, chrome_profile, cloud_users
 from agent.executor import ExecutorCancelled, ExecutorError, is_chat
 from agent.hermes_activity import ActivityWatcher
 from agent.hermes_prompt import build_followup_prompt, build_prompt
 
 HERMES_BIN = os.environ.get("HERMES_BIN", "hermes")
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# Where a cloud turn's MCP server reaches the app: loopback inside the
+# container, so a run token never crosses a network. Override for a worker
+# that runs elsewhere.
+INTERNAL_URL = (os.environ.get("AIB_INTERNAL_URL")
+                or f"http://127.0.0.1:{os.environ.get('PORT', '8000')}").rstrip("/")
+
+# Cloud turns are a Hermes process plus a headless Chromium each; this bounds
+# how many run at once. Process-wide, which is the whole registry's scope.
+_SLOTS = threading.BoundedSemaphore(cloud_users.MAX_TURNS)
 
 # A resolution run drives a real browser, so it is slow by nature. Bound it
 # anyway: this is called synchronously from a Flask request, and a wedged run
@@ -87,8 +101,13 @@ def build_command(prompt: str, session_name: str, images: list[str] | None = Non
 
 
 def _run(prompt: str, session_name: str, cancel=None, progress=None, binding=None,
-         images: list[str] | None = None) -> str:
+         images: list[str] | None = None, user_id: str | None = None) -> str:
     """Invoke the CLI once against a named session. Returns the reply text.
+
+    `user_id` is only needed in the cloud (`HERMES_CLOUD=1`), where the turn
+    runs as that user's own OS account with its own Hermes home, an
+    allowlisted environment, and a per-turn token for the app's internal API
+    in place of a database path (`agent.cloud_users`). Locally it is unused.
 
     `hermes chat -q … -Q` rather than the top-level `-z` one-shot. `-z` accepts
     --resume but does not actually restore the conversation: measured against a
@@ -112,15 +131,39 @@ def _run(prompt: str, session_name: str, cancel=None, progress=None, binding=Non
     """
     cmd = build_command(prompt, session_name, images)
 
-    env = dict(os.environ)
-    env.update(binding or {})
-    if HEADED:
-        # Read straight from the environment by Hermes' browser tool, so this
-        # opts one run into a visible window without touching the user's
-        # ~/.hermes/config.yaml, where it would apply to every other use too.
-        env["AGENT_BROWSER_HEADED"] = "1"
-
-    watcher = ActivityWatcher(session_name, progress)
+    cloud = cloud_users.is_cloud()
+    run_token = None
+    popen_kwargs: dict = {}
+    if cloud:
+        # The turn runs as this user's own OS account, in its own home, with
+        # a token for the app's internal API in place of the database path.
+        from agent.db import open_db
+        from db import mint_run_token
+        conn = open_db()
+        try:
+            cloud_user = cloud_users.ensure(conn, user_id or "")
+            run_token = mint_run_token(
+                conn, user_id or "", (binding or {}).get("AIB_TODO_ID") or None,
+                TIMEOUT_SECONDS + 60,
+            )
+        finally:
+            conn.close()
+        cloud_users.write_config(cloud_user, sys.executable, REPO_ROOT)
+        binding = {**(binding or {}), "AIB_API_URL": INTERNAL_URL,
+                   "AIB_RUN_TOKEN": run_token, "AIB_DB_PATH": ""}
+        env = cloud_users.subprocess_env(cloud_user, binding)
+        popen_kwargs = {"user": cloud_user.uid, "group": cloud_user.gid, "cwd": cloud_user.home}
+        watcher = ActivityWatcher(session_name, progress,
+                                  state_db=os.path.join(cloud_user.home, "state.db"))
+    else:
+        env = dict(os.environ)
+        env.update(binding or {})
+        if HEADED:
+            # Read straight from the environment by Hermes' browser tool, so this
+            # opts one run into a visible window without touching the user's
+            # ~/.hermes/config.yaml, where it would apply to every other use too.
+            env["AGENT_BROWSER_HEADED"] = "1"
+        watcher = ActivityWatcher(session_name, progress)
 
     # Two ways to give the agent a browser that carries the user's logins.
     # Preferred: a Chrome of our own already running on Hermes' profile copy,
@@ -130,12 +173,20 @@ def _run(prompt: str, session_name: str, cancel=None, progress=None, binding=Non
     # snapshot as it normally would; that needs the user's Chrome closed,
     # since it holds the profile's password databases locked, so close it
     # first (opt-in; `agent.chrome_profile`) and hand it back in the `finally`
-    # below whatever the turn does.
+    # below whatever the turn does. Neither applies in the cloud, where the
+    # browser is headless on a profile that carries no logins at all.
     closed_chrome = False
-    if not agent_browser.ensure_running():
+    if not cloud and not agent_browser.ensure_running():
         closed_chrome = chrome_profile.close_for_run()
 
+    slot_held = False
     try:
+        if cloud:
+            if not _SLOTS.acquire(blocking=False):
+                if progress is not None:
+                    progress({"tool": "queue", "detail": "waiting for a free agent slot"})
+                _SLOTS.acquire()
+            slot_held = True
         try:
             proc = subprocess.Popen(
                 cmd,
@@ -146,6 +197,7 @@ def _run(prompt: str, session_name: str, cancel=None, progress=None, binding=Non
                 # Own process group, so a stop can signal the browser and any
                 # other children Hermes spawned rather than just the CLI.
                 start_new_session=True,
+                **popen_kwargs,
             )
         except FileNotFoundError:
             raise ExecutorError(
@@ -188,9 +240,23 @@ def _run(prompt: str, session_name: str, cancel=None, progress=None, binding=Non
         return reply
     finally:
         # Every exit counts — a clean reply, a timeout, a stop, even a missing
-        # binary. The browser was taken away to run this turn; it goes back.
+        # binary. The browser was taken away to run this turn; it goes back,
+        # the slot is freed, and the turn's token stops working.
         if closed_chrome:
             chrome_profile.restore()
+        if slot_held:
+            _SLOTS.release()
+        if run_token:
+            try:
+                from agent.db import open_db
+                from db import revoke_run_token
+                conn = open_db()
+                try:
+                    revoke_run_token(conn, run_token)
+                finally:
+                    conn.close()
+            except Exception:  # never let cleanup mask the turn's own outcome
+                pass
 
 
 SESSION_PREFIX = "aib-"
@@ -257,7 +323,7 @@ def resolve(
                      binding=_google_binding_env(
                          user_id, todo.get("account_id"),
                          None if is_chat(todo) else todo.get("todo_id")),
-                     images=images)
+                     images=images, user_id=user_id)
     except ExecutorError as exc:
         # The session exists from the first tool call onward, whatever happens
         # after. Name it, so a stopped first turn still resumes the session

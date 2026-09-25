@@ -56,9 +56,11 @@ _DETAIL_SKIP = {"account"}
 _DETAIL_MAX = 140
 
 
-def _connect() -> sqlite3.Connection:
-    """Open Hermes' store read-only, so we can never disturb a live run."""
-    return sqlite3.connect(f"file:{STATE_DB}?mode=ro", uri=True, timeout=5)
+def _connect(path: str | None = None) -> sqlite3.Connection:
+    """Open Hermes' store read-only, so we can never disturb a live run.
+    `path` overrides the module default: in the cloud each user's Hermes has
+    its own home, so the store to tail is `<home>/state.db`."""
+    return sqlite3.connect(f"file:{path or STATE_DB}?mode=ro", uri=True, timeout=5)
 
 
 def _session_id(conn: sqlite3.Connection, title: str) -> str | None:
@@ -179,9 +181,10 @@ class ActivityWatcher:
     not the whole conversation that preceded it.
     """
 
-    def __init__(self, session_name: str, progress):
+    def __init__(self, session_name: str, progress, state_db: str | None = None):
         self._session_name = session_name
         self._progress = progress
+        self._state_db = state_db
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._session_id: str | None = None
@@ -189,7 +192,7 @@ class ActivityWatcher:
         # has no row yet, so there is nothing to skip and the baseline is 0.
         self._last_id = 0
         try:
-            with _connect() as conn:
+            with _connect(self._state_db) as conn:
                 self._session_id = _session_id(conn, session_name)
                 if self._session_id:
                     self._last_id = _max_message_id(conn, self._session_id)
@@ -223,7 +226,7 @@ class ActivityWatcher:
         if self._progress is None:
             return
         try:
-            with _connect() as conn:
+            with _connect(self._state_db) as conn:
                 if self._session_id is None:
                     # A new session's row only appears once the CLI has started.
                     self._session_id = _session_id(conn, self._session_name)

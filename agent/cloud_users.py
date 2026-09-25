@@ -53,6 +53,7 @@ class CloudUser(NamedTuple):
     uid: int
     username: str
     home: str
+    gid: int   # useradd's default is a private group with the same id
 
 
 def ensure(conn, user_id: str, run=subprocess.run, homes_dir: str | None = None) -> CloudUser:
@@ -75,7 +76,7 @@ def ensure(conn, user_id: str, run=subprocess.run, homes_dir: str | None = None)
     os.makedirs(home, exist_ok=True)
     _own(home, uid)
     os.chmod(home, 0o700)
-    return CloudUser(uid=uid, username=username, home=home)
+    return CloudUser(uid=uid, username=username, home=home, gid=uid)
 
 
 def _own(path: str, uid: int) -> None:

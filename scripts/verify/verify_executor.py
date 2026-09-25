@@ -46,7 +46,7 @@ seen_images: list = []
 
 
 def stub_run(prompt: str, session_name: str, cancel=None, progress=None, binding=None,
-             images=None) -> str:
+             images=None, user_id=None) -> str:
     calls.append((prompt, session_name))
     seen_bindings.append(binding)
     seen_images.append(images)
@@ -58,13 +58,13 @@ def stub_run(prompt: str, session_name: str, cancel=None, progress=None, binding
 
 
 def failing_run(prompt: str, session_name: str, cancel=None, progress=None, binding=None,
-                images=None) -> str:
+                images=None, user_id=None) -> str:
     calls.append((prompt, session_name))
     raise executor.ExecutorError("browser exploded")
 
 
 def blocking_run(prompt: str, session_name: str, cancel=None, progress=None, binding=None,
-                 images=None) -> str:
+                 images=None, user_id=None) -> str:
     """Stands in for a long agent run: returns only once cancelled."""
     calls.append((prompt, session_name))
     if progress is not None:
@@ -74,6 +74,96 @@ def blocking_run(prompt: str, session_name: str, cancel=None, progress=None, bin
             raise executor.ExecutorCancelled("Stopped.")
         time.sleep(0.02)
     raise AssertionError("blocking_run was never cancelled")
+
+
+def check_cloud(conn, user_id: str) -> None:
+    """HERMES_CLOUD=1: the turn is spawned as a per-user OS account, in its own
+    home, with an allowlisted environment and a run token for the internal
+    API. `cloud_users.ensure` is replaced so the account is the current one
+    (no root needed); the binary is a stub that reports its environment."""
+    print("\n-- cloud mode --")
+    from agent import cloud_users
+    from db import resolve_run_token
+
+    home = os.path.join(_tmp, "cloud-home")
+    os.makedirs(home, exist_ok=True)
+    report = os.path.join(_tmp, "cloud-report.json")
+    fake_bin = os.path.join(_tmp, "fake-cloud-hermes")
+    with open(fake_bin, "w") as fh:
+        fh.write(
+            f"#!{sys.executable}\nimport json, os, sys\n"
+            f"json.dump({{'env': dict(os.environ), 'cwd': os.getcwd(), 'argv': sys.argv}}, "
+            f"open({report!r}, 'w'))\nprint('cloud reply')\n"
+        )
+    os.chmod(fake_bin, os.stat(fake_bin).st_mode | stat.S_IEXEC)
+
+    os.environ["HERMES_CLOUD"] = "1"
+    os.environ["FLASK_SECRET_KEY"] = "verify-only-not-a-real-secret"
+    os.environ["OPENAI_API_KEY"] = "verify-openai-key"
+    os.environ["AIB_INTERNAL_URL"] = "http://127.0.0.1:9999"
+    real_ensure, real_bin = cloud_users.ensure, hermes_runner.HERMES_BIN
+    real_close, real_ensure_running = chrome_profile_close(), agent_browser_ensure()
+    closed = []
+    hermes_runner.chrome_profile.close_for_run = lambda: closed.append(True) or False
+    hermes_runner.agent_browser.ensure_running = lambda: False
+    hermes_runner.INTERNAL_URL = "http://127.0.0.1:9999"
+    cloud_users.ensure = lambda conn, uid, run=None, homes_dir=None: cloud_users.CloudUser(
+        uid=os.getuid(), username="me", home=home, gid=os.getgid())
+    hermes_runner.HERMES_BIN = fake_bin
+    hermes_runner._run = _real_run
+    try:
+        minted = []
+        from db import mint_run_token as real_mint
+        import db as db_module
+
+        def spy_mint(c, u, t, ttl):
+            tok = real_mint(c, u, t, ttl)
+            minted.append((u, t, tok))
+            return tok
+        db_module.mint_run_token = spy_mint
+        try:
+            events = []
+            thread, state = hermes_runner.resolve(
+                {"todo_id": "t-cloud", "source": "user", "title": "cloud todo", "account_id": "a@x.com"},
+                [], "do it", user_id, None, progress=events.append)
+        finally:
+            db_module.mint_run_token = real_mint
+        with open(report) as fh:
+            seen = json.load(fh)
+        env = seen["env"]
+        check("the stub ran and replied", thread[-1]["content"] == "cloud reply")
+        check("a token was minted for this user and todo",
+              len(minted) == 1 and minted[0][0] == user_id and minted[0][1] == "t-cloud")
+        check("the subprocess got the token and the internal URL",
+              env.get("AIB_RUN_TOKEN") == minted[0][2] and env.get("AIB_API_URL") == "http://127.0.0.1:9999")
+        check("AIB_DB_PATH is blank in the cloud", env.get("AIB_DB_PATH") == "")
+        check("HOME and HERMES_HOME are the per-user home",
+              env.get("HOME") == home and env.get("HERMES_HOME") == home)
+        check("cwd is the per-user home", os.path.realpath(seen["cwd"]) == os.path.realpath(home))
+        check("no app secret reached the subprocess",
+              "FLASK_SECRET_KEY" not in env and "GOOGLE_CLIENT_SECRET" not in env
+              and "DB_PATH" not in env)
+        check("OPENAI_API_KEY did", env.get("OPENAI_API_KEY") == "verify-openai-key")
+        check("the browser is not forced headed", "AGENT_BROWSER_HEADED" not in env)
+        check("a config.yaml was written into the home", os.path.isfile(os.path.join(home, "config.yaml")))
+        check("the token is revoked once the turn ends", resolve_run_token(conn, minted[0][2]) is None)
+        check("the user's Chrome was never touched", closed == [])
+        check("session state is the usual aib- name", state.startswith("aib-t-cloud-"))
+    finally:
+        os.environ.pop("HERMES_CLOUD", None)
+        cloud_users.ensure = real_ensure
+        hermes_runner.HERMES_BIN = real_bin
+        hermes_runner.chrome_profile.close_for_run = real_close
+        hermes_runner.agent_browser.ensure_running = real_ensure_running
+        hermes_runner._run = stub_run
+
+
+def chrome_profile_close():
+    return hermes_runner.chrome_profile.close_for_run
+
+
+def agent_browser_ensure():
+    return hermes_runner.agent_browser.ensure_running
 
 
 def turn(client, todo_id: str, message: str | None = None, timeout: float = 10.0) -> dict:
@@ -480,7 +570,9 @@ def main() -> None:
     check("an unknown executor is rejected", unknown_rejected)
     os.environ.pop("TODO_EXECUTOR")
 
+    check_cloud(conn, user_id)
     conn.close()
+
     print("\nAll executor seam checks passed.")
 
 
