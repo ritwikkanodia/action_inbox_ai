@@ -32,6 +32,16 @@ BACKFILL_DAYS = int(os.environ.get("POCKET_BACKFILL_DAYS", "7"))
 # Items the user has already closed in Pocket. IN_PROGRESS is still open work.
 OPEN_STATUSES = ("TODO", "IN_PROGRESS")
 SKIP_STATUSES = {"COMPLETED", "CANCELLED"}
+# Pocket's diarization attributes each item: "me", "Other", or a name. Only
+# the user's own commitments become todos; an item with no assignee is kept,
+# since unknown is safer shown than dropped. POCKET_INCLUDE_OTHERS=1 keeps
+# everything, for someone who wants to track what others owe them.
+INCLUDE_OTHERS = os.environ.get("POCKET_INCLUDE_OTHERS", "").strip() in ("1", "true", "yes")
+
+
+def is_mine(item: dict) -> bool:
+    assignee = (item.get("assignee") or "").strip().lower()
+    return not assignee or assignee == "me"
 
 
 def poll(conn: sqlite3.Connection, user_id: str) -> int:
@@ -58,8 +68,12 @@ def poll(conn: sqlite3.Connection, user_id: str) -> int:
             items.extend(search_action_items(api_key, since, status=status))
 
     saved = 0
+    skipped_others = 0
     for item in items:
         if (item.get("status") or "").upper() in SKIP_STATUSES:
+            continue
+        if not INCLUDE_OTHERS and not is_mine(item):
+            skipped_others += 1
             continue
         todo_id = save_pocket_todo(conn, user_id, item)
         if todo_id:
@@ -67,6 +81,8 @@ def poll(conn: sqlite3.Connection, user_id: str) -> int:
             saved += 1
             print(f"[pocket] {item.get('recordingTitle')!r} — saved {item.get('label')!r}")
 
+    if skipped_others:
+        print(f"[pocket] skipped {skipped_others} item(s) assigned to someone else")
     set_pocket_last_polled_at(conn, user_id, polled_at)
     if not saved:
         print(f"[pocket] ...{api_key[-6:]}: No new action items.")
