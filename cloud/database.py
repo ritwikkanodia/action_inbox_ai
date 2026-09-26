@@ -11,7 +11,7 @@ class Database:
 
     @contextmanager
     def transaction(self):
-        with psycopg.connect(self.dsn, autocommit=True, row_factory=dict_row) as conn:
+        with psycopg.connect(self.dsn, autocommit=True, row_factory=dict_row, connect_timeout=5) as conn:
             with conn.transaction():
                 conn.execute(sql.SQL('SET LOCAL search_path TO {}').format(sql.Identifier(self.schema)))
                 conn.execute("SET LOCAL lock_timeout = '2s'")

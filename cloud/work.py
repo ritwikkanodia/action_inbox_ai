@@ -50,20 +50,24 @@ def append_message(tx, conversation, role, content, origin, job_id=None):
     conversation['next_message_seq'] += 1
 
 
+def create_conversation_in(tx, actor, kind, todo_id=None, *, require_enabled=True):
+    if kind not in ('chat', 'todo') or (kind == 'todo') != (todo_id is not None):
+        raise Rejected('invalid_conversation')
+    lock_owner(tx, actor.owner_id, require_enabled=require_enabled)
+    if todo_id is not None and not tx.execute('SELECT id FROM todos WHERE owner_id=%s AND id=%s', (actor.owner_id, todo_id)).fetchone():
+        raise NotFound('todo_not_found')
+    cid = uuid4()
+    tx.execute('INSERT INTO conversations(id,owner_id,kind,todo_id) VALUES (%s,%s,%s,%s)', (cid, actor.owner_id, kind, todo_id))
+    return cid
+
+
 class Work:
     def __init__(self, db, config=DEFAULTS):
         self.db, self.config = db, config
 
     def create_conversation(self, actor, kind, todo_id=None):
-        if kind not in ('chat', 'todo') or (kind == 'todo') != (todo_id is not None):
-            raise Rejected('invalid_conversation')
-        cid = uuid4()
         with self.db.transaction() as tx:
-            lock_owner(tx, actor.owner_id)
-            if todo_id is not None and not tx.execute('SELECT id FROM todos WHERE owner_id=%s AND id=%s', (actor.owner_id, todo_id)).fetchone():
-                raise NotFound('todo_not_found')
-            tx.execute('INSERT INTO conversations(id,owner_id,kind,todo_id) VALUES (%s,%s,%s,%s)', (cid, actor.owner_id, kind, todo_id))
-        return cid
+            return create_conversation_in(tx, actor, kind, todo_id)
 
     def accept(self, actor, request):
         started = time.monotonic()

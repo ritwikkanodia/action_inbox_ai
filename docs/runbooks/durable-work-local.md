@@ -4,9 +4,14 @@
 
 This is a locally verified durable backend, **not a cloud deployment**. It is
 separate from the running SQLite application. No user data is imported, no real
-mailbox or model is called, and no source is activated. The cloud Flask factory
-denies authentication unless an explicit test-only principal is injected.
+mailbox or model is called, and no source is activated. The original cloud Flask
+factory (cloud.app.create_app) denies authentication unless an explicit test-only principal is injected.
 Production worker startup is refused. Do not make this test factory public.
+
+The new cloud.web.create_web_app composition adds invited Google identity,
+PostgreSQL sessions and isolated pages; production submissions still fail closed.
+See [cloud identity operations](cloud-web-identity.md) for configuration and the
+remaining launch gates. The original synthetic factory is retained for regression tests.
 
 PostgreSQL owns acceptance, ordering, leases, effect evidence and outbox records.
 The Service Bus adapter is covered with injected SDK fakes. CLI dispatch and
@@ -119,7 +124,7 @@ rows for terminal jobs. Filter actionable work before enabling backlog alerts.
 
 ## Remaining launch gates
 
-Local evidence on 2026-09-26: 77 PostgreSQL/API/lifecycle tests, all 18 legacy
+Historical durable-backend evidence on 2026-09-26: 77 PostgreSQL/API/lifecycle tests, all 18 legacy
 verification scripts, the Node contract and fresh-profile Chrome flows passed.
 The Chrome flows include definitive rejection recovery, stale-generation drafts
 and an installed old service worker. Existing offline image suites passed 3/3

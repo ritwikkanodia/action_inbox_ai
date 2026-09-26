@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Athena</title><link rel="icon" href="/static/icons/favicon-32.png">
+<link rel="stylesheet" href="/static/css/app.css"><link rel="stylesheet" href="/static/css/cloud.css">
+<script defer src="/static/js/durable-work.js"></script><script defer src="/static/js/cloud-state.js"></script>
+<script defer src="/static/js/cloud-app.js"></script></head>
+<body class="cloud-body"><header class="cloud-header"><a href="/" aria-label="Athena home"><img src="/static/images/athena-mark.png" alt="" width="40" height="40">Athena</a>
+<nav aria-label="Main"><a href="/">Inbox</a><a href="/chat">Chat</a><a href="/settings">Settings</a></nav></header>
+<main class="cloud-main"><p id="cloud-status" role="status">Checking your session…</p>
+<div id="cloud-account" hidden><p id="cloud-profile"></p>
+<section id="cloud-inbox" hidden><h1>Your inbox</h1><ul id="cloud-todos"></ul><button id="cloud-more" type="button" hidden>Load more</button></section>
+<section id="cloud-chat" hidden><h1 id="cloud-title">Chat</h1><p id="cloud-execution">Task execution is not available yet.</p>
+<div id="cloud-thread" role="log" aria-label="Conversation"></div><ul id="cloud-jobs" aria-label="Work status"></ul>
+<form id="cloud-compose"><label for="cloud-draft">Message</label><textarea id="cloud-draft" maxlength="32768" disabled></textarea>
+<button id="cloud-send" type="submit" disabled>Send</button><button id="cloud-retry" type="button" hidden>Retry same message</button></form>
+<button id="cloud-reset" type="button">Start new conversation</button></section>
+<section id="cloud-settings" hidden><h1>Settings</h1><p>Gmail is not available yet.</p><p>Other sources and device controls are not available in this cloud build.</p>
+<button id="cloud-logout-all" type="button">Sign out all sessions</button></section>
+<button id="cloud-logout" type="button">Sign out</button></div></main></body></html>
