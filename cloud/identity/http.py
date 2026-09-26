@@ -42,7 +42,9 @@ def register_identity_routes(app, db, settings, flows, admission, sessions, goog
                   503 if isinstance(error,Unavailable) else 400)
         response = (redirect('/login',303) if status==401 and not request.path.startswith('/api/')
                     else error_page(status,error.code))
-        if status==401: clear_cookies(response,app)
+        # A background failure may use a cookie replaced by another window.
+        # Only explicit, authorized logout clears shared cookies; a stale 401
+        # must never erase a newly issued session or pre-login flow cookie.
         if isinstance(error,RateLimited): response.headers['Retry-After']=str(error.retry_after)
         return response
 

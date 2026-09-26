@@ -85,6 +85,12 @@ CSRF, same-origin evidence and the current opaque session context. A stale tab
 cannot submit into a new account. Database outage fails closed; a failed sign-out
 must not be represented as confirmed revocation.
 
+Authentication failures do not delete shared cookies: a delayed 401 could otherwise
+erase a newer login from another window. Explicit successful logout clears them;
+expired/revoked cookies confer no authority and are replaced on the next login.
+After unconfirmed logout, the current page stays blank until deliberate navigation
+or reload, rather than automatically restoring account content.
+
 Login requires JavaScript: Chrome sends Origin:null for a no-referrer navigation
 form POST. The cloud sign-in controller instead makes a same-origin CORS-mode
 POST with CSRF, receives the fixed Google authorization URL, then navigates.
@@ -157,6 +163,7 @@ identity responses; no request reaches Google or a real mailbox/model.
 PYTHON_DOTENV_DISABLED=1 ../action_inbox_ai/venv/bin/python scripts/verify/verify_cloud.py --all
 node scripts/verify/verify_durable_work_ui.cjs
 node scripts/verify/verify_cloud_identity_ui.cjs
+node scripts/verify/verify_cloud_identity_lifecycle.cjs
 node --check static/js/cloud-state.js
 node --check static/js/cloud-app.js
 node --check static/js/cloud-login.js
@@ -173,13 +180,21 @@ cookies. Production configuration cannot enable that allowance.
 
 ## Remaining release gates
 
-Observed local evidence on 2026-09-26: 153 cloud tests and all 18 legacy scripts
-passed. Both Node contracts and JavaScript syntax checks passed. Fresh-profile
+Observed local evidence on 2026-09-26: 154 cloud tests and all 18 legacy scripts
+passed. Both Node contracts, three real-controller lifecycle regressions and
+JavaScript syntax checks passed. Fresh-profile
 Chrome checks passed for the legacy durable UI and cloud identity lifecycle,
 including lost-response retry, two tabs, restart, account switching with delayed
 responses, expiry and logout-all, both with and without BroadcastChannel.
 Gunicorn's actual access formatter was checked with synthetic secret markers.
 These are local synthetic results, not live-provider or deployed-cloud results.
+
+One independent whole-branch review found three important browser lifecycle
+issues: delayed bootstrap display without cross-tab messaging, automatic account
+display after failed logout, and a stale 401 deleting a newer session cookie.
+Each was reproduced by a failing regression before a single fix pass. The
+controller regressions and HTTP suite now pass; fixes are test-verified, not
+subject to a second independent review. No minor findings were deferred.
 
 - Independent security/release assessment, threat modelling and load/abuse tests.
 - Dedicated OAuth client registration, rotated secrets, consent/privacy/deletion

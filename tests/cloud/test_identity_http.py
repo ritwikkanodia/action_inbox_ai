@@ -145,7 +145,7 @@ class IdentityHttpTests(unittest.TestCase):
             self.assertEqual(db.read('SELECT * FROM auth_identities'),[])
             self.assertEqual(db.read('SELECT * FROM auth_sessions'),[])
 
-    def test_cookie_expiry_and_account_disable_clear_browser_session(self):
+    def test_account_disable_denies_access_without_stale_cookie_deletion(self):
         with sandbox() as db:
             app=self.fixture(db); client=app.test_client(); proof=self.login(client,db)
             raw=client.get_cookie('__Host-athena-session').value
@@ -153,7 +153,23 @@ class IdentityHttpTests(unittest.TestCase):
             Sessions(db).disable(owner,'fixture','test')
             response=client.get('/api/work/conversations/'+str(uuid4()))
             self.assertEqual(response.status_code,401)
-            self.assertIsNone(client.get_cookie('__Host-athena-session'))
+            self.assertEqual(client.get_cookie('__Host-athena-session').value,raw)
+            self.assertNotIn('Set-Cookie',response.headers)
+
+    def test_old_unauthorized_response_cannot_erase_new_login_cookies(self):
+        from cloud.identity.security import SESSION_COOKIE,PRELOGIN_COOKIE
+        with sandbox() as db:
+            app=self.fixture(db); client=app.test_client()
+            self.login(client,db)
+            old=client.get_cookie(SESSION_COOKIE).value
+            self.login(client,db,'bob@gmail.com','bob-sub')
+            new=client.get_cookie(SESSION_COOKIE).value
+            stale=app.test_client(use_cookies=False).get('/api/cloud/bootstrap',
+                headers={'Cookie':SESSION_COOKIE+'='+old+'; '+PRELOGIN_COOKIE+'=old-browser'})
+            self.assertEqual(stale.status_code,401)
+            self.assertNotIn('Set-Cookie',stale.headers)
+            self.assertEqual(Sessions(db).resolve(new).owner_id,
+                             db.read("SELECT owner_id FROM auth_identities WHERE subject='bob-sub'")[0]['owner_id'])
 
     def test_readiness_checks_schema_and_recovery_but_not_executor(self):
         with sandbox() as db:

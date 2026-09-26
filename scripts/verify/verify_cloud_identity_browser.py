@@ -32,6 +32,18 @@ def verify():
                 try:
                     for without_channel in (False,True):
                         context=browser.new_context()
+                        context.add_init_script("""window.__fixtureTrace=[];
+                            const originalFetch=window.fetch;
+                            window.fetch=async(...args)=>{
+                                try {
+                                    const response=await originalFetch(...args);
+                                    const row={path:args[0],status:response.status};
+                                    if(String(args[0]).startsWith('/api/cloud/bootstrap')){
+                                        const data=await response.clone().json();row.account=data.profile?.name;
+                                    }
+                                    window.__fixtureTrace.push(row);return response;
+                                }catch(error){window.__fixtureTrace.push({path:args[0],error:error.name});throw error;}
+                            };""")
                         if without_channel: context.add_init_script('window.BroadcastChannel=undefined')
                         account={'email':f'alice{int(without_channel)}@gmail.com','subject':f'alice-{without_channel}','name':'Alice'}
                         requested=[]; errors=[]; csp=[]; unexpected=[]; login_origins=[]; send_keys=[]
@@ -106,32 +118,56 @@ def verify():
                         app=web_fixture(db,executable=True,origin=origin,settings=previous); server.app=app
                         page.reload()
                         expect(page.locator('#cloud-thread')).to_contain_text('alice-private-message')
+                        page.locator('#cloud-draft').fill('alice-held-response')
+                        page.locator('#cloud-send').click()
+                        expect(page.locator('[data-work-state="queued"]')).to_have_count(1)
+                        expect(page.locator('#cloud-draft')).to_be_enabled()
                         page.locator('#cloud-draft').fill('alice-private-draft')
                         # An in-flight Alice response arrives only after the cookie switches.
-                        held=[]
-                        def delayed(route):
-                            response=route.fetch()
-                            held.append((route,response))
-                        page.route('**/api/work/conversations/*',delayed,times=1)
+                        page.evaluate("""() => {
+                            const original=window.fetch;let hold=true;
+                            window.fetch=async(...args)=>{
+                                const response=await original(...args);
+                                if(hold && String(args[0]).startsWith('/api/work/conversations/')) {
+                                    hold=false;
+                                    return new Promise(resolve=>{window.__releaseSnapshot=()=>resolve(response);});
+                                }
+                                return response;
+                            };
+                        }""")
                         Work(db).notice(Actor(owner),cid,'delay-'+str(without_channel),'alice-late-content')
-                        # Start a reload-status via reset button is a mutation: instead
-                        # reload while preserving a held snapshot ticket.
-                        page.reload(wait_until='domcontentloaded')
-                        expect(page.locator('#cloud-account')).to_be_visible()
-                        # Wait with browser event pumping for the intercepted request.
-                        for _ in range(50):
-                            if held: break
+                        # Hold an active poll on the stable document, not an initial
+                        # reload request which pageshow is permitted to abort.
+                        for _ in range(100):
+                            if page.evaluate("() => typeof window.__releaseSnapshot === 'function'"): break
                             page.wait_for_timeout(100)
-                        assert held,'snapshot not intercepted'
-                        page.evaluate("document.getElementById('cloud-draft').value='alice-private-draft'")
+                        else: raise AssertionError('snapshot not intercepted')
+                        old_requests=[]
+                        page.route('**/api/cloud/bootstrap?held-old=1',lambda route:old_requests.append(route),times=1)
+                        page.evaluate("() => { void fetch('/api/cloud/bootstrap?held-old=1'); }")
+                        for _ in range(50):
+                            if old_requests: break
+                            page.wait_for_timeout(100)
+                        assert old_requests,'old-session request not intercepted'
+                        old_headers=old_requests[0].request.all_headers()
                         second.bring_to_front()
                         account.update(email=f'bob{int(without_channel)}@gmail.com',subject=f'bob-{without_channel}',name='Bob')
                         signin(second)
-                        for route,response in held:
-                            try: route.fulfill(response=response)
-                            except Exception: pass  # Aborted by visibility/session invalidation.
+                        new_cookie=next(c['value'] for c in context.cookies() if c['name']=='athena-test-session')
+                        # Deliberately deliver an old-cookie 401 after Bob's new
+                        # cookie arrived. Browser Set-Cookie handling ignores JS tickets.
+                        stale_response=old_requests[0].fetch(headers=old_headers)
+                        assert stale_response.status==401
+                        assert 'set-cookie' not in stale_response.headers
+                        old_requests[0].fulfill(response=stale_response)
+                        assert next(c['value'] for c in context.cookies() if c['name']=='athena-test-session')==new_cookie
+                        page.evaluate('window.__releaseSnapshot()')
                         page.bring_to_front()
-                        expect(page.locator('#cloud-profile')).to_contain_text('Bob',timeout=10000)
+                        try: expect(page.locator('#cloud-profile')).to_contain_text('Bob',timeout=10000)
+                        except AssertionError:
+                            print('account boundary trace:',page.evaluate('window.__fixtureTrace.slice(-30)'),flush=True)
+                            print('visibility:',page.evaluate('document.hidden'),flush=True)
+                            raise
                         expect(page.locator('#cloud-thread')).not_to_contain_text('alice-')
                         expect(page.locator('#cloud-draft')).not_to_have_value('alice-private-draft')
                         expect(page.locator('#cloud-retry')).to_be_hidden()
@@ -163,6 +199,8 @@ def verify():
                         assert not unexpected,unexpected
                         assert not any('/ask-ai' in p or '/settings/sources' in p for p in requested)
                         assert not any('synthetic-browser-code' in line or '?' in line for line in logs)
+                        page.unroute_all(behavior='wait')
+                        context.unroute_all(behavior='wait')
                         context.close()
                         print('PASS identity Chrome lifecycle; BroadcastChannel disabled='+str(without_channel),flush=True)
                 finally: browser.close()

@@ -7,7 +7,7 @@
   const controllers = new Set();
   let auth = null, cid = null, generation = 1, nextCursor = null;
   let pollTimer = null, pollIndex = 0, bootstrapSerial = 0, snapshotSerial = 0;
-  let selectedTodo = null, validating = null;
+  let selectedTodo = null, logoutIntent = false;
   let channel = null;
   try { if ('BroadcastChannel' in window) channel = new BroadcastChannel('athena-session'); } catch (_) {}
   const status = text => { el('cloud-status').textContent = text; };
@@ -49,6 +49,9 @@
         'X-Athena-Context': auth.context_id }, body: JSON.stringify(body) };
     const result = await raw(path, options);
     if (!S.acceptResponse(state, ticket)) throw stale();
+    // Errors are response boundaries too: a 404 can mean the shared cookie now
+    // belongs to another account, not that this account's thread disappeared.
+    if (!result.response.ok && !channel && !await validateTicket(ticket)) throw stale();
     if (invalidSession(result)) {
       clearAccount('Your session changed. Please sign in again.');
       signal(); window.location.assign('/login'); throw stale();
@@ -80,11 +83,23 @@
     el('cloud-more').hidden = !nextCursor;
   }
   async function revalidate() {
-    if (document.hidden) return;
+    if (document.hidden || logoutIntent) return;
     const serial = ++bootstrapSerial, version = state.generation;
     try {
       const result = await raw('/api/cloud/bootstrap');
       if (serial !== bootstrapSerial || version !== state.generation || document.hidden) return;
+      // Another visible window may have replaced the cookie while this waited.
+      if (!channel && result.response.ok) {
+        const confirmation = await raw('/api/cloud/bootstrap');
+        if (serial !== bootstrapSerial || version !== state.generation || document.hidden || logoutIntent) return;
+        if (!confirmation.response.ok || confirmation.data.context_id !== result.data.context_id) {
+          clearAccount('Checking your current session…');
+          if (confirmation.response.ok) void revalidate();
+          else if (confirmation.response.status === 401) window.location.assign('/login');
+          else status('Service unavailable. Retrying…');
+          return;
+        }
+      }
       if (!result.response.ok) {
         clearAccount(result.response.status === 401 ? 'Please sign in again.' : 'Service unavailable. Retrying…');
         if (result.response.status === 401) window.location.assign('/login');
@@ -229,6 +244,7 @@
   async function logout(all) {
     if (!auth) return;
     const saved = auth;
+    logoutIntent = true;
     clearAccount('Signing out…'); signal();
     try {
       const response = await fetch(all ? '/api/auth/logout-all' : '/logout', { method: 'POST',
@@ -244,11 +260,12 @@
   el('cloud-logout').addEventListener('click', () => void logout(false));
   el('cloud-logout-all').addEventListener('click', () => void logout(true));
   if (channel) channel.onmessage = event => {
-    if (event.data === 'session-changed') { clearAccount(); void revalidate(); }
+    if (event.data === 'session-changed' && !logoutIntent) { clearAccount(); void revalidate(); }
   };
-  window.addEventListener('pagehide', () => clearAccount());
-  window.addEventListener('pageshow', () => { clearAccount(); void revalidate(); });
+  window.addEventListener('pagehide', () => { if (!logoutIntent) clearAccount(); });
+  window.addEventListener('pageshow', () => { if (!logoutIntent) { clearAccount(); void revalidate(); } });
   document.addEventListener('visibilitychange', () => {
+    if (logoutIntent) return;
     clearAccount(); if (!document.hidden) void revalidate();
   });
   setInterval(() => { if (!document.hidden) void revalidate(); }, 30000);
