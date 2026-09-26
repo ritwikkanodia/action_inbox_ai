@@ -1,4 +1,4 @@
-// Service worker for the Self-driving Inbox PWA.
+// Service worker for the Athena PWA.
 //
 // Deliberately conservative: only same-origin /static/ assets and the offline
 // page are cached. Todo HTML and every API response are user-specific and
@@ -9,8 +9,8 @@
 // cache-first, so a stale entry keeps being served until the cache is renamed
 // and `activate` drops the old one — an edit to app.js or app.css that forgets
 // this ships a frontend the browser never runs.
-const VERSION = 'v22';
-const CACHE = `self-driving-inbox-${VERSION}`;
+const VERSION = 'v24';
+const CACHE = `athena-${VERSION}`;
 const OFFLINE_URL = '/offline';
 
 const PRECACHE = [

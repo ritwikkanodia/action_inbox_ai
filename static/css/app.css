@@ -1,29 +1,27 @@
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      /* Near-black surfaces, layered by elevation */
-      color-scheme: dark;
+      color-scheme: light;
 
-      --paper:       #0b0b0c;   /* page */
-      --paper-deep:  #1b1b1f;   /* selected row, hover surfaces */
-      --paper-soft:  #0e0e10;   /* detail pane bg */
-      --panel:       #141417;   /* cards, inputs */
-      --ink:         #ededed;
-      --ink-2:       #a5a5ac;
-      --ink-3:       #74747d;
-      --rule:        #232327;
-      --rule-strong: #35353c;
+      /* Athena: chalk, Aegean blue and aged bronze. */
+      --paper:       #f4ecdd;
+      --paper-deep:  #e7dcc8;
+      --paper-soft:  #faf6ed;
+      --panel:       #fffaf0;
+      --ink:         #173442;
+      --ink-2:       #4d6670;
+      --ink-3:       #72878b;
+      --rule:        #d6c6ab;
+      --rule-strong: #b7a17d;
 
-      /* Single accent — amber. Editorial, calm, "decision" weight. */
-      --accent:      #f0b429;
-      --accent-soft: #2a2113;
-      --accent-deep: #ffc94d;   /* brighter, since hover lifts on dark */
-      --accent-ink:  #17130a;   /* text sitting on an amber fill */
+      --accent:      #123e52;
+      --accent-soft: #dce9e8;
+      --accent-deep: #0a2f42;
+      --accent-ink:  #fffaf0;
 
-      /* Importance tones, dialed for near-black */
-      --u-high:   #e5675f;
-      --u-medium: #e0a94a;
-      --u-low:    #6dbf87;
+      --u-high:   #b6503c;
+      --u-medium: #aa7721;
+      --u-low:    #39785d;
 
       /* Legacy aliases used elsewhere in markup */
       --bg: var(--paper);
@@ -34,25 +32,61 @@
       --medium: var(--u-medium);
       --low: var(--u-low);
 
-      --sans:  'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
-      --mono:  'JetBrains Mono', 'SF Mono', Menlo, monospace;
+      --sans:  'Source Sans 3', sans-serif;
+      --serif: 'Spectral', Georgia, serif;
+      --mono:  'DM Mono', monospace;
 
       /* Row tints — light lifts on dark, rather than dark washes on paper */
-      --tint-hover:    rgba(255, 255, 255, 0.035);
-      --tint-selected: rgba(255, 255, 255, 0.055);
+      --tint-hover:    rgba(18, 62, 82, 0.055);
+      --tint-selected: rgba(18, 62, 82, 0.095);
 
       /* Pill tones, tuned for near-black */
-      --pill-blue-bg:    #16202e;  --pill-blue-fg:    #7aa9e0;
-      --pill-purple-bg:  #221a2c;  --pill-purple-fg:  #b18ede;
-      --pill-green-bg:   #14231a;  --pill-green-fg:   #6dbf87;
-      --pill-amber-bg:   #2a2113;  --pill-amber-fg:   #e0a94a;
-      --pill-rose-bg:    #2a1618;  --pill-rose-fg:    #e08a86;
-      --pill-stone-bg:   #1e1e22;  --pill-stone-fg:   #9a9aa2;
+      --pill-blue-bg:    #dce9e8;  --pill-blue-fg:    #17516a;
+      --pill-purple-bg:  #e9e0e7;  --pill-purple-fg:  #75516f;
+      --pill-green-bg:   #dceadd;  --pill-green-fg:   #39785d;
+      --pill-amber-bg:   #f1e3c4;  --pill-amber-fg:   #8b5e16;
+      --pill-rose-bg:    #f2dfd9;  --pill-rose-fg:    #9d4334;
+      --pill-stone-bg:   #e9e4d9;  --pill-stone-fg:   #5d6863;
+    }
+
+    /* Athena at night: bronze in moonlight, not a flat colour inversion. */
+    body.theme-dark {
+      color-scheme: dark;
+      --paper:       #0b171b;
+      --paper-deep:  #14272c;
+      --paper-soft:  #0f1e23;
+      --panel:       #122329;
+      --ink:         #f3ead7;
+      --ink-2:       #bdc8bc;
+      --ink-3:       #839992;
+      --rule:        #29464c;
+      --rule-strong: #476d70;
+
+      --accent:      #c99d57;
+      --accent-soft: #263f41;
+      --accent-deep: #e1bb78;
+      --accent-ink:  #102126;
+
+      --u-high:   #df806b;
+      --u-medium: #d4ae62;
+      --u-low:    #78bd94;
+
+      --tint-hover:    rgba(235, 221, 190, .055);
+      --tint-selected: rgba(235, 221, 190, .095);
+
+      --pill-blue-bg:    #18343c;  --pill-blue-fg:    #9cc9cd;
+      --pill-purple-bg:  #312a39;  --pill-purple-fg:  #d2b5d7;
+      --pill-green-bg:   #19372d;  --pill-green-fg:   #9bd4ae;
+      --pill-amber-bg:   #40351e;  --pill-amber-fg:   #e7c77f;
+      --pill-rose-bg:    #42272a;  --pill-rose-fg:    #e8aba1;
+      --pill-stone-bg:   #283539;  --pill-stone-fg:   #b3c1bb;
     }
 
     html, body { height: 100%; }
     body {
-      background: var(--paper);
+      background-color: var(--paper);
+      background-image: linear-gradient(90deg, rgba(183,161,125,.13) 1px, transparent 1px), linear-gradient(rgba(183,161,125,.10) 1px, transparent 1px);
+      background-size: 32px 32px;
       color: var(--ink);
       font-family: var(--sans);
       font-size: 14px;
@@ -62,26 +96,35 @@
       min-height: 100vh;
       -webkit-font-smoothing: antialiased;
     }
+    body.theme-dark {
+      background-image: linear-gradient(90deg, rgba(104, 149, 146, .11) 1px, transparent 1px), linear-gradient(rgba(104, 149, 146, .08) 1px, transparent 1px);
+    }
 
     /* Header: editorial masthead, thin rule */
     header.top {
+      position: relative;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 22px 32px 16px;
+      padding: 20px 32px 15px;
       border-bottom: 1px solid var(--rule);
       background: transparent;
       flex-shrink: 0;
     }
 
-    header.top::before {
-      content: 'Self-driving Inbox';
-      font-family: var(--sans);
-      font-weight: 600;
-      font-size: 16px;
-      color: var(--ink);
-      letter-spacing: -0.01em;
+    .brand-mark {
+      display: flex;
+      align-items: center;
+      flex: 0 0 auto;
       margin-right: 24px;
+    }
+    .brand-mark img {
+      display: block;
+      width: 122px;
+      height: auto;
+    }
+    body.theme-dark .brand-mark img {
+      filter: brightness(0) saturate(100%) invert(79%) sepia(30%) saturate(603%) hue-rotate(357deg) brightness(91%) contrast(86%);
     }
 
     .tabs {
@@ -1629,7 +1672,8 @@
       #chat-view { padding: 24px 16px 60px; }
     }
     @media (max-width: 540px) {
-      header.top::before { display: none; }
+      .brand-mark { margin-right: 4px; }
+      .brand-mark img { width: 92px; }
       .tabs { gap: 8px; }
     }
 
