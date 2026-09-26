@@ -62,3 +62,23 @@ class Envelope:
 @dataclass(frozen=True)
 class Capability:
     token: str = field(repr=False)
+
+
+@dataclass(frozen=True)
+class PollClaim:
+    connection_id: UUID
+    owner_id: str
+    generation: int
+    fence: int
+    epoch: UUID
+    chain_id: UUID
+
+
+@dataclass(frozen=True)
+class MailPage:
+    page_key: str
+    expected_page_key: str
+    next_page_key: str | None
+    final_cursor: str | None
+    events: tuple[dict, ...]
+    baseline_cursor: str | None = None
