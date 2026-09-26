@@ -13,6 +13,12 @@ The Service Bus adapter is covered with injected SDK fakes. CLI dispatch and
 delivery are explicitly local simulations, not an Azure connectivity test.
 The Gmail adapter consumes normalized synthetic pages; generation is synthetic.
 
+Every initial backfill page, including a single-page listing, requires a baseline
+captured **before** the listing. Backfill completion installs that baseline, not
+the potentially newer final-page cursor; subsequent history ingestion catches up
+arrivals during the listing. Credential refresh results must include the recovery
+epoch and connection generation captured before the provider request.
+
 ## Run verification
 
 Use the existing main checkout interpreter, Docker and Node. Do not install into
@@ -28,6 +34,10 @@ PYTHON_DOTENV_DISABLED=1 ../action_inbox_ai/venv/bin/python scripts/verify/verif
 The browser check requires installed Chrome and Playwright in the existing
 interpreter. It creates a fresh headless profile, uses synthetic data and only
 permits loopback traffic; it does not use a personal browser profile.
+It also installs a synthetic old cache-first service worker in a second fresh
+profile and verifies that the first durable navigation uses versioned current
+scripts. Rejected text remains recoverable while the page is open; it is not
+persisted across reload or silently resubmitted after a conversation reset.
 
 For a focused test, replace `--all` with `--case tests.cloud.test_recovery` (or
 another `tests.cloud.test_*` module). The runner refuses a supplied database URL.
@@ -104,8 +114,19 @@ sweep, any new quarantine/uncertainty, and unexpectedly stale active checkpoints
 Set thresholds from load tests and distinguish disconnected/idle sources. Add
 provider/model/tool timing only through the approved isolated runner. No Azure
 Monitor resources or production alerts are created by this implementation.
+Known deferred metric issue: oldest outbox age currently includes unpublished
+rows for terminal jobs. Filter actionable work before enabling backlog alerts.
 
 ## Remaining launch gates
+
+Local evidence on 2026-09-26: 77 PostgreSQL/API/lifecycle tests, all 18 legacy
+verification scripts, the Node contract and fresh-profile Chrome flows passed.
+The Chrome flows include definitive rejection recovery, stale-generation drafts
+and an installed old service worker. Existing offline image suites passed 3/3
+for `athena-hermes:local` and 12/12 for `athena-hermes:patched-amd64`; these do not
+clear outstanding vulnerability risk. Independent review found four important
+issues; regression tests reproduced each before the fixes passed. No second
+review was performed. One minor metric issue is deferred as documented above.
 
 - Production identity/session security, owner isolation review and Gmail consent.
 - Protected credential vault and per-call capability enforcement in a separate

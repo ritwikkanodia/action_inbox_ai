@@ -54,6 +54,16 @@ def sandbox():
 def browser_fixture(app, conversation_id):
     """Register UI fixture endpoints only in an explicitly testing factory."""
     if not app.testing: raise ValueError('fixture_requires_testing')
+    @app.get('/legacy-sw.js')
+    def legacy_worker():
+        from flask import Response
+        return Response("""self.addEventListener('install', e => e.waitUntil(self.skipWaiting()));
+            self.addEventListener('activate', e => e.waitUntil(self.clients.claim()));
+            self.addEventListener('fetch', e => {
+                const u = new URL(e.request.url);
+                if (u.origin === self.location.origin && u.pathname.startsWith('/static/'))
+                    e.respondWith(caches.match(e.request).then(c => c || fetch(e.request)));
+            });""", mimetype='application/javascript')
     from flask import render_template
     def shell():
         return render_template('index.html', todos=[], todos_json='[]',

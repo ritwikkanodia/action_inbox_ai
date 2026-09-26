@@ -13,6 +13,7 @@ from uuid import uuid4
 from cloud.authorization import Authorization
 from cloud.config import DEFAULTS
 from cloud.control import Control
+from cloud.connections import Connections
 from cloud.dispatch import Dispatcher, Receiver
 from cloud.leases import Leases
 from cloud.recovery import Recovery
@@ -54,6 +55,19 @@ signal.pause()
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_pre_restore_refresh_cannot_overwrite_reconciled_credentials(self):
+        with sandbox() as db:
+            actor, connections, recovery = Actor('alice'), Connections(db), Recovery(db)
+            cid = connection(db)
+            generation = connections.generation(actor, cid)
+            old_epoch = db.read('SELECT epoch FROM runtime')[0]['epoch']
+            epoch = recovery.begin_restore()
+            for check in CHECKS: recovery.review_check(epoch,check,'synthetic-reviewer','fixture evidence')
+            recovery.resume_after_review(epoch,'synthetic-reviewer','fixture evidence')
+            self.assertTrue(connections.refresh_reference(actor,cid,generation,'fixture:reconciled',epoch=epoch))
+            self.assertFalse(connections.refresh_reference(actor,cid,generation,'fixture:old-refresh',epoch=old_epoch))
+            self.assertEqual(db.read('SELECT credential_ref FROM connections')[0]['credential_ref'],'fixture:reconciled')
+
     def test_restore_epoch_and_review_gate(self):
         with sandbox() as db:
             job, leases, recovery = accept(db), Leases(db), Recovery(db)

@@ -58,11 +58,13 @@ class Connections:
                           granted_scopes='{}',updated_at=clock_timestamp() WHERE id=%s""", (connection_id,))
             revoke_work(tx, connection_id)
 
-    def refresh_reference(self, actor, connection_id, generation, credential_ref):
+    def refresh_reference(self, actor, connection_id, generation, credential_ref, *, epoch):
+        """Epoch and generation must be captured before starting provider refresh."""
         validate_reference(credential_ref)
         try:
             with self.db.transaction() as tx:
-                lock_owner(tx, actor.owner_id)
+                runtime, _ = lock_owner(tx, actor.owner_id)
+                if runtime['epoch'] != epoch: return False
                 changed = tx.execute('''UPDATE connections SET credential_ref=%s,updated_at=clock_timestamp()
                     WHERE id=%s AND owner_id=%s AND active AND generation=%s RETURNING id''',
                     (credential_ref, connection_id, actor.owner_id, generation)).fetchone()

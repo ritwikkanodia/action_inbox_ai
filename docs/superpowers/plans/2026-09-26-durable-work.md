@@ -599,7 +599,8 @@ extend `cloud/types.py` with `Capability` below.
 credential_ref: str) -> UUID`; `generation(actor: Actor, connection_id: UUID) -> int`;
 `disconnect(actor: Actor, connection_id: UUID) -> None`;
 `refresh_reference(actor: Actor, connection_id: UUID, generation: int,
-credential_ref: str) -> bool`.
+credential_ref: str, *, epoch: UUID) -> bool` (epoch captured before provider refresh;
+added by final review to fence restored credentials).
 `Authorization(db).issue(claim: Claim, connection_id: UUID, scopes: frozenset[str])
 -> Capability`; `validate(capability: Capability, scope: str) -> bool`.
 
@@ -623,8 +624,9 @@ class ConnectionTests(unittest.TestCase):
             connections, actor = Connections(db), Actor('alice')
             cid = connections.connect(actor, 'fixture@example.invalid', 'fixture:key-one')
             generation = connections.generation(actor, cid)
+            epoch = db.read('SELECT epoch FROM runtime')[0]['epoch']
             connections.disconnect(actor, cid)
-            self.assertFalse(connections.refresh_reference(actor, cid, generation, 'fixture:key-two'))
+            self.assertFalse(connections.refresh_reference(actor, cid, generation, 'fixture:key-two', epoch=epoch))
             self.assertEqual(db.read('SELECT active FROM connections WHERE id=%s', (cid,))[0]['active'], False)
 ```
 

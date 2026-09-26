@@ -101,7 +101,7 @@ class Gmail:
                 restart_backfill(tx, claim.connection_id)
                 problem = Conflict('invalid_page_token')
             elif (checkpoint['mode'] == 'backfill' and checkpoint['baseline_cursor'] is None
-                  and page.baseline_cursor is None and page.final_cursor is None):
+                  and page.baseline_cursor is None):
                 problem = Rejected('missing_backfill_baseline')
             if not problem:
                 new_keys = {uuid5(claim.connection_id, 'received:' + e['message_id']) for e in page.events if e['event_type']=='received'}
@@ -134,12 +134,16 @@ class Gmail:
                         (uuid4(), claim.owner_id, claim.connection_id, identity, Jsonb(item), job_id, 'generation_queued' if received else 'no_generation_required'))
                 tx.execute('INSERT INTO page_receipts(owner_id,connection_id,chain_id,page_key,payload_hash) VALUES (%s,%s,%s,%s,%s)',
                            (claim.owner_id, claim.connection_id, claim.chain_id, page.page_key, fingerprint))
+                # A listing's final history ID does not prove coverage of mail
+                # arriving during backfill. Resume history at the pre-list baseline.
+                completed_cursor = ((checkpoint['baseline_cursor'] or page.baseline_cursor)
+                                    if checkpoint['mode'] == 'backfill' else page.final_cursor)
                 tx.execute("""UPDATE mailbox_checkpoints SET next_page_key=%s,
                     baseline_cursor=coalesce(baseline_cursor,%s),cursor=CASE WHEN %s THEN %s ELSE cursor END,
                     mode=CASE WHEN %s THEN 'history' ELSE mode END,
                     lease_until=CASE WHEN %s THEN NULL ELSE clock_timestamp()+interval '60 seconds' END,
                     updated_at=clock_timestamp() WHERE connection_id=%s""",
-                    (page.next_page_key, page.baseline_cursor or page.final_cursor, page.next_page_key is None, page.final_cursor,
+                    (page.next_page_key, page.baseline_cursor, page.next_page_key is None, completed_cursor,
                      page.next_page_key is None, page.next_page_key is None, claim.connection_id))
         if problem: raise problem
         return count

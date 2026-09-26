@@ -1639,8 +1639,27 @@ function renderDurable(threadId) {
   }
   if (data.reconciliation_hold) bubble({ role: 'notice', content: 'An earlier action needs review. Later requests will wait; stopping does not undo an action.' });
   for (const [key, pending] of state.pending) {
-    const element = bubble({ role: 'notice', content: pending.failed ? 'Delivery is uncertain. Retry the same request safely.' : 'Saving request…' });
-    if (pending.failed) {
+    const element = bubble({ role: 'notice', content: pending.rejected || (pending.failed ? 'Delivery is uncertain. Retry the same request safely.' : 'Saving request…') });
+    if (pending.rejected) {
+      element.dataset.rejectedSubmission = key;
+      element.setAttribute('role', 'alert');
+      const text = document.createElement('pre');
+      text.textContent = pending.submission.text;
+      element.appendChild(text);
+      const recover = document.createElement('button');
+      recover.type = 'button'; recover.textContent = 'Recover text for editing'; recover.dataset.recoverSubmission = key;
+      recover.onclick = () => {
+        const input = document.getElementById('ai-followup');
+        if (!input || activeThreadId !== threadId) return;
+        if (input.value.trim()) { addErrorBubble('Keep or clear your current draft before recovering this text.'); return; }
+        input.value = pending.submission.text;
+        input.dispatchEvent(new Event('input'));
+        input.focus();
+        state.pending.delete(key);
+        renderDurable(threadId);
+      };
+      element.appendChild(recover);
+    } else if (pending.failed) {
       const retry = document.createElement('button');
       retry.type = 'button'; retry.textContent = 'Retry same request'; retry.dataset.retrySubmission = key;
       retry.onclick = () => postDurable(threadId, pending.submission);
@@ -1661,7 +1680,8 @@ async function loadDurable(threadId) {
     const snapshot = await durableRequest(durableUrl(threadId));
     if (serial !== state.serial || (state.snapshot && snapshot.generation < state.snapshot.generation)) return;
     if (state.snapshot && snapshot.generation !== state.snapshot.generation) {
-      state.pending.clear();
+      for (const [key, pending] of state.pending) state.pending.set(key, { ...pending, failed: false,
+        rejected: 'Conversation changed. This earlier request was not moved into the new conversation. Recover its text only to create a new request.' });
       if (activeThreadId === threadId && input) input.value = '';
     }
     state.snapshot = snapshot;
@@ -1701,8 +1721,17 @@ async function postDurable(threadId, submission) {
     await durableRequest(durableUrl(threadId, '/messages'), body);
     state.pending.delete(submission.request_key);
   } catch (error) {
-    if ([400,401,404,409].includes(error.status)) state.pending.delete(submission.request_key);
-    else state.pending.set(submission.request_key, { submission, failed: true });
+    // A response to an old request must never resurrect a reset submission.
+    if (state.snapshot.generation !== submission.generation) return;
+    const rejected = {
+      400: 'Message not saved. Check the text and shorten it if needed.',
+      401: 'Message not saved. Sign in again before sending.',
+      404: 'Message not saved. This conversation is unavailable.',
+      409: 'Message not saved. The conversation changed or this request conflicts with an earlier submission.',
+      413: 'Message not saved. Shorten the text before sending.',
+      429: 'Message not saved. The queue is full; try again after work finishes.',
+    }[error.status];
+    state.pending.set(submission.request_key, rejected ? { submission, rejected } : { submission, failed: true });
   }
   await loadDurable(threadId);
   renderDurable(threadId);

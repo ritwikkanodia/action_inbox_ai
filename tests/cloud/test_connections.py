@@ -29,14 +29,15 @@ class ConnectionTests(unittest.TestCase):
             connections, actor = Connections(db), Actor('alice')
             cid = connection(db)
             generation = connections.generation(actor, cid)
-            self.assertTrue(connections.refresh_reference(actor, cid, generation, 'fixture:key-two'))
+            epoch = db.read('SELECT epoch FROM runtime')[0]['epoch']
+            self.assertTrue(connections.refresh_reference(actor, cid, generation, 'fixture:key-two', epoch=epoch))
             connections.disconnect(actor, cid)
-            self.assertFalse(connections.refresh_reference(actor, cid, generation, 'fixture:key-three'))
+            self.assertFalse(connections.refresh_reference(actor, cid, generation, 'fixture:key-three', epoch=epoch))
             self.assertFalse(db.read('SELECT active FROM connections WHERE id=%s', (cid,))[0]['active'])
             reconnected = connections.connect(actor, ' FIXTURE@EXAMPLE.INVALID ', 'fixture:new')
             self.assertEqual(reconnected, cid)
             self.assertGreater(connections.generation(actor, cid), generation)
-            self.assertFalse(connections.refresh_reference(actor, cid, generation, 'fixture:old'))
+            self.assertFalse(connections.refresh_reference(actor, cid, generation, 'fixture:old', epoch=epoch))
             self.assertEqual(db.read('SELECT granted_scopes FROM connections')[0]['granted_scopes'], [])
 
     def test_capability_scope_owner_and_storage(self):

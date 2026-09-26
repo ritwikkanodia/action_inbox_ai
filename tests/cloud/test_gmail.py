@@ -23,6 +23,7 @@ def event(mid='m1', kind='received', occurrence='h99'):
 
 
 def page(mid='m1', **kwargs):
+    kwargs.setdefault('baseline_cursor', '100')
     return MailPage('page-1', 'start', None, '100', (event(mid),), **kwargs)
 
 
@@ -35,6 +36,26 @@ def generate_claim(db, mid='m1'):
 
 
 class GmailTests(unittest.TestCase):
+    def test_arrivals_during_backfill_are_caught_up_from_baseline(self):
+        with sandbox() as db:
+            gmail, cid = Gmail(db), connection(db)
+            claim = gmail.claim_poll(Actor('alice'), cid)
+            gmail.ingest_page(claim, MailPage('first','start','last',None,(event('before'),),baseline_cursor='99'))
+            gmail.ingest_page(claim, MailPage('last','last',None,'101',()))
+            self.assertEqual(db.read('SELECT cursor FROM mailbox_checkpoints')[0]['cursor'], '99')
+            history = gmail.claim_poll(Actor('alice'), cid)
+            gmail.ingest_page(history, MailPage('history','start',None,'101',(event('arrival-100'),event('arrival-101'))))
+            self.assertEqual(db.read('SELECT cursor FROM mailbox_checkpoints')[0]['cursor'], '101')
+            self.assertEqual(db.read('SELECT count(*) AS n FROM jobs')[0]['n'], 3)
+
+    def test_single_page_backfill_also_requires_captured_baseline(self):
+        with sandbox() as db:
+            gmail, cid = Gmail(db), connection(db)
+            claim = gmail.claim_poll(Actor('alice'), cid)
+            with self.assertRaises(Rejected):
+                gmail.ingest_page(claim, MailPage('one','start',None,'101',(event(),)))
+            self.assertIsNone(db.read('SELECT cursor FROM mailbox_checkpoints')[0]['cursor'])
+
     def test_duplicate_and_changed_pages(self):
         with sandbox() as db:
             gmail, actor, cid = Gmail(db), Actor('alice'), connection(db)
