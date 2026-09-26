@@ -154,13 +154,35 @@ def readiness(name: str) -> tuple[bool, str | None]:
     return False, f"Unknown executor {name!r}."
 
 
+def executor_model(name: str) -> str | None:
+    """The model an executor's turns run on, for display. The Agents SDK reads
+    ours from `llm_models`; Hermes uses its own `model.default` in
+    ~/.hermes/config.yaml (or $HERMES_HOME), which this app does not set.
+    None when it cannot be told — the UI shows nothing rather than a guess."""
+    if name == "agents_sdk":
+        from llm_models import AGENT
+        return AGENT
+    if name == "hermes":
+        home = os.environ.get("HERMES_HOME") or os.path.join(os.path.expanduser("~"), ".hermes")
+        try:
+            import yaml
+            with open(os.path.join(home, "config.yaml"), encoding="utf-8") as fh:
+                cfg = yaml.safe_load(fh) or {}
+            model = (cfg.get("model") or {}).get("default")
+            return str(model) if model else None
+        except Exception:
+            return None
+    return None
+
+
 def describe_executors(choice: str | None = None) -> dict:
-    """What Settings shows: every executor, whether it is ready, and which one
-    this user's turns run on."""
+    """What Settings shows: every executor, whether it is ready, which one
+    this user's turns run on, and the model behind each."""
     options = []
     for entry in EXECUTORS:
         ready, reason = readiness(entry["name"])
-        options.append({**entry, "ready": ready, "reason": reason})
+        options.append({**entry, "ready": ready, "reason": reason,
+                        "model": executor_model(entry["name"])})
     return {
         "selected": current_executor(choice),
         "default": default_executor(),

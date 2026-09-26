@@ -1028,7 +1028,7 @@ function setRunning(running, todoId) {
   if (stopBtn) {
     stopBtn.classList.toggle('hidden', !running);
     stopBtn.disabled = false;
-    stopBtn.textContent = 'Stop';
+    if (!stopBtn.dataset.icon) stopBtn.textContent = 'Stop';
   }
   if (followup) followup.disabled = running;
   if (regen) regen.disabled = running;
@@ -1078,7 +1078,7 @@ function schedulePoll(todoId) {
 
 function stopRun(todoId) {
   const stopBtn = document.getElementById('ai-stop-btn');
-  if (stopBtn) { stopBtn.disabled = true; stopBtn.textContent = 'Stopping…'; }
+  if (stopBtn) { stopBtn.disabled = true; if (!stopBtn.dataset.icon) stopBtn.textContent = 'Stopping…'; }
   fetch(aiUrl(todoId, '/run/stop'), { method: 'POST' })
     .then(() => schedulePoll(todoId))
     .catch(() => schedulePoll(todoId));
@@ -1088,6 +1088,7 @@ function stopRun(todoId) {
 // options rather than being typed. The server frames those differently: the
 // user picked a short label, not the generated sentence underneath it.
 function callAI(todoId, message, fromSuggestion) {
+  if (todoId === CHAT_ID) setChatHasThread(true);
   if (message) {
     const threadEl = document.getElementById('ai-thread');
     if (threadEl && activeThreadId === todoId) {
@@ -1367,7 +1368,7 @@ function renderExecutorCard(executor) {
 // cycle, so flipping it here takes effect on the next poll. Connections are
 // untouched: a paused source keeps its accounts and keys.
 function setSourceToggle(source, enabled) {
-  const card = document.querySelector(`.source-card[data-source="${source}"], .source-subcard[data-source="${source}"]`);
+  const card = document.querySelector(`.source-card[data-source="${source}"]`);
   if (!card) return;
   const input = card.querySelector('.source-toggle-input');
   const label = card.querySelector('.source-toggle-label');
@@ -1395,29 +1396,61 @@ function bindSourceToggle(input) {
 
 // The opt-in macOS sources have nothing to connect, so their cards are just
 // a description and the pause toggle, and exist only when the server runs them.
+const EXTRA_SOURCE_ICONS = {
+  browser_history: { tone: 'amber', path: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 9h18M7 6.5h.01M10 6.5h.01"/>' },
+  system:          { tone: 'stone', path: '<rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/>' },
+};
+
 function renderExtraSources(extra) {
   const container = document.getElementById('extra-sources');
-  container.innerHTML = (extra || []).map(src => `
-    <div class="source-card" data-source="${escapeHtml(src.name)}">
-      <div class="source-card-header">
-        <span class="source-card-name">${escapeHtml(src.label)}</span>
-        <span class="source-connected-badge on">Local</span>
+  container.innerHTML = (extra || []).map(src => {
+    const icon = EXTRA_SOURCE_ICONS[src.name] || EXTRA_SOURCE_ICONS.system;
+    return `
+    <div class="source-card tile tile-flat" data-source="${escapeHtml(src.name)}">
+      <div class="source-card-header tile-header static">
+        <span class="tile-icon tone-${icon.tone}"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${icon.path}</svg></span>
+        <span class="tile-titles">
+          <span class="source-card-name">${escapeHtml(src.label)}</span>
+          <span class="tile-desc">${escapeHtml(src.description)}</span>
+        </span>
+        <span class="tile-controls"><span class="source-connected-badge on">Local</span>
         <label class="source-toggle" title="Discover todos from ${escapeHtml(src.label)}">
           <input type="checkbox" class="source-toggle-input" data-source="${escapeHtml(src.name)}">
           <span class="source-toggle-track"></span>
           <span class="source-toggle-label">On</span>
-        </label>
+        </label></span>
       </div>
-      <div class="source-card-body">
-        <span class="source-card-hint">${escapeHtml(src.description)}</span>
-      </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
   container.querySelectorAll('.source-toggle-input').forEach(bindSourceToggle);
   (extra || []).forEach(src => setSourceToggle(src.name, src.enabled));
 }
 
+// Each connector is a tile: icon, name, status and pause switch at rest, the
+// connect form underneath when opened. Tiles start folded so the section reads
+// as a directory; the badge says which ones still need connecting.
+function setTileOpen(tile, open) {
+  tile.classList.toggle('open', open);
+  const header = tile.querySelector('.tile-header');
+  if (header && header.tagName === 'BUTTON') header.setAttribute('aria-expanded', String(open));
+}
+
+function bindTileHeader(header) {
+  header.addEventListener('click', (e) => {
+    if (e.target.closest('.source-toggle')) return;  // the pause switch is its own control
+    const tile = header.closest('.tile');
+    setTileOpen(tile, !tile.classList.contains('open'));
+  });
+}
+document.querySelectorAll('#settings-view .tile-header:not(.static)').forEach(bindTileHeader);
+// The pause switch sits inside the header button; keep its click from bubbling
+// into the fold/unfold, and let the label do its own toggling.
+document.querySelectorAll('#settings-view .tile-header .source-toggle').forEach(label => {
+  label.addEventListener('click', (e) => e.stopPropagation());
+});
+
 function loadSettings() {
-  fetch('/settings.json').then(r => r.json()).then(data => {
+  fetch('/settings.json').then(r => r.json()).then(async data => {
     const { fathom, pocket, gmail, extra } = data.sources;
     setSourceConnected('fathom', fathom.connected, fathom.api_key_preview);
     setSourceConnected('pocket', pocket.connected, pocket.api_key_preview);
@@ -1428,7 +1461,7 @@ function loadSettings() {
     setSourceToggle('pocket', pocket.enabled !== false);
     renderExtraSources(extra || []);
     renderExecutorCard(data.executor || { selected: null, default: null, options: [] });
-    renderPushCard(data.notifications || { configured: false, subscription_count: 0 });
+    await renderPushCard(data.notifications || { configured: false, subscription_count: 0 });
     renderWhatsappCard(data.whatsapp || { configured: false });
   });
 }
@@ -1437,6 +1470,7 @@ function showSettingsView({ push } = { push: true }) {
   hideChatView();
   document.body.classList.add('view-settings');
   settingsView.hidden = false;
+  setActiveNav('settings');
   if (push && location.pathname !== SETTINGS_PATH) {
     history.pushState({ view: 'settings' }, '', SETTINGS_PATH);
   }
@@ -1449,20 +1483,45 @@ function showInboxView({ push } = { push: true }) {
   hideChatView();
   document.body.classList.remove('view-settings');
   settingsView.hidden = true;
+  setActiveNav('inbox');
   if (push && location.pathname !== '/') {
     history.pushState({ view: 'inbox' }, '', selectedId ? `/#todo/${selectedId}` : '/');
   }
 }
 
-document.getElementById('openSettingsBtn').addEventListener('click', (e) => {
-  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // let "open in new tab" through
-  e.preventDefault();
-  showSettingsView();
+// ---------------- Navigation rail ----------------
+// The rail's items are real anchors to /, /chat and /settings; a plain click
+// becomes a view swap, a modified click (new tab) is left to the browser.
+// On phone widths the rail is a drawer, toggled with `body.nav-open`.
+const NAV_VIEWS = { inbox: showInboxView, chat: showChatView, settings: showSettingsView };
+
+function setActiveNav(view) {
+  document.querySelectorAll('#nav-rail .rail-item[data-view]').forEach(a => {
+    const on = a.dataset.view === view;
+    a.classList.toggle('active', on);
+    if (on) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
+  });
+}
+
+function setNavOpen(open) {
+  document.body.classList.toggle('nav-open', open);
+  document.getElementById('navScrim').hidden = !open;
+  document.getElementById('navOpenBtn').setAttribute('aria-expanded', String(open));
+}
+
+document.querySelectorAll('#nav-rail .rail-item[data-view]').forEach(a => {
+  a.addEventListener('click', (e) => {
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;  // let "open in new tab" through
+    e.preventDefault();
+    setNavOpen(false);
+    NAV_VIEWS[a.dataset.view]();
+  });
 });
-document.getElementById('settingsBackBtn').addEventListener('click', (e) => {
-  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-  e.preventDefault();
-  showInboxView();
+document.getElementById('navOpenBtn').addEventListener('click', () => setNavOpen(true));
+document.getElementById('navCloseBtn').addEventListener('click', () => setNavOpen(false));
+document.getElementById('navScrim').addEventListener('click', () => setNavOpen(false));
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && document.body.classList.contains('nav-open')) setNavOpen(false);
 });
 window.addEventListener('popstate', () => {
   if (location.pathname === SETTINGS_PATH) showSettingsView({ push: false });
@@ -1480,15 +1539,49 @@ const chatView = document.getElementById('chat-view');
 const chatBody = document.getElementById('chat-body');
 const CHAT_PATH = '/chat';
 
+const ICON_SEND = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M6 11l6-6 6 6"/></svg>';
+const ICON_STOP = '<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
+
+// The same composer ids the detail pane uses, laid out as a card: the text on
+// top, the agent label and a round send/stop button underneath. `data-icon`
+// tells setRunning/stopRun not to overwrite the icons with text.
 function renderChatShell() {
   chatBody.innerHTML = `
     <div id="ai-thread"></div>
-    <div id="ai-input-area">
-      <textarea id="ai-followup" placeholder="Ask your agent to do something…" rows="1"></textarea>
-      <button id="ai-send-btn">Send</button>
-      <button id="ai-stop-btn" class="hidden">Stop</button>
+    <div class="composer-card">
+      <div id="ai-input-area">
+        <textarea id="ai-followup" placeholder="Ask your agent to do something…" rows="1"></textarea>
+        <div class="composer-row">
+          <a class="composer-agent" id="chat-agent-label" href="/settings" title="Change in Settings">Agent</a>
+          <span class="composer-model" id="chat-model-label" title="The model this agent runs on. Not changeable here yet." hidden></span>
+          <button id="ai-send-btn" data-icon="1" aria-label="Send" title="Send">${ICON_SEND}</button>
+          <button id="ai-stop-btn" data-icon="1" class="hidden" aria-label="Stop" title="Stop">${ICON_STOP}</button>
+        </div>
+      </div>
     </div>`;
   bindComposer(CHAT_ID);
+  loadChatAgentLabel();
+}
+
+// Which executor will answer, read fresh each time the view opens so a change
+// made in Settings shows without a reload.
+function loadChatAgentLabel() {
+  fetch('/settings.json').then(r => r.json()).then(data => {
+    const ex = data.executor || {};
+    const name = ex.selected || ex.default;
+    const opt = (ex.options || []).find(o => o.name === name);
+    const el = document.getElementById('chat-agent-label');
+    if (el && opt) el.textContent = opt.label;
+    const modelEl = document.getElementById('chat-model-label');
+    if (modelEl) { modelEl.textContent = (opt && opt.model) || ''; modelEl.hidden = !(opt && opt.model); }
+  }).catch(() => {});
+}
+
+// Hero on an empty conversation, thread plus docked composer once it has one.
+function setChatHasThread(has) {
+  chatView.classList.toggle('has-thread', has);
+  const btn = document.getElementById('chat-new-btn');
+  if (btn) btn.hidden = !has;
 }
 
 function loadChatThread() {
@@ -1496,11 +1589,9 @@ function loadChatThread() {
   stopPolling();
   setRunning(false);
   const threadEl = document.getElementById('ai-thread');
-  if (threadCache[CHAT_ID] && threadCache[CHAT_ID].length) {
-    renderThread(threadCache[CHAT_ID]);
-  } else {
-    threadEl.innerHTML = '<div class="ai-empty-cta">Ask for anything — the agent has the same tools it uses to resolve todos.</div>';
-  }
+  const cached = Boolean(threadCache[CHAT_ID] && threadCache[CHAT_ID].length);
+  setChatHasThread(cached);
+  if (cached) renderThread(threadCache[CHAT_ID]); else threadEl.innerHTML = '';
   // Same as a todo: the server has either the saved thread or a run this page
   // never started (a reload mid-turn, another tab).
   fetch('/chat/ask-ai', {
@@ -1511,7 +1602,10 @@ function loadChatThread() {
     .then(r => r.json())
     .then(data => {
       if (activeThreadId !== CHAT_ID) return;
-      if ((data.thread && data.thread.length) || data.status === 'running') applyRunState(CHAT_ID, data);
+      if ((data.thread && data.thread.length) || data.status === 'running') {
+        setChatHasThread(true);
+        applyRunState(CHAT_ID, data);
+      }
     })
     .catch(() => {});
 }
@@ -1523,6 +1617,7 @@ function showChatView({ push } = { push: true }) {
   settingsView.hidden = true;
   document.body.classList.add('view-chat');
   chatView.hidden = false;
+  setActiveNav('chat');
   if (push && location.pathname !== CHAT_PATH) {
     history.pushState({ view: 'chat' }, '', CHAT_PATH);
   }
@@ -1542,16 +1637,6 @@ function hideChatView() {
   chatBody.innerHTML = '';
 }
 
-document.getElementById('openChatBtn').addEventListener('click', (e) => {
-  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-  e.preventDefault();
-  showChatView();
-});
-document.getElementById('chatBackBtn').addEventListener('click', (e) => {
-  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
-  e.preventDefault();
-  showInboxView();
-});
 document.getElementById('chat-new-btn').addEventListener('click', () => {
   const btn = document.getElementById('chat-new-btn');
   btn.disabled = true;
@@ -1570,6 +1655,8 @@ if (window.__INITIAL_VIEW === 'settings' || location.pathname === SETTINGS_PATH)
   showSettingsView({ push: false });
 } else if (window.__INITIAL_VIEW === 'chat' || location.pathname === CHAT_PATH) {
   showChatView({ push: false });
+} else {
+  setActiveNav('inbox');
 }
 
 // Fathom and Pocket are both a pasted API key behind the same card layout.

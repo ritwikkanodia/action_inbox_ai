@@ -136,14 +136,20 @@ fine — a confusing way to lose an afternoon. Key routes:
 - `POST /todos/<id>/reset-thread` — clears `ai_thread`
 - `GET /settings` — the Settings *page*: the same shell as `/` with the settings view in front
   (`initial_view`), so Back is instant and the digest's "connect Gmail" link lands somewhere
-  real. The frontend swaps views with `pushState`; the header link and Back are real anchors.
+  real. The frontend swaps views with `pushState`; the items in the left navigation rail are real
+  anchors (`#nav-rail` in `index.html`, a drawer under 760px). Settings is three titled
+  sections — Channels, Connectors, Agent — of connector tiles that fold; a tile that still
+  start folded and an opened one spans the full grid row.
   The Gmail OAuth callback redirects here, so a freshly connected account is on screen.
 - `GET /settings.json` — what the settings view fetches; `POST /settings/sources/<source>`,
   `/settings/sources/gmail/auth` — source connections
 - `POST /settings/sources/<source>/enabled` — per-user pause/resume of a discovery source
 - `POST /settings/executor` — which agent resolves this user's todos (see "Discovery and execution are decoupled")
 - `GET /digest/preview?user_id=…[&format=json]` — renders a user's digest without sending it
-- `GET /chat` — the todo-less chat, a third view in the same shell; `POST /chat/ask-ai`,
+- `GET /chat` — the todo-less chat, a third view in the same shell. An empty conversation
+  shows a centred prompt and the composer card alone; once a turn exists (`has-thread` on
+  `#chat-view`, set by `setChatHasThread`) the thread fills the view and the card docks at the
+  bottom. The card shows the selected executor's label, read from `/settings.json` on open; `POST /chat/ask-ai`,
   `GET /chat/run`, `POST /chat/run/stop`, `POST /chat/reset-thread` mirror the todo routes
 - `GET|POST /whatsapp/webhook` — Meta's subscription handshake and inbound messages (public,
   signature-checked); `POST /settings/whatsapp/link`, `/settings/whatsapp/unlink` — number linking
