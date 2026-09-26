@@ -77,6 +77,8 @@ def register_identity_routes(app, db, settings, flows, admission, sessions, goog
         raw=browser_cookie()
         require_csrf(raw,request.form.get('csrf'),request.headers.get('Origin'),None,settings.public_origin)
         flow=flows.begin(raw)
+        if request.accept_mimetypes.best == 'application/json':
+            return jsonify(authorization_url=google.authorization_url(flow))
         return redirect(google.authorization_url(flow),302)
 
     @app.get('/oauth/login/callback')

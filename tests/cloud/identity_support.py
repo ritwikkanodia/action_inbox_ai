@@ -101,7 +101,7 @@ class SignedGoogleFixture:
         return GoogleAdapter(WebSettings.from_mapping(test_settings()), transport), claim
 
 
-def web_fixture(db, executable=False, *, origin='https://localhost'):
+def web_fixture(db, executable=False, *, origin='https://localhost', settings=None):
     """Test-only composition; never imported by production modules."""
     from dataclasses import replace
     from pathlib import Path
@@ -120,7 +120,7 @@ def web_fixture(db, executable=False, *, origin='https://localhost'):
     root=Path(__file__).resolve().parents[2]
     app=Flask(__name__,template_folder=str(root/'templates'),static_folder=str(root/'static'))
     app.testing=True
-    settings=replace(WebSettings.from_mapping(test_settings()),public_origin=origin)
+    settings=replace(settings or WebSettings.from_mapping(test_settings()),public_origin=origin)
     fixture=SignedGoogleFixture()
     transport=FakeGoogleTransport('',fixture.certificate)
     app.extensions.update(fixture_transport=transport,fixture_signer=fixture,fixture_settings=settings)

@@ -5,14 +5,14 @@ from cloud.identity.types import AuthenticationRequired, SessionProof
 from cloud.types import Rejected, Unavailable
 
 
-def lock_runtime(tx):
+def lock_runtime(tx, *, allow_recovery=False):
     runtime = tx.execute('SELECT * FROM runtime WHERE singleton FOR SHARE').fetchone()
     if not runtime:
         raise Unavailable('runtime_unavailable')
     held = tx.execute("""SELECT 1 FROM recovery_audit b WHERE b.epoch=%s AND b.action='begin'
         AND NOT EXISTS (SELECT 1 FROM recovery_audit r WHERE r.epoch=b.epoch AND r.action='resume')
         LIMIT 1""", (runtime['epoch'],)).fetchone()
-    if held:
+    if held and not allow_recovery:
         raise Unavailable('recovery_hold')
     return runtime
 

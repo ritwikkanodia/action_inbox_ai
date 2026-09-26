@@ -90,10 +90,13 @@
         if (result.response.status === 401) window.location.assign('/login');
         return;
       }
-      const data = result.data, changed = state.contextId !== null && state.contextId !== data.context_id;
+      const data = result.data, first = state.contextId === null;
+      const changed = !first && state.contextId !== data.context_id;
       if (changed) { clearAccount('Session changed.'); signal(); }
       if (changed || state.suspended || state.contextId === null) S.resume(state, data.context_id);
       auth = data; nextCursor = data.next_cursor;
+      // A fresh document after OAuth has no previous context, but other tabs do.
+      if (first) signal();
       el('cloud-profile').textContent = data.profile.name + ' · ' + data.profile.email;
       showTodos(data.todos);
       el('cloud-account').hidden = false;
@@ -103,8 +106,8 @@
       el('cloud-inbox').hidden = route !== '/' || selectedTodo !== null;
       el('cloud-chat').hidden = route !== '/chat' && selectedTodo === null;
       el('cloud-execution').textContent = data.capabilities.chat_execute ? 'Synthetic test execution' : 'Task execution is not available yet.';
-      el('cloud-draft').disabled = !data.capabilities.chat_execute || !!state.pending;
-      el('cloud-send').disabled = !data.capabilities.chat_execute || !!state.pending;
+      el('cloud-draft').disabled = !data.capabilities.chat_execute || !!state.pending || !cid;
+      el('cloud-send').disabled = !data.capabilities.chat_execute || !!state.pending || !cid;
       if (!el('cloud-chat').hidden && !cid) await openConversation(selectedTodo);
     } catch (error) {
       if (serial === bootstrapSerial && error.name !== 'AbortError' && !error.stale)
@@ -138,6 +141,8 @@
       const data = await requestJSON('/api/work/conversations/' + conversation);
       if (!await validateTicket(ticket) || serial !== snapshotSerial || conversation !== cid) return;
       generation = data.generation;
+      el('cloud-draft').disabled = !auth.capabilities.chat_execute || !!state.pending;
+      el('cloud-send').disabled = !auth.capabilities.chat_execute || !!state.pending;
       el('cloud-thread').replaceChildren();
       for (const message of data.messages) {
         const p = document.createElement('p'); p.textContent = message.role + ': ' + message.content;

@@ -59,7 +59,7 @@ class Sessions:
         if not isinstance(owner_id, str) or not 1 <= len(owner_id) <= 128:
             raise NotFound('owner_not_found')
         with self.db.transaction() as tx:
-            lock_runtime(tx)
+            lock_runtime(tx, allow_recovery=True)
             owner = tx.execute('SELECT owner_id FROM owners WHERE owner_id=%s FOR UPDATE', (owner_id,)).fetchone()
             identity = tx.execute('SELECT owner_id FROM auth_identities WHERE owner_id=%s FOR UPDATE', (owner_id,)).fetchone()
             if not owner or not identity:

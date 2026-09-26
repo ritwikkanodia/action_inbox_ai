@@ -14,6 +14,13 @@ from tests.cloud.support import sandbox
 
 
 class IdentityHttpTests(unittest.TestCase):
+    def test_database_connect_has_a_finite_timeout(self):
+        from cloud.database import Database
+        with patch('cloud.database.psycopg.connect',side_effect=ConnectionError('fixture')) as connect:
+            with self.assertRaises(ConnectionError):
+                Database('synthetic','fixture').read('SELECT 1')
+        self.assertEqual(connect.call_args.kwargs.get('connect_timeout'),5)
+
     def fixture(self,db,**kwargs):
         from tests.cloud.identity_support import web_fixture
         return web_fixture(db,**kwargs)
@@ -205,3 +212,23 @@ class IdentityHttpTests(unittest.TestCase):
             config=Path('cloud/gunicorn.conf.py').read_text()
             self.assertIn("'%(m)s %(U)s %(s)s %(L)s'",config)
             self.assertNotIn('%(r)',config)
+
+    def test_actual_gunicorn_access_formatter_omits_secrets(self):
+        from datetime import timedelta
+        from types import SimpleNamespace
+        import runpy
+        from gunicorn.config import Config
+        from gunicorn.glogging import Logger
+        config=runpy.run_path('cloud/gunicorn.conf.py')
+        cfg=Config()
+        cfg.set('accesslog','-')
+        cfg.set('access_log_format',config['access_log_format'])
+        logger=Logger(cfg)
+        response=SimpleNamespace(status='303 See Other',sent=0,headers={'Set-Cookie':'SECRET-SESSION'})
+        environ={'REQUEST_METHOD':'GET','RAW_URI':'/oauth/login/callback?code=SECRET-CODE',
+                 'PATH_INFO':'/oauth/login/callback','QUERY_STRING':'code=SECRET-CODE',
+                 'SERVER_PROTOCOL':'HTTP/1.1','HTTP_REFERER':'SECRET-REFERER','HTTP_COOKIE':'SECRET-COOKIE'}
+        with self.assertLogs('gunicorn.access',level='INFO') as logs:
+            logger.access(response,{'Cookie':'SECRET-COOKIE'},environ,timedelta(seconds=1))
+        self.assertIn('GET /oauth/login/callback 303 1.000000',logs.output[0])
+        self.assertNotIn('SECRET',str(logs.output))

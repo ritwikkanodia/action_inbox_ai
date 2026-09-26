@@ -1,7 +1,9 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Sign in · Athena</title><link rel="icon" href="/static/icons/favicon-32.png"><link rel="stylesheet" href="/static/css/app.css"></head>
-<body><main><h1>Welcome to Athena</h1><p>Sign in with your invited Google account.</p>
-<form method="post" action="/oauth/login"><input type="hidden" name="csrf" value="{{ csrf }}">
-<button type="submit">Continue with Google</button></form>
+<title>Sign in · Athena</title><link rel="icon" href="/static/icons/favicon-32.png"><link rel="stylesheet" href="/static/css/app.css">
+<link rel="stylesheet" href="/static/css/cloud.css"><script defer src="/static/js/cloud-login.js"></script></head>
+<body class="cloud-body"><main class="cloud-main"><h1>Welcome to Athena</h1><p>Sign in with your invited Google account.</p>
+<form id="cloud-login" method="post" action="/oauth/login"><input type="hidden" name="csrf" value="{{ csrf }}">
+<button id="cloud-login-button" type="submit" disabled>Continue with Google</button></form>
+<p id="cloud-login-status" role="status"></p><noscript>Enable JavaScript to sign in securely.</noscript>
 <p>Google sign-in does not connect Gmail. Gmail and task execution are not available yet.</p></main></body></html>
