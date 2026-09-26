@@ -3,17 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Offline — Self-driving Inbox</title>
-  <meta name="theme-color" content="#0b0b0c">
+  <title>Offline — Athena</title>
+  <meta name="theme-color" content="#123E52">
   <link rel="icon" href="{{ url_for('static', filename='icons/favicon-32.png') }}" sizes="32x32">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      color-scheme: dark;
-      background: #0b0b0c;
-      color: #ededed;
-      font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+      color-scheme: light;
+      background: #f4ecdd;
+      color: #173442;
+      font-family: Georgia, serif;
       font-size: 14px;
       min-height: 100vh;
       display: flex;
@@ -23,9 +23,9 @@
     }
 
     .card {
-      background: #141417;
-      border: 1px solid #232327;
-      border-radius: 14px;
+      background: #fffaf0;
+      border: 1px solid #d6c6ab;
+      border-radius: 2px;
       padding: 40px 36px;
       width: min(380px, 92vw);
       text-align: center;
@@ -33,26 +33,26 @@
 
     .card img { width: 56px; height: 56px; border-radius: 12px; }
     .card h1 { font-size: 18px; font-weight: 500; margin: 18px 0 8px; }
-    .card p { color: #74747d; line-height: 1.5; }
+    .card p { color: #4d6670; line-height: 1.5; }
 
     .retry {
       margin-top: 24px;
-      background: #f0b429;
-      color: #17130a;
+      background: #123e52;
+      color: #fffaf0;
       border: 0;
       border-radius: 8px;
       padding: 10px 20px;
       font: inherit;
       cursor: pointer;
     }
-    .retry:hover { background: #ffc94d; }
+    .retry:hover { background: #0a2f42; }
   </style>
 </head>
 <body>
   <div class="card">
     <img src="{{ url_for('static', filename='icons/icon-192.png') }}" alt="">
     <h1>You're offline</h1>
-    <p>Self-driving Inbox needs a connection to load your list. Reconnect and try again.</p>
+    <p>Athena needs a connection to load your list. Reconnect and try again.</p>
     <button class="retry" onclick="location.reload()">Try again</button>
   </div>
 </body>

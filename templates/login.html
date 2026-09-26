@@ -3,35 +3,37 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Sign in — Self-driving Inbox</title>
-  <meta name="theme-color" content="#0b0b0c">
-  <meta name="description" content="Your inbox, meetings and notes turned into a single list of things to actually do.">
+  <title>Sign in — Athena</title>
+  <meta name="theme-color" content="#123E52">
+  <meta name="description" content="A considered inbox for turning commitments into action.">
   <link rel="manifest" href="{{ url_for('manifest') }}">
   <link rel="icon" href="{{ url_for('static', filename='icons/favicon-32.png') }}" sizes="32x32">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Self-driving">
+  <meta name="apple-mobile-web-app-title" content="Athena">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@400;500;600&family=Spectral:wght@600;700&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      color-scheme: dark;
-      --bg: #0b0b0c;
-      --panel: #141417;
-      --border: #232327;
-      --text: #ededed;
-      --muted: #74747d;
-      --accent: #f0b429;
-      --accent-ink: #17130a;
+      color-scheme: light;
+      --bg: #f4ecdd;
+      --panel: #fffaf0;
+      --border: #d6c6ab;
+      --text: #173442;
+      --muted: #4d6670;
+      --accent: #123e52;
+      --accent-ink: #fffaf0;
     }
 
     body {
-      background: var(--bg);
+      background-color: var(--bg);
+      background-image: linear-gradient(90deg, rgba(183,161,125,.13) 1px, transparent 1px), linear-gradient(rgba(183,161,125,.1) 1px, transparent 1px);
+      background-size: 32px 32px;
       color: var(--text);
-      font-family: 'DM Sans', sans-serif;
+      font-family: 'Source Sans 3', sans-serif;
       font-size: 14px;
       min-height: 100vh;
       display: flex;
@@ -42,16 +44,26 @@
     .card {
       background: var(--panel);
       border: 1px solid var(--border);
-      border-radius: 14px;
+      border-radius: 2px;
       padding: 40px 36px;
       width: min(380px, 92vw);
       text-align: center;
     }
 
     .card h1 {
-      font-size: 18px;
-      font-weight: 500;
+      font-family: 'Spectral', Georgia, serif;
+      font-size: 27px;
+      font-weight: 700;
+      letter-spacing: .08em;
       margin-bottom: 8px;
+    }
+
+    .athena-login-logo {
+      display: block;
+      width: 204px;
+      max-width: 100%;
+      height: auto;
+      margin: -6px auto 14px;
     }
 
     .card p {
@@ -80,7 +92,7 @@
       transition: background 0.15s;
     }
 
-    .google-btn:hover { background: #ffc94d; }
+    .google-btn:hover { background: #0a2f42; }
 
     .google-icon {
       width: 16px;
@@ -99,7 +111,7 @@
 </head>
 <body>
   <div class="card">
-    <h1>Self-driving Inbox</h1>
+    <img class="athena-login-logo" src="{{ url_for('static', filename='images/athena-mark.png') }}" alt="Athena">
     <p>Sign in with your Google account. We may request Gmail access to import emails (optional).</p>
     <a class="google-btn" href="{{ url_for('login_start') }}">
       <span class="google-icon">G</span>

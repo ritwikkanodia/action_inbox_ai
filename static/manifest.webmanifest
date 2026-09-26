@@ -1,14 +1,14 @@
 {
   "id": "/",
-  "name": "Self-driving Inbox",
-  "short_name": "Self-driving",
-  "description": "Your inbox, meetings and notes turned into a single list of things to actually do.",
+  "name": "Athena",
+  "short_name": "Athena",
+  "description": "A considered inbox for turning commitments into action.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
   "orientation": "any",
-  "background_color": "#0b0b0c",
-  "theme_color": "#0b0b0c",
+  "background_color": "#F4ECDD",
+  "theme_color": "#123E52",
   "icons": [
     {
       "src": "/static/icons/icon-192.png",

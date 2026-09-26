@@ -3,23 +3,23 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Self-driving Inbox</title>
-  <meta name="theme-color" content="#0b0b0c">
-  <meta name="description" content="Your inbox, meetings and notes turned into a single list of things to actually do.">
+  <title>Athena — Intentional inbox</title>
+  <meta name="theme-color" content="#123E52">
+  <meta name="description" content="Athena turns your inbox, meetings and notes into a considered list of next actions.">
   <link rel="manifest" href="{{ url_for('manifest') }}">
   <link rel="icon" href="{{ url_for('static', filename='icons/favicon-32.png') }}" sizes="32x32">
   <link rel="apple-touch-icon" href="{{ url_for('static', filename='icons/apple-touch-icon.png') }}">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="Self-driving">
+  <meta name="apple-mobile-web-app-title" content="Athena">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Source+Sans+3:wght@400;500;600;700&family=Spectral:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css', v='athena-dark-1') }}">
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
-<body>
+<body{% if request.args.get('theme') == 'dark' %} class="theme-dark"{% endif %}>
 
 {% if not gmail_connected %}
 <div class="gmail-banner">
@@ -29,6 +29,9 @@
 {% endif %}
 
 <header class="top">
+  <a class="brand-mark" href="{{ url_for('index') }}" aria-label="Athena inbox">
+    <img src="{{ url_for('static', filename='images/athena-mark.png') }}" alt="Athena">
+  </a>
   <div class="tabs">
     {# 'ongoing' is a real status users can set, so it filters on its own rather
        than hiding inside 'open'. Defaults reproduce the old Open tab. #}
