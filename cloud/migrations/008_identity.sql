@@ -58,4 +58,3 @@ CREATE TABLE cloud_conversation_bindings (
     PRIMARY KEY(owner_id,slot), UNIQUE(owner_id,conversation_id),
     FOREIGN KEY(owner_id,conversation_id) REFERENCES conversations(owner_id,id)
 );
-

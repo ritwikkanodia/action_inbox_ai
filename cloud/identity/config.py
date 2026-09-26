@@ -72,4 +72,3 @@ class WebSettings:
         except Exception:
             raise ValueError('invalid_cloud_web_configuration') from None
         return cls(database, environment, origin, client_id, secret, key)
-

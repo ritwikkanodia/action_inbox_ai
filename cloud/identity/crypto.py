@@ -39,4 +39,3 @@ def open_verifier(key, value):
     if not re.fullmatch(r'[A-Za-z0-9._~-]{43,128}', result):
         raise ValueError('invalid_verifier')
     return result
-

@@ -12,4 +12,3 @@ def test_settings():
         'ATHENA_GOOGLE_CLIENT_SECRET': 'synthetic-client-secret',
         'ATHENA_AUTH_FLOW_KEY': Fernet.generate_key().decode(),
     }
-

@@ -70,4 +70,3 @@ class ProviderResponse:
     status: int
     data: bytes = field(repr=False)
     headers: dict[str, str] = field(repr=False)
-

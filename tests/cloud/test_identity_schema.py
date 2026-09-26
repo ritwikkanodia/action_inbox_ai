@@ -115,4 +115,3 @@ class IdentitySchemaTests(unittest.TestCase):
         for value in values:
             self.assertNotIn(token, repr(value))
             self.assertNotIn(hash_token(token), repr(value))
-
