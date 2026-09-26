@@ -9,6 +9,7 @@ from werkzeug.exceptions import HTTPException, BadRequest, RequestEntityTooLarge
 from cloud.control import Control
 from cloud.types import Actor, Conflict, NotFound, Rejected, StaleLease, Submission, Unavailable, WorkError
 from cloud.work import Work
+from cloud.identity.types import AuthenticationRequired, Forbidden, AdmissionDenied, RateLimited
 
 
 def body(allowed, required=()):
@@ -24,7 +25,7 @@ def readiness(db, principal):
     return {'status':'ready_for_synthetic_testing'}, 200
 
 
-def register_routes(app, db, principal):
+def register_routes(app, db, principal, *, submit_gate=None, include_ready=True):
     work, control = Work(db), Control(db)
     def authenticated(function):
         @wraps(function)
@@ -36,9 +37,15 @@ def register_routes(app, db, principal):
 
     @app.errorhandler(WorkError)
     def work_error(error):
-        status = (404 if isinstance(error,NotFound) else 409 if isinstance(error,(Conflict,StaleLease))
+        status = (401 if isinstance(error,AuthenticationRequired)
+                  else 403 if isinstance(error,(Forbidden,AdmissionDenied))
+                  else 429 if isinstance(error,RateLimited)
+                  else 404 if isinstance(error,NotFound) else 409 if isinstance(error,(Conflict,StaleLease))
                   else 503 if isinstance(error,Unavailable) else 429 if error.code.endswith('_capacity') else 400)
-        return jsonify(error=error.code), status
+        response = jsonify(error=error.code)
+        response.status_code = status
+        if isinstance(error,RateLimited): response.headers['Retry-After'] = str(error.retry_after)
+        return response
 
     @app.errorhandler(psycopg.Error)
     @app.errorhandler(ConnectionError)
@@ -51,8 +58,8 @@ def register_routes(app, db, principal):
     @app.errorhandler(UnicodeError)
     def bad_body(_): return jsonify(error='invalid_body'), 400
 
-    @app.get('/ready')
-    def ready(): return readiness(db, principal)
+    if include_ready:
+        app.add_url_rule('/ready', 'ready', lambda: readiness(db, principal))
 
     @app.post('/api/work/conversations')
     @authenticated
@@ -68,6 +75,7 @@ def register_routes(app, db, principal):
     @app.post('/api/work/conversations/<uuid:cid>/messages')
     @authenticated
     def submit(actor, cid):
+        if submit_gate is not None: submit_gate()
         value = body({'text','generation','request_key','from_suggestion'}, {'text','generation','request_key'})
         receipt = work.accept(actor, Submission(cid, value['generation'], UUID(value['request_key']), value['text'], value.get('from_suggestion',False)))
         return jsonify(asdict(receipt)), 200 if receipt.replayed else 202

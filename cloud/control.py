@@ -10,6 +10,9 @@ class Control:
 
     def cancel(self, actor, job_id):
         with self.db.transaction() as tx:
+            if not tx.execute('SELECT id FROM jobs WHERE id=%s AND owner_id=%s',
+                              (job_id, actor.owner_id)).fetchone():
+                raise NotFound('job_not_found')
             locked = locked_job(tx, job_id)
             if not locked or locked[3]['owner_id'] != actor.owner_id: raise NotFound('job_not_found')
             if locked[3]['state'] in ('queued', 'running', 'retry_pending'):

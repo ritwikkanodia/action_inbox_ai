@@ -1,5 +1,6 @@
 """Ordered identity locks shared by login, revocation and request transactions."""
 from uuid import uuid4
+from contextlib import contextmanager
 from cloud.identity.types import AuthenticationRequired, SessionProof
 from cloud.types import Rejected, Unavailable
 
@@ -52,3 +53,20 @@ def validate_audit(actor, reason):
 def audit(tx, action, actor, reason, owner_id=None):
     tx.execute('INSERT INTO auth_audit(id,action,owner_id,actor,reason) VALUES (%s,%s,%s,%s,%s)',
                (uuid4(), action, owner_id, actor.strip(), reason.strip()))
+
+
+class RequestDatabase:
+    """Revalidate authority inside the very transaction doing the work."""
+    def __init__(self, db, proof):
+        self.db, self.proof = db, proof
+
+    @contextmanager
+    def transaction(self):
+        proof = self.proof()
+        with self.db.transaction() as tx:
+            lock_session(tx, proof)
+            yield tx
+
+    def read(self, query, params=()):
+        with self.transaction() as tx:
+            return tx.execute(query, params).fetchall()
