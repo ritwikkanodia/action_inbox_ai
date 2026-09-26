@@ -2,7 +2,7 @@
 
 Date: 2026-09-26
 
-Status: Proposed written design, awaiting user review. The user approved the separate-cloud-app approach in conversation; this document is not yet implementation or deployment approval.
+Status: Written design approved by the user's “Go for it” on 2026-09-26 after the design review handoff. Implementation-plan review remains required. This is not deployment or live-provider activation approval.
 
 Repository: `tryathena/athena`. Baseline: merged durable-backend PR #45, main commit `6afed644ba7644d48602f536332ffaf55634d6e2`.
 
