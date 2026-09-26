@@ -1,0 +1,6 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Try again · Athena</title><link rel="stylesheet" href="/static/css/app.css"></head>
+<body><main><h1>We couldn’t complete that request</h1>
+<p>{% if status == 503 %}The service is temporarily unavailable. A sign-out request may not have been confirmed.{% else %}Please restart sign-in or check that you have an active invitation.{% endif %}</p>
+<a href="/login">Restart sign-in</a></main></body></html>

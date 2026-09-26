@@ -17,6 +17,7 @@ const PRECACHE = [
   OFFLINE_URL,
   '/static/css/app.css',
   '/static/js/app.js',
+  '/static/js/durable-work.js',
   '/static/icons/icon-192.png',
   '/static/icons/icon-512.png',
   '/static/icons/icon-maskable-512.png',

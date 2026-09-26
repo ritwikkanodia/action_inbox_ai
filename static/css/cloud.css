@@ -1,0 +1,17 @@
+/* Cloud-only layout; shared Athena palette and fallback typography. */
+.cloud-body { display:block; min-height:100vh; height:auto; overflow:auto; font-family:var(--sans); }
+[hidden] { display:none !important; }
+.cloud-header { display:flex; align-items:center; justify-content:space-between; padding:1.25rem 5vw; border-bottom:1px solid var(--rule); }
+.cloud-header a { color:var(--ink); text-decoration:none; display:inline-flex; align-items:center; gap:.6rem; }
+.cloud-header nav { display:flex; gap:1.5rem; }
+.cloud-main { max-width:900px; margin:2rem auto; padding:0 1.25rem 3rem; }
+.cloud-main h1 { font:2rem var(--serif); margin:1rem 0; }
+.cloud-main p { margin:1rem 0; line-height:1.5; }
+.cloud-main button { background:var(--accent); color:var(--accent-ink); border:0; padding:.65rem 1rem; border-radius:.4rem; cursor:pointer; margin:.35rem .3rem .35rem 0; }
+.cloud-main button:disabled { opacity:.5; cursor:not-allowed; }
+.cloud-main textarea { display:block; width:100%; min-height:90px; margin:.5rem 0; padding:.75rem; background:var(--panel); color:var(--ink); border:1px solid var(--rule); border-radius:.4rem; font:inherit; }
+.cloud-main ul { list-style:none; padding:0; }
+#cloud-thread > p { white-space:pre-wrap; overflow-wrap:anywhere; padding:1rem; background:var(--panel); border:1px solid var(--rule); border-radius:.5rem; }
+#cloud-jobs li { color:var(--ink-2); }
+#cloud-profile { color:var(--ink-2); }
+@media (max-width:600px) { .cloud-header { gap:1rem; flex-wrap:wrap; } }

@@ -1,0 +1,13 @@
+'use strict';
+const assert = require('node:assert/strict');
+const work = require('../../static/js/durable-work.js');
+for (const state of ['queued','running','retry_pending']) assert.equal(work.shouldPoll(state), true);
+for (const state of ['needs_reconciliation','succeeded','failed','cancelled','expired']) assert.equal(work.shouldPoll(state), false);
+const pending = work.newSubmission('conversation', 1, 'fixture', 'fixed-key');
+assert.equal(work.retrySubmission(pending).request_key, 'fixed-key');
+assert.equal(work.retrySubmission(pending).generation, 1);
+assert.throws(() => { pending.generation=2; }, TypeError);
+const copy = work.retrySubmission(pending);
+copy.request_key = 'changed';
+assert.equal(work.retrySubmission(pending).request_key, 'fixed-key');
+console.log('PASS durable browser contract: active states, immutable generation, stable retry key');
