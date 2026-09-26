@@ -10,7 +10,7 @@
 
 **Spec:** `docs/superpowers/specs/2026-09-26-cloud-web-identity-design.md`, approved 2026-09-26. Read both documents before implementation.
 
-**Status:** Implementation plan awaiting review. No task below has run. Use branch `codex/cloud-web-identity` in `action_inbox_ai-hermes-cloud-image`, based on merged main `6afed64`. Do not switch the live checkout.
+**Status:** Approved by the user's “Yeah, do it”; execution on branch `codex/cloud-web-identity` in `action_inbox_ai-hermes-cloud-image`, based on merged main `6afed64`. See the cloud identity runbook and execution evidence for results; the checklist below preserves the approved plan. The live checkout remains untouched.
 
 ## Global Constraints
 

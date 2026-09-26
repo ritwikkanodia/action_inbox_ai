@@ -54,7 +54,7 @@ class Admission:
     def revoke_invite(self, invite_id, actor, reason):
         validate_audit(actor, reason)
         with self.db.transaction() as tx:
-            lock_runtime(tx)
+            lock_runtime(tx, allow_recovery=True)
             tx.execute('SELECT singleton FROM auth_admission WHERE singleton FOR UPDATE')
             result = tx.execute("""UPDATE auth_invites SET revoked_at=coalesce(revoked_at,clock_timestamp())
                 WHERE id=%s AND redeemed_owner_id IS NULL RETURNING id""", (invite_id,)).fetchone()
