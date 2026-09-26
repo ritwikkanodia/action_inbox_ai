@@ -30,10 +30,14 @@ def docker(*args, **kwargs):
     return subprocess.run(['docker', *args], check=True, capture_output=True, text=True, **kwargs).stdout.strip()
 
 
-def child(case, all_tests):
+def child(case, all_tests, browser=False):
     sys.path.insert(0, str(ROOT))
     from tests.cloud.support import deny_remote
     sys.addaudithook(deny_remote)
+    if browser:
+        import runpy
+        runpy.run_path(str(ROOT / 'scripts/verify/verify_durable_work_browser.py'), run_name='__main__')
+        return 0
     import unittest
     suite = (unittest.defaultTestLoader.discover(str(ROOT / 'tests/cloud'), top_level_dir=str(ROOT))
              if all_tests else unittest.defaultTestLoader.loadTestsFromName(case))
@@ -45,13 +49,14 @@ def main():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--case')
     group.add_argument('--all', action='store_true')
+    group.add_argument('--browser', action='store_true')
     parser.add_argument('--child', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.case and (not args.case.startswith('tests.cloud.test_') or
                       not args.case.replace('_', '').replace('.', '').isalnum()):
         parser.error('only tests.cloud.test_* modules are allowed')
     if args.child:
-        return child(args.case, args.all)
+        return child(args.case, args.all, args.browser)
     # Refuse inherited test configuration as well as any command-line DSN.
     if os.environ.get('ATHENA_VERIFY_DSN'):
         parser.error('a supplied test database is not allowed')
@@ -96,7 +101,8 @@ def main():
         env['ATHENA_VERIFY_CONTAINER'] = name
         env['PYTHONPATH'] = os.pathsep.join((str(deps), str(ROOT)))
         print(f'Python {sys.version.split()[0]}; PostgreSQL image {info["Image"]}', flush=True)
-        rc = subprocess.run([sys.executable, __file__, '--child', *( ['--all'] if args.all else ['--case', args.case])],
+        selection = ['--all'] if args.all else ['--browser'] if args.browser else ['--case', args.case]
+        rc = subprocess.run([sys.executable, __file__, '--child', *selection],
                             env=env, cwd=ROOT).returncode
         if args.all:
             for name_part in LEGACY:

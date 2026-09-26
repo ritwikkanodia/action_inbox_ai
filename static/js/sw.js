@@ -9,7 +9,7 @@
 // cache-first, so a stale entry keeps being served until the cache is renamed
 // and `activate` drops the old one — an edit to app.js or app.css that forgets
 // this ships a frontend the browser never runs.
-const VERSION = 'v24';
+const VERSION = 'v25';
 const CACHE = `athena-${VERSION}`;
 const OFFLINE_URL = '/offline';
 
@@ -17,6 +17,7 @@ const PRECACHE = [
   OFFLINE_URL,
   '/static/css/app.css',
   '/static/js/app.js',
+  '/static/js/durable-work.js',
   '/static/icons/icon-192.png',
   '/static/icons/icon-512.png',
   '/static/icons/icon-maskable-512.png',

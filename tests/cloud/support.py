@@ -49,3 +49,18 @@ def sandbox():
     finally:
         with psycopg.connect(dsn, autocommit=True) as conn:
             conn.execute(sql.SQL('DROP SCHEMA {} CASCADE').format(sql.Identifier(schema)))
+
+
+def browser_fixture(app, conversation_id):
+    """Register UI fixture endpoints only in an explicitly testing factory."""
+    if not app.testing: raise ValueError('fixture_requires_testing')
+    from flask import render_template
+    def shell():
+        return render_template('index.html', todos=[], todos_json='[]',
+            user={'name':'Synthetic User','email':'fixture@example.invalid','picture_url':None},
+            gmail_connected=True, gmail_auth_url='#', fresh_signup=False, initial_view='chat',
+            durable_work=True, durable_conversations={'chat':str(conversation_id)})
+    for name, path in (('index','/'),('chat_page','/chat'),('settings_page','/settings')):
+        app.add_url_rule(path,name,shell)
+    app.add_url_rule('/logout','logout',lambda: ('',204), methods=['POST'])
+    app.add_url_rule('/manifest.webmanifest','manifest',lambda: {'name':'Synthetic Athena','start_url':'/'})
