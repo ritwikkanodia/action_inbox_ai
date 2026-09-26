@@ -1,10 +1,11 @@
 # Athena: durable Gmail and chat work
 
-**Status:** Written specification for user review. The user approved the
-PostgreSQL + Azure Service Bus direction on 2026-09-26. This document's detailed
-contracts and proposed operating defaults still require review before an
-implementation plan. No implementation, provisioning or spend is authorized by
-writing it.
+**Status:** Written specification approved by the user on 2026-09-26 after review
+handoff of commit `68a3457`. The PostgreSQL + Azure Service Bus direction was
+approved earlier the same day. The next artifact is
+`docs/superpowers/plans/2026-09-26-durable-work.md`; that implementation plan and
+its execution method require separate user review. Spec approval is not cloud
+provisioning or spending authorization.
 
 ## What changes for the user
 
