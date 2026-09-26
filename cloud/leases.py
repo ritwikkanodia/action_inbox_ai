@@ -84,12 +84,13 @@ class Leases:
     def __init__(self, db, config=DEFAULTS, jitter=random.random):
         self.db, self.config, self.jitter = db, config, jitter
 
-    def claim(self, job_id, worker_id):
+    def claim(self, job_id, worker_id, *, epoch=None):
         if not isinstance(worker_id, str) or not worker_id or len(worker_id) > 128:
             return None
         with self.db.transaction() as tx:
             locked = locked_job(tx, job_id)
             if not locked or not enabled(locked): return None
+            if epoch is not None and epoch != locked[0]['epoch']: return None
             job = locked[3]
             if job['state'] not in ('queued', 'retry_pending'): return None
             if job['expires_at'] <= job['now']:
