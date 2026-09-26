@@ -21,6 +21,10 @@ class Control:
     def reset(self, actor, conversation_id, generation):
         with self.db.transaction() as tx:
             lock_owner(tx, actor.owner_id, require_enabled=False)
+            # Preserve connection-before-conversation ordering for bound jobs.
+            tx.execute('''SELECT id FROM connections WHERE owner_id=%s AND id IN
+                (SELECT connection_id FROM jobs WHERE conversation_id=%s) ORDER BY id FOR UPDATE''',
+                       (actor.owner_id, conversation_id)).fetchall()
             conversation = lock_conversation(tx, actor.owner_id, conversation_id)
             if type(generation) is not int or generation != conversation['generation']: raise Conflict('stale_generation')
             tx.execute('''UPDATE conversations SET generation=generation+1,next_message_seq=1,next_job_order=1

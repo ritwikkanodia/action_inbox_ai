@@ -8,17 +8,21 @@ from cloud.types import Claim, StaleLease
 from cloud.work import ACTIVE, append_message, lock_owner, lock_conversation, notify
 
 
-def locked_job(tx, job_id):
+def locked_job(tx, job_id, connection_id=None):
     # This unlocked lookup determines lock order; immutable routing fields are
     # re-read under the owner lock before any decision is made.
-    hint = tx.execute('SELECT owner_id,conversation_id FROM jobs WHERE id=%s', (job_id,)).fetchone()
+    hint = tx.execute('SELECT * FROM jobs WHERE id=%s', (job_id,)).fetchone()
     if not hint:
         return None
     runtime, owner = lock_owner(tx, hint['owner_id'], require_enabled=False)
+    selected_connection = hint.get('connection_id') or connection_id
+    connection = tx.execute('SELECT * FROM connections WHERE owner_id=%s AND id=%s FOR UPDATE',
+                            (hint['owner_id'], selected_connection)).fetchone() if selected_connection else None
     conversation = lock_conversation(tx, hint['owner_id'], hint['conversation_id']) if hint['conversation_id'] else None
     job = tx.execute('''SELECT j.*,clock_timestamp() AS now,
         (SELECT started_at FROM attempts a WHERE a.job_id=j.id AND a.fence=j.fence) AS started_at
         FROM jobs j WHERE j.id=%s FOR UPDATE''', (job_id,)).fetchone()
+    job['_connection'] = connection
     return runtime, owner, conversation, job
 
 
@@ -26,6 +30,8 @@ def enabled(locked):
     runtime, owner, conversation, job = locked
     return (runtime['enabled'] and owner['enabled'] and job['epoch'] == runtime['epoch']
             and not job['cancel_requested'] and
+            (not job.get('connection_id') or (job['_connection'] and job['_connection']['active']
+                and job['_connection']['generation'] == job['connection_generation'])) and
             (not conversation or (conversation['generation'] == job['generation'] and not conversation['reconciliation_hold'])))
 
 

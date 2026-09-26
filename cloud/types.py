@@ -1,5 +1,5 @@
 """Values shared by transactional services; no authority lives in these objects."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from uuid import UUID
 
@@ -57,3 +57,8 @@ class Envelope:
     dispatch_id: UUID
     job_id: UUID
     epoch: UUID
+
+
+@dataclass(frozen=True)
+class Capability:
+    token: str = field(repr=False)
