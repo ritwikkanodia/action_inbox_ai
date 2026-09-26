@@ -117,8 +117,10 @@ class Work:
                 WHERE owner_id=%s AND conversation_id=%s AND generation=%s ORDER BY sequence''', params).fetchall()
             jobs = tx.execute('''SELECT id AS job_id,state,reason,job_order AS "order",created_at,finished_at
                 FROM jobs WHERE owner_id=%s AND conversation_id=%s AND generation=%s ORDER BY job_order''', params).fetchall()
+            outstanding = tx.execute('''SELECT id AS job_id,state,reason FROM jobs WHERE owner_id=%s
+                AND conversation_id=%s AND state='needs_reconciliation' ORDER BY created_at''', params[:2]).fetchall()
         return {'generation': conversation['generation'], 'messages': messages, 'jobs': jobs,
-                'reconciliation_hold': conversation['reconciliation_hold']}
+                'reconciliation_hold': conversation['reconciliation_hold'], 'outstanding': outstanding}
 
     def notice(self, actor, conversation_id, origin, text):
         if not isinstance(origin, str) or not origin or len(origin) > 512 or not isinstance(text, str) or len(text.encode()) > self.config.text_bytes:

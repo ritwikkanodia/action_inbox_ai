@@ -36,17 +36,14 @@ class Recovery:
                 if job['state'] not in ('queued', 'retry_pending', 'running'): continue
                 if job['epoch'] != locked[0]['epoch']: continue
                 if not locked[1]['enabled'] or job['cancel_requested'] or (conversation and conversation['generation'] != job['generation']):
-                    transition(tx, locked, 'cancelled', 'authority_revoked')
-                    counts['cancelled'] += 1
+                    counts[transition(tx, locked, 'cancelled', 'authority_revoked')] += 1
                 elif job['expires_at'] <= job['now']:
-                    transition(tx, locked, 'expired', 'deadline_expired')
-                    counts['expired'] += 1
+                    counts[transition(tx, locked, 'expired', 'deadline_expired')] += 1
                 elif job['state'] == 'running' and (job['lease_until'] <= job['now'] or
                         job['started_at'] + timedelta(seconds=self.config.attempt_seconds) <= job['now']):
                     counts[retry_or_fail(tx, locked, True, 'lease_expired', self.config, self.jitter)] += 1
                 elif job['state'] in ('queued', 'retry_pending') and job['attempts'] >= self.config.max_attempts:
-                    transition(tx, locked, 'failed', 'attempts_exhausted')
-                    counts['failed'] += 1
+                    counts[transition(tx, locked, 'failed', 'attempts_exhausted')] += 1
         counts.update(self.redispatch())
         return dict(counts)
 
@@ -71,8 +68,7 @@ class Recovery:
                 if job['conversation_id'] and tx.execute('''SELECT id FROM jobs WHERE conversation_id=%s AND generation=%s
                     AND job_order<%s AND state=ANY(%s)''', (job['conversation_id'], job['generation'], job['job_order'], list(ACTIVE))).fetchone(): continue
                 if tx.execute('SELECT id FROM outbox WHERE job_id=%s AND quarantined LIMIT 1', (job['id'],)).fetchone():
-                    transition(tx, locked, 'failed', 'poisoned_dispatch')
-                    counts['failed'] += 1
+                    counts[transition(tx, locked, 'failed', 'poisoned_dispatch')] += 1
                     continue
                 recent = tx.execute('''SELECT id FROM outbox WHERE job_id=%s AND
                     (lease_until>clock_timestamp() OR greatest(created_at,published_at)>clock_timestamp()-%s*interval '1 second') LIMIT 1''',

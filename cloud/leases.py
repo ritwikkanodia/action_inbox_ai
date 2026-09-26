@@ -53,6 +53,12 @@ def wake_next(tx, locked):
 
 def transition(tx, locked, state, reason=None, delay=0):
     job = locked[3]
+    if state in ('cancelled', 'expired', 'failed', 'retry_pending') and tx.execute(
+            'SELECT operation_id FROM effects WHERE job_id=%s LIMIT 1', (job['id'],)).fetchone():
+        state, reason, delay = 'needs_reconciliation', 'effect_outcome_requires_review', 0
+    if state == 'needs_reconciliation' and locked[2]:
+        tx.execute('UPDATE conversations SET reconciliation_hold=true WHERE id=%s', (locked[2]['id'],))
+        locked[2]['reconciliation_hold'] = True
     terminal = state not in ('queued', 'retry_pending', 'running')
     tx.execute('''UPDATE jobs SET state=%s,reason=%s,lease_until=NULL,worker_id=NULL,
                   due_at=clock_timestamp()+%s*interval '1 second',
@@ -65,6 +71,7 @@ def transition(tx, locked, state, reason=None, delay=0):
         tx.execute("UPDATE outbox SET due_at=clock_timestamp()+%s*interval '1 second' WHERE job_id=%s AND published_at IS NULL AND lease_until IS NULL", (delay, job['id']))
     elif terminal:
         wake_next(tx, locked)
+    return state
 
 
 def retry_or_fail(tx, locked, retryable, reason, config=DEFAULTS, jitter=random.random):
@@ -76,8 +83,7 @@ def retry_or_fail(tx, locked, retryable, reason, config=DEFAULTS, jitter=random.
         state, delay = 'retry_pending', base * (1 + .2 * max(0, min(1, jitter())))
     else:
         state, delay = 'failed', 0
-    transition(tx, locked, state, reason, delay)
-    return state
+    return transition(tx, locked, state, reason, delay)
 
 
 class Leases:
@@ -93,6 +99,9 @@ class Leases:
             if epoch is not None and epoch != locked[0]['epoch']: return None
             job = locked[3]
             if job['state'] not in ('queued', 'retry_pending'): return None
+            if tx.execute('SELECT operation_id FROM effects WHERE job_id=%s LIMIT 1', (job_id,)).fetchone():
+                transition(tx, locked, 'needs_reconciliation', 'effect_outcome_requires_review')
+                return None
             if job['expires_at'] <= job['now']:
                 transition(tx, locked, 'expired', 'deadline_expired')
                 return None
@@ -130,6 +139,9 @@ class Leases:
         with self.db.transaction() as tx:
             locked = locked_job(tx, claim.job_id)
             if not authorized(locked, claim, self.config) or not locked[2]: return False
+            if tx.execute("SELECT operation_id FROM effects WHERE job_id=%s AND state IN ('prepared','uncertain') LIMIT 1", (claim.job_id,)).fetchone():
+                transition(tx, locked, 'needs_reconciliation', 'effect_outcome_requires_review')
+                return False
             append_message(tx, locked[2], 'assistant', reply, 'completion:' + str(claim.job_id), claim.job_id)
             transition(tx, locked, 'succeeded')
         return True
