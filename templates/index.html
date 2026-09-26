@@ -16,22 +16,62 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Source+Sans+3:wght@400;500;600;700&family=Spectral:wght@500;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css', v='athena-dark-1') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css', v='athena-nav-11') }}">
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body{% if request.args.get('theme') == 'dark' %} class="theme-dark"{% endif %}>
 
-{% if not gmail_connected %}
-<div class="gmail-banner">
-  <span>Gmail isn't connected — new emails aren't being processed and email-aware AI tools are disabled.</span>
-  <a href="{{ gmail_auth_url }}">Reconnect Gmail</a>
-</div>
-{% endif %}
+<div class="shell">
+  {# The rail is the app's only navigation: real anchors, so it works without
+     JS, and app.js turns clicks into pushState view swaps. Items are a plain
+     list so more views can be added without touching the layout. #}
+  <nav id="nav-rail" aria-label="Main">
+    <div class="rail-top">
+      <a class="brand-mark" href="{{ url_for('index') }}" aria-label="Athena inbox">
+        <img src="{{ url_for('static', filename='images/athena-mark.png') }}" alt="Athena">
+      </a>
+      <button class="rail-icon-btn rail-close" id="navCloseBtn" type="button" aria-label="Close menu"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6L6 18"/></svg></button>
+    </div>
+    <ul class="rail-menu">
+      <li><a class="rail-item" id="navSettings" href="{{ url_for('settings_page') }}" data-view="settings"><svg class="icon rail-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h8M18 6h2M4 12h2M12 12h8M4 18h10M20 18h0"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></svg><span>Settings</span></a></li>
+      <li><a class="rail-item" id="navInbox" href="{{ url_for('index') }}" data-view="inbox"><svg class="icon rail-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12v7a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-7"/><path d="M3 12l3-8h12l3 8"/><path d="M3 12h5l2 3h4l2-3h5"/></svg><span>Self-driving inbox</span></a></li>
+      <li><a class="rail-item" id="navChat" href="{{ url_for('chat_page') }}" data-view="chat"><svg class="icon rail-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a8 8 0 0 1-8 8H8l-5 3 1.2-4.2A8 8 0 1 1 21 12z"/></svg><span>Chat</span></a></li>
+    </ul>
+    <button class="rail-item rail-install" id="installAppBtn" type="button" hidden><svg class="icon rail-icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11M7 10l5 5 5-5"/><path d="M4 19h16"/></svg><span>Install app</span></button>
+    <div class="rail-bottom">
+      {% if user %}
+      <span class="user-chip" title="{{ user.email }}">
+        {# A blocked or expired picture falls back to the initial instead of a broken image. #}
+        {% if user.picture_url %}
+          <img src="{{ user.picture_url }}" alt="" onerror="this.hidden = true; this.nextElementSibling.hidden = false">
+          <span class="user-initial" hidden>{{ (user.name or user.email or '?')[0]|upper }}</span>
+        {% else %}
+          <span class="user-initial">{{ (user.name or user.email or '?')[0]|upper }}</span>
+        {% endif %}
+        <span class="user-chip-name">{{ user.name or user.email }}</span>
+        <form class="logout-form" action="{{ url_for('logout') }}" method="post">
+          <button type="submit" class="logout-btn" title="Sign out">Sign out</button>
+        </form>
+      </span>
+      {% endif %}
+    </div>
+  </nav>
+  <div class="rail-scrim" id="navScrim" hidden></div>
+
+  <main id="content">
+    <div class="mobile-bar">
+      <button class="rail-icon-btn" id="navOpenBtn" type="button" aria-label="Open menu" aria-controls="nav-rail"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M4 12h16M4 17h16"/></svg></button>
+      <img class="mobile-bar-mark" src="{{ url_for('static', filename='images/athena-mark.png') }}" alt="Athena">
+    </div>
+
+    {% if not gmail_connected %}
+    <div class="gmail-banner">
+      <span>Gmail isn't connected — new emails aren't being processed and email-aware AI tools are disabled.</span>
+      <a href="{{ gmail_auth_url }}">Reconnect Gmail</a>
+    </div>
+    {% endif %}
 
 <header class="top">
-  <a class="brand-mark" href="{{ url_for('index') }}" aria-label="Athena inbox">
-    <img src="{{ url_for('static', filename='images/athena-mark.png') }}" alt="Athena">
-  </a>
   <div class="tabs">
     {# 'ongoing' is a real status users can set, so it filters on its own rather
        than hiding inside 'open'. Defaults reproduce the old Open tab. #}
@@ -81,23 +121,7 @@
   <div class="header-right">
     <span class="count" id="todoCount">{{ todos|length }}</span>
     <button class="view-toggle-btn" id="viewToggleBtn" title="Toggle view" aria-label="Toggle view">List</button>
-    <button class="new-todo-btn" id="installAppBtn" hidden>Install app</button>
-    <a class="new-todo-btn" id="openChatBtn" href="{{ url_for('chat_page') }}">Chat</a>
-    <a class="new-todo-btn" id="openSettingsBtn" href="{{ url_for('settings_page') }}">Settings</a>
     <button class="new-todo-btn" id="openFormBtn">+ New</button>
-    {% if user %}
-    <span class="user-chip" title="{{ user.email }}">
-      {% if user.picture_url %}
-        <img src="{{ user.picture_url }}" alt="">
-      {% else %}
-        <span class="user-initial">{{ (user.name or user.email or '?')[0]|upper }}</span>
-      {% endif %}
-      <span>{{ user.name or user.email }}</span>
-      <form class="logout-form" action="{{ url_for('logout') }}" method="post">
-        <button type="submit" class="logout-btn" title="Sign out">Sign out</button>
-      </form>
-    </span>
-    {% endif %}
   </div>
 </header>
 
@@ -192,145 +216,190 @@
   </section>
 </div>
 
+
 <section id="settings-view" aria-labelledby="settings-heading"{% if initial_view != 'settings' %} hidden{% endif %}>
   <div class="settings-page">
-    <a class="back-btn settings-back" id="settingsBackBtn" href="{{ url_for('index') }}">← Back to inbox</a>
     <div class="settings-page-header">
       <h2 id="settings-heading">Settings</h2>
-      <span class="settings-page-hint">Sources, agent and notifications for {{ user.email if user else 'you' }}</span>
+      <span class="settings-page-hint">Channels, connectors and agent for {{ user.email if user else 'you' }}</span>
     </div>
     <div id="settings-body">
-      <div class="source-card" id="gmail-card" data-source="gmail">
-        <div class="source-card-header">
-          <span class="source-card-name">Gmail</span>
-          <span class="source-connected-badge off" id="gmail-status">Not connected</span>
-          <label class="source-toggle" title="Discover todos from Gmail">
-            <input type="checkbox" class="source-toggle-input" data-source="gmail" checked>
-            <span class="source-toggle-track"></span>
-            <span class="source-toggle-label">On</span>
-          </label>
+
+      <section class="settings-section" aria-labelledby="ss-channels">
+        <div class="settings-section-header">
+          <h3 id="ss-channels">Channels</h3>
+          <p>Other places to hear from the agent and talk back.</p>
         </div>
-        <div class="source-card-body">
-          <div id="gmail-accounts"></div>
-          <button class="btn-connect" id="gmail-connect-btn">Connect another account</button>
+        <div class="tile-grid">
+        <div class="source-card tile" id="whatsapp-card">
+          <button class="source-card-header tile-header" type="button" aria-expanded="false" aria-controls="whatsapp-card-body">
+            <span class="tile-icon tone-green"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 1-13.4 7.8L3 21l1.3-4.4A9 9 0 1 1 21 12z"/><path d="M9 10a4 4 0 0 0 5 5"/></svg></span>
+            <span class="tile-titles">
+              <span class="source-card-name">WhatsApp</span>
+              <span class="tile-desc">Chat with your agent from your phone.</span>
+            </span>
+            <span class="tile-controls"><span class="source-connected-badge off" id="whatsapp-status">Not linked</span>
+            <svg class="icon tile-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+          </button>
+          <div class="source-card-body tile-body" id="whatsapp-card-body">
+            <span class="source-card-hint" id="whatsapp-hint">Message your agent from WhatsApp. Same conversation as Chat.</span>
+            <div class="source-key-row" id="whatsapp-input-row">
+              <input type="tel" class="source-key-input" id="whatsapp-number-input" placeholder="+91 98765 43210 (with country code)" autocomplete="tel">
+              <button class="btn-connect" id="whatsapp-link-btn">Get code</button>
+            </div>
+            <ol class="whatsapp-steps" id="whatsapp-steps" hidden></ol>
+            <span class="source-card-hint whatsapp-error" id="whatsapp-error" hidden></span>
+            <div id="whatsapp-linked-row" style="display:none">
+              <span id="whatsapp-number" class="source-card-hint"></span>
+              <button class="btn-disconnect" id="whatsapp-unlink-btn">Unlink</button>
+            </div>
+          </div>
         </div>
-      </div>
-      <!-- Fathom and Pocket are both AI notetakers: one card, one block per service,
-           each with its own key, status and pause toggle. The ids inside are unchanged. -->
-      <div class="source-card" id="notetakers-card">
-        <div class="source-card-header">
-          <span class="source-card-name">AI notetakers</span>
+        <div class="source-card tile" id="push-card">
+          <button class="source-card-header tile-header" type="button" aria-expanded="false" aria-controls="push-card-body">
+            <span class="tile-icon tone-amber"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 16v-5a6 6 0 0 1 12 0v5l2 2H4z"/><path d="M10 21h4"/></svg></span>
+            <span class="tile-titles">
+              <span class="source-card-name">Browser notifications</span>
+              <span class="tile-desc">A notification for every new todo.</span>
+            </span>
+            <span class="tile-controls"><span class="source-connected-badge off" id="push-status">Off</span>
+            <svg class="icon tile-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+          </button>
+          <div class="source-card-body tile-body" id="push-card-body">
+            <span class="source-card-hint" id="push-hint">Get a notification for every new todo, with its suggested actions as buttons.</span>
+            <div class="source-key-row" id="push-connect-row">
+              <button class="btn-connect" id="push-enable-btn">Enable in this browser</button>
+            </div>
+            <div id="push-connected-row">
+              <button class="btn-connect" id="push-test-btn">Send test</button>
+              <button class="btn-disconnect" id="push-disable-btn">Disable</button>
+            </div>
+          </div>
         </div>
-        <div class="source-card-body notetakers-body">
-          <span class="source-card-hint">Action items from your recorded meetings and conversations.</span>
-          <div class="source-subcard" id="fathom-card" data-source="fathom">
-            <div class="source-subcard-header">
+        </div>
+      </section>
+
+      <section class="settings-section" aria-labelledby="ss-connectors">
+        <div class="settings-section-header">
+          <h3 id="ss-connectors">Connectors</h3>
+          <p>Where Athena discovers todos. Pausing a source keeps its connection; only discovery stops.</p>
+        </div>
+        <div class="tile-grid">
+        <div class="source-card tile" id="gmail-card" data-source="gmail">
+          <button class="source-card-header tile-header" type="button" aria-expanded="false" aria-controls="gmail-card-body">
+            <span class="tile-icon tone-rose"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg></span>
+            <span class="tile-titles">
+              <span class="source-card-name">Gmail</span>
+              <span class="tile-desc">Todos from the mail you receive.</span>
+            </span>
+            <span class="tile-controls"><span class="source-connected-badge off" id="gmail-status">Not connected</span>
+        <label class="source-toggle" title="Discover todos from Gmail">
+          <input type="checkbox" class="source-toggle-input" data-source="gmail" checked>
+          <span class="source-toggle-track"></span>
+          <span class="source-toggle-label">On</span>
+        </label>
+            <svg class="icon tile-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+          </button>
+          <div class="source-card-body tile-body" id="gmail-card-body">
+            <div id="gmail-accounts"></div>
+            <button class="btn-connect" id="gmail-connect-btn">Connect another account</button>
+          </div>
+        </div>
+        <div class="source-card tile" id="fathom-card" data-source="fathom">
+          <button class="source-card-header tile-header" type="button" aria-expanded="false" aria-controls="fathom-card-body">
+            <span class="tile-icon tone-purple"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></span>
+            <span class="tile-titles">
               <span class="source-card-name">Fathom</span>
-              <span class="source-connected-badge off" id="fathom-status">Not connected</span>
-              <label class="source-toggle" title="Discover todos from Fathom meetings">
-                <input type="checkbox" class="source-toggle-input" data-source="fathom" checked>
-                <span class="source-toggle-track"></span>
-                <span class="source-toggle-label">On</span>
-              </label>
+              <span class="tile-desc">Action items from your meetings.</span>
+            </span>
+            <span class="tile-controls"><span class="source-connected-badge off" id="fathom-status">Not connected</span>
+        <label class="source-toggle" title="Discover todos from Fathom">
+          <input type="checkbox" class="source-toggle-input" data-source="fathom" checked>
+          <span class="source-toggle-track"></span>
+          <span class="source-toggle-label">On</span>
+        </label>
+            <svg class="icon tile-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+          </button>
+          <div class="source-card-body tile-body" id="fathom-card-body">
+            <label for="fathom-key-input">API Key</label>
+            <div class="source-key-row" id="fathom-input-row">
+              <input type="password" class="source-key-input" id="fathom-key-input" placeholder="Paste your Fathom API key" autocomplete="off">
+              <button class="btn-connect" id="fathom-connect-btn">Connect</button>
             </div>
-            <div class="source-subcard-body">
-              <label for="fathom-key-input">API Key</label>
-              <div class="source-key-row" id="fathom-input-row">
-                <input type="password" class="source-key-input" id="fathom-key-input" placeholder="Paste your Fathom API key" autocomplete="off">
-                <button class="btn-connect" id="fathom-connect-btn">Connect</button>
-              </div>
-              <div id="fathom-connected-row">
-                <span id="fathom-key-preview" class="source-card-hint"></span>
-                <button class="btn-disconnect" id="fathom-disconnect-btn">Disconnect</button>
-              </div>
+            <div id="fathom-connected-row">
+              <span id="fathom-key-preview" class="source-card-hint"></span>
+              <button class="btn-disconnect" id="fathom-disconnect-btn">Disconnect</button>
             </div>
           </div>
-          <div class="source-subcard" id="pocket-card" data-source="pocket">
-            <div class="source-subcard-header">
+        </div>
+        <div class="source-card tile" id="pocket-card" data-source="pocket">
+          <button class="source-card-header tile-header" type="button" aria-expanded="false" aria-controls="pocket-card-body">
+            <span class="tile-icon tone-blue"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h1M7 9v6M11 5v14M15 8v8M19 11v2"/></svg></span>
+            <span class="tile-titles">
               <span class="source-card-name">Pocket</span>
-              <span class="source-connected-badge off" id="pocket-status">Not connected</span>
-              <label class="source-toggle" title="Discover todos from Pocket recordings">
-                <input type="checkbox" class="source-toggle-input" data-source="pocket" checked>
-                <span class="source-toggle-track"></span>
-                <span class="source-toggle-label">On</span>
-              </label>
+              <span class="tile-desc">Your action items from recordings.</span>
+            </span>
+            <span class="tile-controls"><span class="source-connected-badge off" id="pocket-status">Not connected</span>
+        <label class="source-toggle" title="Discover todos from Pocket">
+          <input type="checkbox" class="source-toggle-input" data-source="pocket" checked>
+          <span class="source-toggle-track"></span>
+          <span class="source-toggle-label">On</span>
+        </label>
+            <svg class="icon tile-chevron" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></span>
+          </button>
+          <div class="source-card-body tile-body" id="pocket-card-body">
+            <label for="pocket-key-input">API Key</label>
+            <div class="source-key-row" id="pocket-input-row">
+              <input type="password" class="source-key-input" id="pocket-key-input" placeholder="Paste your Pocket API key (pk_…)" autocomplete="off">
+              <button class="btn-connect" id="pocket-connect-btn">Connect</button>
             </div>
-            <div class="source-subcard-body">
-              <label for="pocket-key-input">API Key</label>
-              <div class="source-key-row" id="pocket-input-row">
-                <input type="password" class="source-key-input" id="pocket-key-input" placeholder="Paste your Pocket API key (pk_…)" autocomplete="off">
-                <button class="btn-connect" id="pocket-connect-btn">Connect</button>
-              </div>
-              <div id="pocket-connected-row">
-                <span id="pocket-key-preview" class="source-card-hint"></span>
-                <button class="btn-disconnect" id="pocket-disconnect-btn">Disconnect</button>
-              </div>
-              <span class="source-card-hint">Create a key in Pocket under Settings → Integrations → API keys.</span>
+            <div id="pocket-connected-row">
+              <span id="pocket-key-preview" class="source-card-hint"></span>
+              <button class="btn-disconnect" id="pocket-disconnect-btn">Disconnect</button>
             </div>
+            <span class="source-card-hint">Create a key in Pocket under Settings → Integrations → API keys.</span>
           </div>
         </div>
-      </div>
-      <!-- Opt-in, macOS-only discovery sources; filled in only when the server runs them. -->
-      <div id="extra-sources"></div>
-      <div class="source-card" id="executor-card">
-        <div class="source-card-header">
-          <span class="source-card-name">Resolution agent</span>
-          <span class="source-connected-badge off" id="executor-status">—</span>
+          <!-- Opt-in, macOS-only discovery sources; filled in only when the server runs them. -->
+          <div id="extra-sources"></div>
         </div>
-        <div class="source-card-body">
-          <span class="source-card-hint">Which agent works on your todos. Applies from your next message.</span>
-          <div id="executor-options" role="radiogroup" aria-label="Resolution agent"></div>
-          <span class="source-card-hint" id="executor-error" hidden></span>
+      </section>
+
+      <section class="settings-section" aria-labelledby="ss-agent">
+        <div class="settings-section-header">
+          <h3 id="ss-agent">Agent</h3>
+          <p>Which agent works on your todos and answers in Chat. Applies from your next message.</p>
         </div>
-      </div>
-      <div class="source-card" id="whatsapp-card">
-        <div class="source-card-header">
-          <span class="source-card-name">WhatsApp</span>
-          <span class="source-connected-badge off" id="whatsapp-status">Not linked</span>
-        </div>
-        <div class="source-card-body">
-          <span class="source-card-hint" id="whatsapp-hint">Message your agent from WhatsApp. Same conversation as Chat.</span>
-          <div class="source-key-row" id="whatsapp-input-row">
-            <input type="tel" class="source-key-input" id="whatsapp-number-input" placeholder="+91 98765 43210 (with country code)" autocomplete="tel">
-            <button class="btn-connect" id="whatsapp-link-btn">Get code</button>
+        <div class="source-card tile tile-wide open" id="executor-card">
+          <div class="source-card-header tile-header static">
+            <span class="tile-icon tone-accent"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M8 21h8"/><rect x="5" y="6" width="14" height="11" rx="3"/><path d="M9 11h.01M15 11h.01M9 14h6"/></svg></span>
+            <span class="tile-titles">
+              <span class="source-card-name">Resolution agent</span>
+              <span class="tile-desc">Runs the tools that close a todo.</span>
+            </span>
+            <span class="tile-controls"><span class="source-connected-badge off" id="executor-status">—</span></span>
           </div>
-          <ol class="whatsapp-steps" id="whatsapp-steps" hidden></ol>
-          <span class="source-card-hint whatsapp-error" id="whatsapp-error" hidden></span>
-          <div id="whatsapp-linked-row" style="display:none">
-            <span id="whatsapp-number" class="source-card-hint"></span>
-            <button class="btn-disconnect" id="whatsapp-unlink-btn">Unlink</button>
+          <div class="source-card-body tile-body">
+            <div id="executor-options" role="radiogroup" aria-label="Resolution agent"></div>
+            <span class="source-card-hint" id="executor-error" hidden></span>
           </div>
         </div>
-      </div>
-      <div class="source-card" id="push-card">
-        <div class="source-card-header">
-          <span class="source-card-name">Browser notifications</span>
-          <span class="source-connected-badge off" id="push-status">Off</span>
-        </div>
-        <div class="source-card-body">
-          <span class="source-card-hint" id="push-hint">Get a notification for every new todo, with its suggested actions as buttons.</span>
-          <div class="source-key-row" id="push-connect-row">
-            <button class="btn-connect" id="push-enable-btn">Enable in this browser</button>
-          </div>
-          <div id="push-connected-row">
-            <button class="btn-connect" id="push-test-btn">Send test</button>
-            <button class="btn-disconnect" id="push-disable-btn">Disable</button>
-          </div>
-        </div>
-      </div>
+      </section>
+
     </div>
   </div>
 </section>
 
 <section id="chat-view" aria-labelledby="chat-heading"{% if initial_view != 'chat' %} hidden{% endif %}>
   <div class="chat-page">
-    <a class="back-btn settings-back" id="chatBackBtn" href="{{ url_for('index') }}">← Back to inbox</a>
-    <div class="chat-page-header">
-      <div class="chat-page-titles">
-        <h2 id="chat-heading">Chat</h2>
-        <span class="settings-page-hint">Talk to your agent directly — no todo needed. One conversation; New chat starts over.</span>
-      </div>
-      <button class="new-todo-btn" id="chat-new-btn" type="button">New chat</button>
+    <div class="chat-topbar">
+      <button class="new-todo-btn" id="chat-new-btn" type="button" hidden>New chat</button>
+    </div>
+    {# The empty state: nothing on screen but the question and the composer.
+       Hidden by app.js (`has-thread`) once the conversation has a turn. #}
+    <div class="chat-hero" id="chat-hero">
+      <img class="hero-mark" src="{{ url_for('static', filename='images/athena-wings.png') }}" alt="">
+      <h2 id="chat-heading">What shall we get done?</h2>
     </div>
     {# Filled by app.js when the view opens, so the composer's ids exist in one
        place at a time — the todo detail pane uses the same ones. #}
@@ -338,15 +407,19 @@
   </div>
 </section>
 
+  </main>
+</div>
+
 <script id="todos-data" type="application/json">{{ todos_json | safe }}</script>
 <script>window.__FRESH_SIGNUP = {{ 'true' if fresh_signup else 'false' }};
 window.__INITIAL_VIEW = {{ initial_view | tojson }};
 window.__DURABLE_WORK = {{ durable_work | default(false) | tojson }};
 window.__DURABLE_CONVERSATIONS = {{ durable_conversations | default({}) | tojson }};</script>
-{# Durable assets use a distinct versioned URL even under an older controlling
-   service worker. Bump this version whenever either durable asset changes. #}
+{# Both scripts carry a versioned URL so an older controlling service worker
+   never serves a stale copy. Bump `v` on app.js/app.css whenever they change;
+   bump durable-1 whenever durable-work.js changes. #}
 <script src="{{ url_for('static', filename='js/durable-work.js') }}{% if durable_work | default(false) %}?v=durable-1{% endif %}"></script>
-<script src="{{ url_for('static', filename='js/app.js') }}{% if durable_work | default(false) %}?v=durable-1{% endif %}"></script>
+<script src="{{ url_for('static', filename='js/app.js', v='athena-nav-11') }}"></script>
 {% if not durable_work | default(false) %}
 <script src="{{ url_for('static', filename='js/pwa.js') }}" defer></script>
 {% endif %}

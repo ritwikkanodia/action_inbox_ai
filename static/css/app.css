@@ -100,32 +100,116 @@
       background-image: linear-gradient(90deg, rgba(104, 149, 146, .11) 1px, transparent 1px), linear-gradient(rgba(104, 149, 146, .08) 1px, transparent 1px);
     }
 
-    /* Header: editorial masthead, thin rule */
+    /* Shell: a navigation rail on the left, one content column on the right.
+       The rail is the only chrome shared by the views; everything else is per view. */
+    .shell {
+      flex: 1;
+      display: flex;
+      min-height: 0;
+    }
+    #content {
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #nav-rail {
+      flex: 0 0 232px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 18px 12px 16px;
+      border-right: 1px solid var(--rule);
+      background: var(--paper);
+    }
+    .rail-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 2px 10px 14px;
+    }
+    .brand-mark { display: flex; align-items: center; }
+    .brand-mark img { display: block; width: 104px; height: auto; }
+    body.theme-dark .brand-mark img,
+    body.theme-dark .mobile-bar-mark {
+      filter: brightness(0) saturate(100%) invert(79%) sepia(30%) saturate(603%) hue-rotate(357deg) brightness(91%) contrast(86%);
+    }
+    .rail-menu { list-style: none; display: flex; flex-direction: column; gap: 2px; }
+    .rail-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 8px 10px;
+      border: none;
+      border-radius: 8px;
+      background: none;
+      font-family: var(--sans);
+      font-size: 13.5px;
+      font-weight: 500;
+      color: var(--ink-2);
+      text-decoration: none;
+      text-align: left;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+    }
+    .rail-item:hover { background: var(--tint-hover); color: var(--ink); }
+    .rail-item.active { background: var(--tint-selected); color: var(--ink); }
+    .rail-item.active .rail-icon { color: var(--accent); }
+    .rail-item[hidden] { display: none; }
+    .icon { width: 16px; height: 16px; flex-shrink: 0; }
+    .rail-icon { width: 17px; height: 17px; color: var(--ink-3); }
+    .rail-icon-btn {
+      display: none;
+      align-items: center;
+      justify-content: center;
+      width: 32px; height: 32px;
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      background: var(--panel);
+      color: var(--ink-2);
+      cursor: pointer;
+    }
+    .rail-icon-btn .icon { width: 18px; height: 18px; }
+    .rail-icon-btn:hover { color: var(--ink); border-color: var(--rule-strong); }
+    .rail-bottom {
+      margin-top: auto;
+      padding-top: 12px;
+      border-top: 1px solid var(--rule);
+    }
+    .rail-scrim {
+      display: none;
+      position: fixed; inset: 0;
+      z-index: 70;
+      background: rgba(10, 20, 24, 0.45);
+    }
+    .rail-scrim[hidden] { display: none; }
+
+    /* Mobile-only strip with the menu button; the rail is a drawer there. */
+    .mobile-bar {
+      display: none;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 16px;
+      border-bottom: 1px solid var(--rule);
+    }
+    .mobile-bar-mark { width: 84px; height: auto; }
+
+    /* Inbox toolbar: filters, count and the new-todo button. Inbox-only. */
     header.top {
       position: relative;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 20px 32px 15px;
+      padding: 14px 24px 12px;
       border-bottom: 1px solid var(--rule);
       background: transparent;
       flex-shrink: 0;
     }
-
-    .brand-mark {
-      display: flex;
-      align-items: center;
-      flex: 0 0 auto;
-      margin-right: 24px;
-    }
-    .brand-mark img {
-      display: block;
-      width: 122px;
-      height: auto;
-    }
-    body.theme-dark .brand-mark img {
-      filter: brightness(0) saturate(100%) invert(79%) sepia(30%) saturate(603%) hue-rotate(357deg) brightness(91%) contrast(86%);
-    }
+    body.view-settings header.top,
+    body.view-chat header.top { display: none; }
 
     .tabs {
       display: flex; align-items: center; gap: 10px;
@@ -1255,12 +1339,11 @@
     #settings-view[hidden] { display: none; }
     body.view-settings #app { display: none; }
     .settings-page {
-      max-width: 640px;
+      max-width: 900px;
       margin: 0 auto;
       display: flex;
       flex-direction: column;
     }
-    .settings-back { display: inline-flex; align-self: flex-start; margin-bottom: 24px; }
     .settings-page-header {
       display: flex; flex-direction: column; gap: 6px;
       padding-bottom: 20px; margin-bottom: 24px;
@@ -1274,38 +1357,234 @@
       letter-spacing: -0.01em;
     }
     .settings-page-hint { font-size: 13px; color: var(--ink-3); }
-    #settings-body { display: flex; flex-direction: column; gap: 20px; }
+    #settings-body { display: flex; flex-direction: column; gap: 36px; }
+
+    .settings-section { display: flex; flex-direction: column; gap: 14px; }
+    .settings-section-header { display: flex; flex-direction: column; gap: 4px; }
+    .settings-section-header h3 {
+      font-family: var(--serif);
+      font-weight: 600;
+      font-size: 19px;
+      color: var(--ink);
+      letter-spacing: -0.005em;
+    }
+    .settings-section-header p { font-size: 13px; color: var(--ink-3); line-height: 1.45; }
+
+    .tile-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 14px;
+      align-items: stretch;
+    }
+    /* An opened tile takes the whole row: its form gets the width, and the
+       closed tiles around it stay a tidy, even grid. */
+    .tile-wide, .tile.open { grid-column: 1 / -1; }
+    .tile { display: flex; flex-direction: column; }
+
+    /* A connector tile: icon, name and one-line description, status and pause
+       switch on the right. The header is a button that folds the body. */
+    .tile .tile-header {
+      width: 100%;
+      display: grid;
+      grid-template-columns: 40px minmax(0, 1fr) auto;
+      column-gap: 14px;
+      align-items: center;
+      min-height: 86px;
+      padding: 14px 16px;
+      border: none;
+      border-bottom: 1px solid transparent;
+      background: none;
+      color: inherit;
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
+      transition: background 0.12s, border-color 0.12s;
+    }
+    .tile .tile-header:not(.static):hover { background: var(--tint-hover); }
+    .tile .tile-header.static { cursor: default; }
+    .tile.open .tile-header { border-bottom-color: var(--rule); }
+    .tile-icon {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 40px; height: 40px;
+      flex-shrink: 0;
+      border-radius: 10px;
+      background: var(--pill-stone-bg);
+      color: var(--pill-stone-fg);
+    }
+    .tile-icon .icon { width: 20px; height: 20px; }
+    .tone-rose   { background: var(--pill-rose-bg);   color: var(--pill-rose-fg); }
+    .tone-purple { background: var(--pill-purple-bg); color: var(--pill-purple-fg); }
+    .tone-blue   { background: var(--pill-blue-bg);   color: var(--pill-blue-fg); }
+    .tone-green  { background: var(--pill-green-bg);  color: var(--pill-green-fg); }
+    .tone-amber  { background: var(--pill-amber-bg);  color: var(--pill-amber-fg); }
+    .tone-stone  { background: var(--pill-stone-bg);  color: var(--pill-stone-fg); }
+    .tone-accent { background: var(--accent-soft);    color: var(--accent); }
+    .tile-titles { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+    /* Status, pause switch and chevron: one cluster on the right, so every
+       tile reads the same whatever its name and badge lengths. */
+    /* Fixed columns — badge, switch, chevron — so the same control sits at the
+       same x in every tile of a column; a tile without a switch or chevron
+       leaves that column empty rather than pulling the rest across. */
+    .tile-controls {
+      display: grid;
+      grid-template-columns: 108px 30px 16px;
+      column-gap: 12px;
+      align-items: center;
+      justify-self: end;
+    }
+    .tile-controls .source-connected-badge { grid-column: 1; justify-self: start; }
+    .tile-controls .source-toggle { grid-column: 2; }
+    .tile-controls .tile-chevron { grid-column: 3; }
+    .tile-wide .tile-controls { grid-template-columns: auto; }
+    .tile-wide .tile-controls .source-connected-badge { justify-self: end; }
+    .tile .source-toggle { gap: 0; }
+    /* The switch alone says on/off; the paused state is spelled out beside the name. */
+    .tile .source-toggle-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+    .tile.paused .source-card-name::after { content: ' · paused'; color: var(--ink-3); font-weight: 400; }
+    .tile .source-card-name { flex: none; font-size: 13.5px; }
+    .tile-desc {
+      font-size: 12px;
+      color: var(--ink-3);
+      line-height: 1.35;
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .tile .source-connected-badge { white-space: nowrap; }
+    .tile .source-toggle { margin-left: 0; }
+    .tile-chevron { color: var(--ink-3); transition: transform 0.15s; }
+    .tile.open .tile-chevron { transform: rotate(180deg); }
+    /* Outranks the generic .source-card-body rule further down, which sets
+       display: flex at the same specificity. */
+    .tile:not(.open) .tile-body { display: none; }
+    .tile-flat .tile-header { cursor: default; }
+    .tile.paused .tile-icon { opacity: 0.5; }
 
     /* Chat view — the same executor with no todo; a page like Settings */
     #chat-view {
       flex: 1;
       min-height: 0;
       overflow-y: auto;
+      display: flex;
+      flex-direction: column;
       background: var(--paper-soft);
-      padding: 48px 56px 80px;
+      padding: 32px 56px 40px;
     }
     #chat-view[hidden] { display: none; }
     body.view-chat #app { display: none; }
     .chat-page {
+      width: 100%;
       max-width: 720px;
+      flex: 1;
       margin: 0 auto;
       display: flex;
       flex-direction: column;
     }
-    .chat-page-header {
-      display: flex; justify-content: space-between; align-items: flex-end; gap: 16px;
-      padding-bottom: 20px; margin-bottom: 24px;
+    /* Empty conversation: hero and composer sit together, a little above centre. */
+    #chat-view:not(.has-thread) .chat-page { justify-content: center; padding-bottom: 12vh; }
+    /* A header row above the thread: New chat as a small ghost pill, a rule
+       under it, and room before the first bubble. Absent on an empty chat. */
+    .chat-topbar {
+      display: flex; justify-content: flex-end; align-items: center;
+      padding-bottom: 12px; margin-bottom: 18px;
       border-bottom: 1px solid var(--rule);
     }
-    .chat-page-titles { display: flex; flex-direction: column; gap: 6px; }
-    .chat-page-header h2 {
-      font-family: var(--sans);
-      font-weight: 600;
-      font-size: 24px;
-      color: var(--ink);
-      letter-spacing: -0.01em;
+    #chat-view:not(.has-thread) .chat-topbar { display: none; }
+    #chat-new-btn {
+      padding: 6px 12px;
+      border: 1px solid var(--rule-strong);
+      border-radius: 999px;
+      letter-spacing: 0.12em;
     }
-    #chat-body { display: flex; flex-direction: column; }
+    #chat-new-btn::after { display: none; }
+    #chat-new-btn:hover { border-color: var(--accent); }
+    .chat-hero {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      gap: 18px;
+      margin: 0 0 28px;
+    }
+    #chat-view.has-thread .chat-hero { display: none; }
+    .hero-mark { width: 120px; height: auto; display: block; }
+    body.theme-dark .hero-mark {
+      filter: brightness(0) saturate(100%) invert(79%) sepia(30%) saturate(603%) hue-rotate(357deg) brightness(91%) contrast(86%);
+    }
+    .chat-hero h2 {
+      font-family: var(--serif);
+      font-weight: 600;
+      font-size: 40px;
+      line-height: 1.15;
+      letter-spacing: -0.01em;
+      color: var(--ink);
+    }
+    #chat-body { display: flex; flex-direction: column; flex: 0 0 auto; min-height: 0; }
+    #chat-view.has-thread #chat-body { flex: 1; }
+    #chat-view.has-thread #ai-thread { flex: 1; padding-top: 4px; }
+    /* Docked at the bottom of the scrolling view once there is a thread,
+       fading the last bubble out under it. */
+    .composer-card {
+      position: sticky;
+      bottom: 0;
+      padding: 12px 0 0;
+      background: linear-gradient(to bottom, transparent, var(--paper-soft) 28%);
+    }
+    #chat-view.has-thread .composer-card { padding-top: 24px; margin-top: 8px; }
+    .chat-page #ai-input-area {
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
+      border-radius: 18px;
+      padding: 16px 16px 12px;
+      box-shadow: 0 10px 30px rgba(20, 40, 50, 0.06);
+    }
+    .chat-page #ai-followup {
+      font-size: 15px;
+      line-height: 1.5;
+      min-height: 46px;
+      max-height: 220px;
+    }
+    .composer-row { display: flex; align-items: center; gap: 10px; }
+    .composer-agent {
+      margin-right: auto;
+      font-family: var(--mono);
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--ink-3);
+      text-decoration: none;
+      padding: 5px 10px;
+      border: 1px solid var(--rule);
+      border-radius: 999px;
+      transition: color 0.15s, border-color 0.15s;
+    }
+    .composer-agent:hover { color: var(--accent); border-color: var(--accent); }
+    /* Model name on the right, beside the send button, as a quiet caption. */
+    .composer-model {
+      font-family: var(--sans);
+      font-size: 12.5px;
+      color: var(--ink-3);
+      margin-right: 6px;
+      cursor: default;
+    }
+    .composer-model[hidden] { display: none; }
+    .chat-page #ai-send-btn,
+    .chat-page #ai-stop-btn {
+      width: 38px; height: 38px;
+      padding: 0;
+      border-radius: 50%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .chat-page #ai-send-btn .icon, .chat-page #ai-stop-btn .icon { width: 18px; height: 18px; }
+    .chat-page #ai-stop-btn { background: var(--u-high); color: var(--accent-ink); border: none; }
+    .chat-page #ai-stop-btn:hover { background: var(--u-high); color: var(--accent-ink); filter: brightness(0.92); }
+    .chat-page #ai-stop-btn:disabled { background: var(--u-high); color: var(--accent-ink); opacity: 0.45; }
     #extra-sources { display: contents; }
 
     /* WhatsApp card — the linking steps while a code is pending */
@@ -1352,22 +1631,6 @@
       min-width: 44px;
     }
     .source-card.paused .source-card-body { opacity: 0.55; }
-    /* A service inside a grouped card (the AI notetakers): same header row and
-       body as a card, framed as a block instead of a card of its own. */
-    .source-subcard {
-      border: 1px solid var(--rule);
-      border-radius: 8px;
-      background: var(--paper-soft);
-      overflow: hidden;
-    }
-    .source-subcard-header {
-      display: flex; align-items: center; gap: 10px;
-      padding: 10px 14px;
-      border-bottom: 1px solid var(--rule);
-    }
-    .source-subcard-body { padding: 12px 14px; display: flex; flex-direction: column; gap: 10px; }
-    .source-subcard.paused .source-subcard-body { opacity: 0.55; }
-    .source-subcard .source-key-input { background: var(--panel); }
     .source-card {
       border: 1px solid var(--rule);
       border-radius: 10px;
@@ -1402,7 +1665,7 @@
     .source-connected-badge.off::before { content: '○ '; }
     .source-card-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 10px; }
     #gmail-connected-row, #fathom-connected-row, #pocket-connected-row { display: none; gap: 8px; align-items: center; }
-    .source-card-body label, .source-subcard-body label {
+    .source-card-body label {
       font-family: var(--mono);
       font-size: 10px;
       letter-spacing: 0.14em;
@@ -1511,19 +1774,21 @@
     #openFormBtn:hover { background: var(--accent-deep); color: var(--accent-ink); }
 
     .user-chip {
-      display: inline-flex;
+      display: flex;
       align-items: center;
       gap: 10px;
-      padding: 0;
+      padding: 6px 10px;
       border: none;
-      border-radius: 0;
+      border-radius: 8px;
       font-family: var(--sans);
-      font-size: 12px;
+      font-size: 12.5px;
       color: var(--ink);
       background: none;
-      margin-left: 8px;
+      min-width: 0;
     }
+    .user-chip-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .user-chip img { width: 24px; height: 24px; border-radius: 50%; filter: grayscale(15%); }
+    .user-chip img[hidden], .user-chip .user-initial[hidden] { display: none; }
     .user-chip .user-initial {
       width: 24px; height: 24px; border-radius: 50%;
       background: var(--accent); color: var(--accent-ink);
@@ -1657,6 +1922,22 @@
     }
     .back-btn:hover { color: var(--ink); border-color: var(--rule-strong); background: var(--paper-deep); }
     @media (max-width: 760px) {
+      #nav-rail {
+        position: fixed;
+        top: 0; bottom: 0; left: 0;
+        z-index: 80;
+        width: 264px;
+        transform: translateX(-100%);
+        transition: transform 0.2s ease;
+        box-shadow: 0 18px 44px rgba(0, 0, 0, 0.35);
+      }
+      body.nav-open #nav-rail { transform: none; }
+      body.nav-open .rail-scrim { display: block; }
+      .rail-icon-btn { display: inline-flex; }
+      .mobile-bar { display: flex; }
+      .tile-grid { grid-template-columns: 1fr; }
+      .tile .tile-header { grid-template-columns: 40px minmax(0, 1fr); row-gap: 10px; }
+      .tile-controls { grid-column: 2; justify-self: start; }
       #app { grid-template-columns: 1fr; }
       aside#sidebar { border-right: none; }
       section#detail-pane { display: none; padding: 32px 24px 60px; }
@@ -1665,24 +1946,29 @@
       #app.list-only aside#sidebar { display: flex; }
       #app.list-only section#detail-pane { display: none; }
       .back-btn { display: block; }
-      header.top { padding: 18px 24px 14px; flex-wrap: wrap; gap: 12px; }
+      header.top { padding: 12px 16px 10px; flex-wrap: wrap; gap: 10px; }
       .detail-title { font-size: 30px; }
-      .gmail-banner { padding: 12px 24px; }
+      .gmail-banner { padding: 12px 16px; flex-wrap: wrap; }
       #settings-view { padding: 24px 16px 60px; }
-      #chat-view { padding: 24px 16px 60px; }
+      #chat-view { padding: 16px 16px 24px; }
+      .chat-hero h2 { font-size: 30px; }
+      .hero-mark { width: 96px; }
     }
     @media (max-width: 540px) {
-      .brand-mark { margin-right: 4px; }
-      .brand-mark img { width: 92px; }
       .tabs { gap: 8px; }
     }
+    @media (prefers-reduced-motion: reduce) {
+      #nav-rail { transition: none; }
+    }
 
+    /* Address, agent-access state, disconnect: three columns, so the access
+       column starts at the same x on every row instead of floating. */
     .gmail-account-row {
-      display: flex;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
       align-items: center;
-      justify-content: space-between;
-      gap: 8px;
-      padding: 6px 0;
+      column-gap: 16px;
+      padding: 8px 0;
       border-bottom: 1px solid var(--rule);
     }
     .gmail-account-row:last-of-type { border-bottom: none; }
@@ -1694,10 +1980,10 @@
       white-space: nowrap;
     }
     #gmail-accounts { margin-bottom: 8px; }
-    .gmail-agent-access { font-size: 0.85em; margin: 0 0.75rem; }
-    .gmail-agent-access.on { color: var(--ok, #2e7d32); }
-    .gmail-agent-access.off { color: var(--muted, #777); }
-    .gmail-agent-access a { text-decoration: underline; }
+    .gmail-agent-access { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .gmail-agent-access.on { color: var(--u-low); }
+    .gmail-agent-access.off { color: var(--ink-3); }
+    .gmail-agent-access a { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
     .account-badge {
       font-size: 11px;
       padding: 1px 6px;

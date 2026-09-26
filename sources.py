@@ -24,9 +24,9 @@ DISCOVERY_SOURCES = (
     {"name": "pocket", "label": "Pocket",
      "description": "Action items Pocket extracts from your recordings."},
     {"name": "browser_history", "label": "Browser history",
-     "description": "Pages you visited that look like something to follow up on. macOS only."},
+     "description": "Pages you visited that look like follow-ups. macOS only."},
     {"name": "system", "label": "Files",
-     "description": "New files in Downloads, Desktop and Documents. macOS only."},
+     "description": "New files in Downloads, Desktop, Documents. macOS only."},
 )
 DISCOVERY_SOURCE_NAMES = tuple(s["name"] for s in DISCOVERY_SOURCES)
 
