@@ -1,0 +1,2 @@
+psycopg[binary]==3.3.6
+azure-servicebus==7.14.3

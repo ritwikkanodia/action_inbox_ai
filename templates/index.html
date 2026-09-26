@@ -340,8 +340,15 @@
 
 <script id="todos-data" type="application/json">{{ todos_json | safe }}</script>
 <script>window.__FRESH_SIGNUP = {{ 'true' if fresh_signup else 'false' }};
-window.__INITIAL_VIEW = {{ initial_view | tojson }};</script>
-<script src="{{ url_for('static', filename='js/app.js') }}"></script>
+window.__INITIAL_VIEW = {{ initial_view | tojson }};
+window.__DURABLE_WORK = {{ durable_work | default(false) | tojson }};
+window.__DURABLE_CONVERSATIONS = {{ durable_conversations | default({}) | tojson }};</script>
+{# Durable assets use a distinct versioned URL even under an older controlling
+   service worker. Bump this version whenever either durable asset changes. #}
+<script src="{{ url_for('static', filename='js/durable-work.js') }}{% if durable_work | default(false) %}?v=durable-1{% endif %}"></script>
+<script src="{{ url_for('static', filename='js/app.js') }}{% if durable_work | default(false) %}?v=durable-1{% endif %}"></script>
+{% if not durable_work | default(false) %}
 <script src="{{ url_for('static', filename='js/pwa.js') }}" defer></script>
+{% endif %}
 </body>
 </html>

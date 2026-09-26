@@ -1,6 +1,8 @@
 const IMPORTANCE_OPTIONS = ['low', 'medium', 'high'];
 const STATUS_OPTIONS  = ['open', 'ongoing', 'closed'];
 const AI_SOURCES = ['gmail', 'fathom', 'pocket', 'browser_history', 'system'];
+const DURABLE_MODE = window.__DURABLE_WORK === true;
+const durableStates = new Map();
 
 const todosById = {};
 (JSON.parse(document.getElementById('todos-data').textContent) || []).forEach(t => {
@@ -475,6 +477,7 @@ function wireDetailHandlers(t) {
   document.getElementById('ai-regen-btn').addEventListener('click', () => loadActions(t, true));
 
   document.getElementById('ai-new-thread-btn').addEventListener('click', () => {
+    if (DURABLE_MODE) { resetDurable(t.todo_id); return; }
     fetch(aiUrl(t.todo_id, '/reset-thread'), { method: 'POST' }).then(() => {
       delete threadCache[t.todo_id];
       stopPolling();
@@ -1077,6 +1080,7 @@ function schedulePoll(todoId) {
 }
 
 function stopRun(todoId) {
+  if (DURABLE_MODE) return;
   const stopBtn = document.getElementById('ai-stop-btn');
   if (stopBtn) { stopBtn.disabled = true; stopBtn.textContent = 'Stopping…'; }
   fetch(aiUrl(todoId, '/run/stop'), { method: 'POST' })
@@ -1088,6 +1092,7 @@ function stopRun(todoId) {
 // options rather than being typed. The server frames those differently: the
 // user picked a short label, not the generated sentence underneath it.
 function callAI(todoId, message, fromSuggestion) {
+  if (DURABLE_MODE) return sendDurable(todoId, message, Boolean(fromSuggestion));
   if (message) {
     const threadEl = document.getElementById('ai-thread');
     if (threadEl && activeThreadId === todoId) {
@@ -1129,6 +1134,7 @@ function loadAiThread(t) {
   activeThreadId = t.todo_id;
   stopPolling();
   setRunning(false);
+  if (DURABLE_MODE) return loadDurable(t.todo_id);
 
   if (threadCache[t.todo_id] && threadCache[t.todo_id].length > 0) {
     renderThread(threadCache[t.todo_id]);
@@ -1495,6 +1501,7 @@ function loadChatThread() {
   activeThreadId = CHAT_ID;
   stopPolling();
   setRunning(false);
+  if (DURABLE_MODE) return loadDurable(CHAT_ID);
   const threadEl = document.getElementById('ai-thread');
   if (threadCache[CHAT_ID] && threadCache[CHAT_ID].length) {
     renderThread(threadCache[CHAT_ID]);
@@ -1553,6 +1560,7 @@ document.getElementById('chatBackBtn').addEventListener('click', (e) => {
   showInboxView();
 });
 document.getElementById('chat-new-btn').addEventListener('click', () => {
+  if (DURABLE_MODE) { resetDurable(CHAT_ID); return; }
   const btn = document.getElementById('chat-new-btn');
   btn.disabled = true;
   fetch('/chat/reset-thread', { method: 'POST' })
@@ -1563,6 +1571,192 @@ document.getElementById('chat-new-btn').addEventListener('click', () => {
     })
     .finally(() => { btn.disabled = false; });
 });
+
+// Durable mode is explicitly opt-in; none of these functions touch legacy runs.
+function durableState(threadId) {
+  if (!durableStates.has(threadId)) durableStates.set(threadId, { snapshot: null, pending: new Map(), serial: 0 });
+  return durableStates.get(threadId);
+}
+
+function durableUrl(threadId, suffix = '') {
+  const cid = durableConversationId(threadId);
+  if (!cid) throw new Error('Conversation is not configured.');
+  return `/api/work/conversations/${encodeURIComponent(cid)}${suffix}`;
+}
+
+function durableConversationId(threadId) {
+  return window.__DURABLE_CONVERSATIONS[threadId === CHAT_ID ? 'chat' : threadId];
+}
+
+async function durableRequest(url, body) {
+  const response = await fetch(url, body === undefined ? {} : {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  });
+  const result = await response.json();
+  if (!response.ok) {
+    const error = new Error(result.error || 'Request failed.');
+    error.status = response.status;
+    error.code = result.error;
+    throw error;
+  }
+  return result;
+}
+
+function renderDurable(threadId) {
+  if (activeThreadId !== threadId) return;
+  const state = durableState(threadId), target = document.getElementById('ai-thread');
+  if (!target || !state.snapshot) return;
+  target.replaceChildren();
+  const data = state.snapshot;
+  const bubble = (message) => {
+    const element = document.createElement('div');
+    element.className = `ai-bubble ${message.role}`;
+    element.textContent = message.content; // Durable output is text, never executable HTML.
+    if (message.job_id) element.dataset.jobId = message.job_id;
+    target.appendChild(element);
+    return element;
+  };
+  for (const message of data.messages) {
+    if (message.role === 'assistant' && message.job_id) continue;
+    const element = bubble(message);
+    if (message.role === 'user') {
+      const job = data.jobs.find(j => j.job_id === message.job_id);
+      if (job) {
+        const status = document.createElement('div');
+        status.dataset.workState = job.state;
+        const seconds = Math.max(0, Math.floor((Date.now() - Date.parse(job.created_at)) / 1000));
+        status.textContent = `${job.state.replaceAll('_', ' ')} · ${seconds}s${job.reason ? ' · ' + job.reason.replaceAll('_', ' ') : ''}`;
+        element.appendChild(status);
+        if (DurableWork.shouldPoll(job.state)) {
+          const cancel = document.createElement('button');
+          cancel.type = 'button'; cancel.textContent = 'Stop this request'; cancel.dataset.cancelJob = job.job_id;
+          cancel.onclick = () => cancelDurable(threadId, job.job_id);
+          element.appendChild(cancel);
+        }
+      }
+      for (const reply of data.messages.filter(m => m.role === 'assistant' && m.job_id === message.job_id)) bubble(reply);
+    }
+  }
+  if (data.reconciliation_hold) bubble({ role: 'notice', content: 'An earlier action needs review. Later requests will wait; stopping does not undo an action.' });
+  for (const [key, pending] of state.pending) {
+    const element = bubble({ role: 'notice', content: pending.rejected || (pending.failed ? 'Delivery is uncertain. Retry the same request safely.' : 'Saving request…') });
+    if (pending.rejected) {
+      element.dataset.rejectedSubmission = key;
+      element.setAttribute('role', 'alert');
+      const text = document.createElement('pre');
+      text.textContent = pending.submission.text;
+      element.appendChild(text);
+      const recover = document.createElement('button');
+      recover.type = 'button'; recover.textContent = 'Recover text for editing'; recover.dataset.recoverSubmission = key;
+      recover.onclick = () => {
+        const input = document.getElementById('ai-followup');
+        if (!input || activeThreadId !== threadId) return;
+        if (input.value.trim()) { addErrorBubble('Keep or clear your current draft before recovering this text.'); return; }
+        input.value = pending.submission.text;
+        input.dispatchEvent(new Event('input'));
+        input.focus();
+        state.pending.delete(key);
+        renderDurable(threadId);
+      };
+      element.appendChild(recover);
+    } else if (pending.failed) {
+      const retry = document.createElement('button');
+      retry.type = 'button'; retry.textContent = 'Retry same request'; retry.dataset.retrySubmission = key;
+      retry.onclick = () => postDurable(threadId, pending.submission);
+      element.appendChild(retry);
+    }
+  }
+  document.getElementById('ai-send-btn')?.classList.remove('hidden');
+  document.getElementById('ai-stop-btn')?.classList.add('hidden');
+  const input = document.getElementById('ai-followup');
+  if (input) input.disabled = false;
+}
+
+async function loadDurable(threadId) {
+  const state = durableState(threadId), serial = ++state.serial;
+  const input = document.getElementById('ai-followup');
+  if (!state.snapshot && activeThreadId === threadId && input) input.disabled = true;
+  try {
+    const snapshot = await durableRequest(durableUrl(threadId));
+    if (serial !== state.serial || (state.snapshot && snapshot.generation < state.snapshot.generation)) return;
+    if (state.snapshot && snapshot.generation !== state.snapshot.generation) {
+      for (const [key, pending] of state.pending) state.pending.set(key, { ...pending, failed: false,
+        rejected: 'Conversation changed. This earlier request was not moved into the new conversation. Recover its text only to create a new request.' });
+      if (activeThreadId === threadId && input) input.value = '';
+    }
+    state.snapshot = snapshot;
+    renderDurable(threadId);
+    if (activeThreadId === threadId) {
+      stopPolling();
+      if (snapshot.jobs.some(j => DurableWork.shouldPoll(j.state))) pollTimer = setTimeout(() => loadDurable(threadId), POLL_MS);
+    }
+  } catch (_) {
+    if (activeThreadId === threadId && serial === state.serial) {
+      renderDurable(threadId);
+      const active = state.snapshot?.jobs.some(j => DurableWork.shouldPoll(j.state));
+      addErrorBubble(active ? 'Connection interrupted. Checking saved work again…' : 'Could not load saved work. Reload to reconnect.');
+      if (active) {
+        stopPolling();
+        pollTimer = setTimeout(() => loadDurable(threadId), POLL_MS * 2);
+      }
+    }
+  }
+}
+
+async function sendDurable(threadId, text, fromSuggestion) {
+  const state = durableState(threadId);
+  if (!state.snapshot) await loadDurable(threadId);
+  if (!state.snapshot || !text) return;
+  const pending = Object.freeze({ ...DurableWork.newSubmission(durableConversationId(threadId), state.snapshot.generation, text, crypto.randomUUID()), from_suggestion: fromSuggestion });
+  return postDurable(threadId, pending);
+}
+
+async function postDurable(threadId, submission) {
+  const state = durableState(threadId);
+  if (state.snapshot.generation !== submission.generation) { state.pending.delete(submission.request_key); renderDurable(threadId); return; }
+  state.pending.set(submission.request_key, { submission, failed: false });
+  renderDurable(threadId);
+  const { conversation_id, ...body } = DurableWork.retrySubmission(submission);
+  try {
+    await durableRequest(durableUrl(threadId, '/messages'), body);
+    state.pending.delete(submission.request_key);
+  } catch (error) {
+    // A response to an old request must never resurrect a reset submission.
+    if (state.snapshot.generation !== submission.generation) return;
+    const rejected = {
+      400: 'Message not saved. Check the text and shorten it if needed.',
+      401: 'Message not saved. Sign in again before sending.',
+      404: 'Message not saved. This conversation is unavailable.',
+      409: 'Message not saved. The conversation changed or this request conflicts with an earlier submission.',
+      413: 'Message not saved. Shorten the text before sending.',
+      429: 'Message not saved. The queue is full; try again after work finishes.',
+    }[error.status];
+    state.pending.set(submission.request_key, rejected ? { submission, rejected } : { submission, failed: true });
+  }
+  await loadDurable(threadId);
+  renderDurable(threadId);
+}
+
+async function cancelDurable(threadId, jobId) {
+  try { await durableRequest(`/api/work/jobs/${encodeURIComponent(jobId)}/cancel`, {}); }
+  catch (_) { addErrorBubble('Could not confirm cancellation.'); }
+  await loadDurable(threadId);
+}
+
+async function resetDurable(threadId) {
+  const state = durableState(threadId);
+  if (!state.snapshot) return;
+  ++state.serial; // Fence status responses already in flight.
+  try {
+    const result = await durableRequest(durableUrl(threadId, '/reset'), { generation: state.snapshot.generation });
+    state.pending.clear();
+    state.snapshot = { ...state.snapshot, generation: result.generation, messages: [], jobs: [] };
+    const input = document.getElementById('ai-followup');
+    if (input) input.value = '';
+    renderDurable(threadId);
+    await loadDurable(threadId);
+  } catch (_) { addErrorBubble('Could not confirm reset.'); }
+}
 
 // A direct load of /settings or /chat opens on that view. Last, because the
 // view code above has to exist before either can be shown.
