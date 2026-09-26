@@ -99,3 +99,72 @@ class SignedGoogleFixture:
         claim = FlowClaim(hash_token(new_token()), hash_token(new_token()), hash_token(expected_nonce),
                           new_token(), uuid4())
         return GoogleAdapter(WebSettings.from_mapping(test_settings()), transport), claim
+
+
+def web_fixture(db, executable=False, *, origin='https://localhost'):
+    """Test-only composition; never imported by production modules."""
+    from dataclasses import replace
+    from pathlib import Path
+    from flask import Flask
+    from cloud.http import register_routes
+    from cloud.identity.admission import Admission
+    from cloud.identity.config import WebSettings
+    from cloud.identity.flows import Flows
+    from cloud.identity.google import GoogleAdapter
+    from cloud.identity.guard import RequestDatabase
+    from cloud.identity.http import register_identity_routes
+    from cloud.identity.security import install_security, resolve_request
+    from cloud.identity.sessions import Sessions
+    from cloud.types import Actor
+    from cloud.web import disabled_submission
+    root=Path(__file__).resolve().parents[2]
+    app=Flask(__name__,template_folder=str(root/'templates'),static_folder=str(root/'static'))
+    app.testing=True
+    settings=replace(WebSettings.from_mapping(test_settings()),public_origin=origin)
+    fixture=SignedGoogleFixture()
+    transport=FakeGoogleTransport('',fixture.certificate)
+    app.extensions.update(fixture_transport=transport,fixture_signer=fixture,fixture_settings=settings)
+    sessions=Sessions(db)
+    guarded=RequestDatabase(db,lambda:resolve_request(sessions))
+    install_security(app,settings)
+    register_routes(app,guarded,lambda:Actor(resolve_request(sessions).owner_id),
+                    submit_gate=None if executable else disabled_submission,include_ready=False)
+    register_identity_routes(app,db,settings,Flows(db,settings.flow_key),Admission(db),sessions,
+                             GoogleAdapter(settings,transport))
+    app.extensions['fixture_executable']=executable
+    return app
+
+
+def prepare_callback(client, db, email, subject):
+    import re
+    from urllib.parse import parse_qs,urlsplit
+    from cloud.identity.admission import Admission
+    if not db.read('SELECT owner_id FROM auth_identities WHERE subject=%s',(subject,)):
+        Admission(db).invite(email,'fixture','synthetic login')
+    app=client.application
+    origin=app.config['ATHENA_ORIGIN']
+    page=client.get('/login',base_url=origin)
+    csrf=re.search(r'name="csrf" value="([^"]+)"',page.get_data(as_text=True))[1]
+    response=client.post('/oauth/login',base_url=origin,data={'csrf':csrf},headers={'Origin':origin})
+    assert response.status_code==302, response.get_data(as_text=True)
+    params=parse_qs(urlsplit(response.location).query)
+    assert params['scope']==['openid email profile']
+    assert 'access_type' not in params
+    assert params['redirect_uri']==[origin+'/oauth/login/callback']
+    fixture=app.extensions['fixture_signer']
+    app.extensions['fixture_transport'].token=fixture.token(fixture.valid_claims(subject,email,params['nonce'][0]))
+    return {'state':params['state'][0],'code':'synthetic-code'}
+
+
+def login_fixture(client, db, email='alice@gmail.com', subject='alice-sub'):
+    from cloud.identity.security import cookie_names
+    from cloud.identity.crypto import csrf_token
+    from cloud.identity.sessions import Sessions
+    from urllib.parse import urlsplit
+    query=prepare_callback(client,db,email,subject)
+    origin=client.application.config['ATHENA_ORIGIN']
+    response=client.get('/oauth/login/callback',base_url=origin,query_string=query)
+    assert response.status_code==303 and response.location=='/chat', response.get_data(as_text=True)
+    cookie=client.get_cookie(cookie_names(client.application)[0],domain=urlsplit(origin).hostname).value
+    proof=Sessions(db).resolve(cookie)
+    return {'csrf':csrf_token(cookie),'context_id':str(proof.context_id)}
