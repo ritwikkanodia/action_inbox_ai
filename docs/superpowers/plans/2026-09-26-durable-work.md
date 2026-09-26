@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python using the main checkout interpreter; Flask; psycopg 3.3.6; azure-servicebus 7.14.3; PostgreSQL 17.11 for isolated local tests; stdlib unittest and the existing standalone verification scripts. No ORM, Celery, Redis, new UI framework or shared production credentials.
 
-**Spec:** `docs/superpowers/specs/2026-09-26-durable-work-design.md`, committed as `68a3457`, approved by the user on 2026-09-26. This implementation plan has not yet been approved. Its completion will not constitute production deployment readiness.
+**Spec:** `docs/superpowers/specs/2026-09-26-durable-work-design.md`, committed as `68a3457`, approved by the user on 2026-09-26. The user subsequently approved this implementation plan and native execution with independent review. Its completion will not constitute production deployment readiness or authorize provisioning.
 
 ## Global Constraints
 
@@ -1015,4 +1015,4 @@ Recommended: **native execution** in this task, followed by an independent branc
 review. The nine tasks share database/ownership interfaces, so maintaining one
 implementation context reduces coordination overhead. Alternative: fresh implementer
 and reviewer agents for every task, with additional review cost. User review of
-this plan and selection of execution method are required before product edits.
+this plan and native execution were subsequently approved before product edits.

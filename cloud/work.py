@@ -1,11 +1,13 @@
 """Atomic acceptance and append-only messages. Helpers never commit transactions."""
 import hashlib
 import json
+import time
 from uuid import UUID, uuid4
 from psycopg.types.json import Jsonb
 
 from cloud.config import DEFAULTS
 from cloud.types import Conflict, NotFound, Receipt, Rejected, Unavailable
+from cloud.telemetry import emit
 
 ACTIVE = ('queued', 'running', 'retry_pending', 'needs_reconciliation')
 
@@ -64,6 +66,7 @@ class Work:
         return cid
 
     def accept(self, actor, request):
+        started = time.monotonic()
         if (not isinstance(request.text, str) or not request.text.strip()
                 or len(request.text.encode()) > self.config.text_bytes
                 or type(request.from_suggestion) is not bool
@@ -106,6 +109,7 @@ class Work:
                 notify(tx, job_id, runtime['epoch'])
                 tx.execute('UPDATE conversations SET next_job_order=next_job_order+1 WHERE id=%s', (request.conversation_id,))
                 receipt = Receipt(job_id, request.conversation_id, request.generation, 'queued')
+        emit('acceptance_committed',job_id=receipt.job_id,seconds=time.monotonic()-started)
         return receipt
 
     def snapshot(self, actor, conversation_id):

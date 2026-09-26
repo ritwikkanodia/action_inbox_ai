@@ -2,9 +2,9 @@
 
 **Status:** Written specification approved by the user on 2026-09-26 after review
 handoff of commit `68a3457`. The PostgreSQL + Azure Service Bus direction was
-approved earlier the same day. The next artifact is
-`docs/superpowers/plans/2026-09-26-durable-work.md`; that implementation plan and
-its execution method require separate user review. Spec approval is not cloud
+approved earlier the same day. The implementation plan is
+`docs/superpowers/plans/2026-09-26-durable-work.md`; the user subsequently approved
+that plan and native execution with independent review. Approval is not cloud
 provisioning or spending authorization.
 
 ## What changes for the user

@@ -64,3 +64,37 @@ def browser_fixture(app, conversation_id):
         app.add_url_rule(path,name,shell)
     app.add_url_rule('/logout','logout',lambda: ('',204), methods=['POST'])
     app.add_url_rule('/manifest.webmanifest','manifest',lambda: {'name':'Synthetic Athena','start_url':'/'})
+
+
+@contextmanager
+def restored_copy(db):
+    """Dump/restore only within the exact disposable runner-owned container."""
+    import json
+    import re
+    import subprocess
+    import time
+    from psycopg.conninfo import make_conninfo
+    validate_target(db.dsn,os.environ.get('ATHENA_VERIFY_MARKER'))
+    name=os.environ['ATHENA_VERIFY_CONTAINER']
+    if not re.fullmatch('athena-cloud-test-[a-f0-9]{32}',name): raise ValueError('unsafe_restore_container')
+    def verify_owner():
+        info=json.loads(subprocess.run(['docker','inspect',name],check=True,capture_output=True,text=True).stdout)[0]
+        if info['Name']!='/'+name or info['Config']['Labels'].get('ai.athena.verify')!='cloud': raise ValueError('unsafe_restore_container')
+        if info['NetworkSettings']['Ports']['5432/tcp'][0]['HostPort']!=conninfo_to_dict(db.dsn)['port']: raise ValueError('unsafe_restore_port')
+    verify_owner()
+    target='athena_verify_restore_'+uuid4().hex
+    created=False
+    started=time.monotonic()
+    try:
+        subprocess.run(['docker','exec',name,'createdb','-U','athena_verify',target],check=True,capture_output=True)
+        created=True
+        dump=subprocess.run(['docker','exec',name,'pg_dump','-U','athena_verify','-d','athena_verify','--schema',db.schema],check=True,capture_output=True).stdout
+        subprocess.run(['docker','exec','-i',name,'psql','-U','athena_verify','-d',target,'-v','ON_ERROR_STOP=1'],input=dump,check=True,capture_output=True)
+        restored=Database(make_conninfo(db.dsn,dbname=target),db.schema)
+        if restored.read('SELECT enabled FROM runtime')[0]['enabled']: raise ValueError('restore_must_be_disabled')
+        print(f'local_dump_restore_seconds={time.monotonic()-started:.3f}')
+        yield restored
+    finally:
+        if created:
+            verify_owner()
+            subprocess.run(['docker','exec',name,'dropdb','-U','athena_verify',target],check=True,capture_output=True)

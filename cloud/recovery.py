@@ -2,10 +2,19 @@
 from collections import Counter
 from datetime import timedelta
 import random
+from uuid import uuid4
 
 from cloud.config import DEFAULTS
 from cloud.leases import enabled, locked_job, retry_or_fail, transition
 from cloud.work import ACTIVE, notify
+from cloud.types import Conflict, Rejected
+
+CHECKS = ('deletions_revocations','source_checkpoints','uncertain_effects','credential_invalidation')
+
+
+def validate_review(reviewer, reason):
+    if not isinstance(reviewer,str) or not reviewer.strip() or len(reviewer)>128 or not isinstance(reason,str) or not reason.strip() or len(reason)>500:
+        raise Rejected('review_evidence_required')
 
 
 class Recovery:
@@ -77,3 +86,48 @@ class Recovery:
                     notify(tx, job['id'], job['epoch'])
                     counts['redispatched'] += 1
         return dict(counts)
+
+    def begin_restore(self):
+        epoch = uuid4()
+        with self.db.transaction() as tx:
+            tx.execute('SELECT * FROM runtime WHERE singleton FOR UPDATE').fetchone()
+            tx.execute('UPDATE runtime SET enabled=false,epoch=%s WHERE singleton',(epoch,))
+            tx.execute('UPDATE capabilities SET revoked_at=clock_timestamp() WHERE revoked_at IS NULL')
+            tx.execute('UPDATE outbox SET quarantined=true,lease_until=NULL,fence=fence+1')
+            tx.execute('UPDATE mailbox_checkpoints SET lease_until=NULL,fence=fence+1')
+            # Queued at the restore point does not prove unexecuted in the lost
+            # window. Hold every unfinished request, not just rows marked running.
+            tx.execute("""UPDATE jobs SET state='needs_reconciliation',reason='restored_work_requires_review',
+                lease_until=NULL,worker_id=NULL,cancel_requested=true,finished_at=clock_timestamp()
+                WHERE state IN ('queued','running','retry_pending')""")
+            tx.execute("""UPDATE conversations SET reconciliation_hold=true WHERE id IN
+                (SELECT conversation_id FROM jobs WHERE state='needs_reconciliation')""")
+            tx.execute("""UPDATE attempts SET finished_at=clock_timestamp(),outcome='needs_reconciliation',
+                safe_reason='restored_work_requires_review' WHERE finished_at IS NULL""")
+            for check in CHECKS:
+                tx.execute('INSERT INTO recovery_checks(epoch,check_name) VALUES (%s,%s)',(epoch,check))
+            tx.execute("INSERT INTO recovery_audit(id,epoch,action) VALUES (%s,%s,'begin')",(uuid4(),epoch))
+        return epoch
+
+    def review_check(self, epoch, check, reviewer, reason):
+        validate_review(reviewer,reason)
+        if check not in CHECKS: raise Rejected('unknown_recovery_check')
+        with self.db.transaction() as tx:
+            runtime=tx.execute('SELECT * FROM runtime WHERE singleton FOR UPDATE').fetchone()
+            if runtime['epoch']!=epoch or runtime['enabled']: raise Conflict('not_current_recovery')
+            row=tx.execute('''UPDATE recovery_checks SET reviewer=%s,reason=%s,reviewed_at=clock_timestamp()
+                WHERE epoch=%s AND check_name=%s RETURNING check_name''',(reviewer.strip(),reason.strip(),epoch,check)).fetchone()
+            if not row: raise Conflict('recovery_not_started')
+            tx.execute('INSERT INTO recovery_audit(id,epoch,action,reviewer,reason) VALUES (%s,%s,%s,%s,%s)',
+                       (uuid4(),epoch,check,reviewer.strip(),reason.strip()))
+
+    def resume_after_review(self, epoch, reviewer, reason):
+        validate_review(reviewer,reason)
+        with self.db.transaction() as tx:
+            runtime=tx.execute('SELECT * FROM runtime WHERE singleton FOR UPDATE').fetchone()
+            if runtime['epoch']!=epoch or runtime['enabled']: raise Conflict('not_current_recovery')
+            checks=tx.execute('SELECT * FROM recovery_checks WHERE epoch=%s',(epoch,)).fetchall()
+            if len(checks)!=4 or any(r['reviewed_at'] is None for r in checks): raise Conflict('recovery_checks_unresolved')
+            tx.execute('UPDATE runtime SET enabled=true WHERE singleton')
+            tx.execute("INSERT INTO recovery_audit(id,epoch,action,reviewer,reason) VALUES (%s,%s,'resume',%s,%s)",
+                       (uuid4(),epoch,reviewer.strip(),reason.strip()))
