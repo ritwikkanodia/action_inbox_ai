@@ -40,4 +40,6 @@ def create_web_app(settings: WebSettings):
                     submit_gate=disabled_submission,include_ready=False)
     register_identity_routes(app,db,settings,Flows(db,settings.flow_key),Admission(db),sessions,
                              GoogleAdapter(settings,BoundedGoogleTransport()))
+    from cloud.pages import Pages, register_page_routes
+    register_page_routes(app,Pages(guarded,settings.flow_key),sessions)
     return app

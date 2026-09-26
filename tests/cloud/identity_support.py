@@ -132,6 +132,8 @@ def web_fixture(db, executable=False, *, origin='https://localhost'):
     register_identity_routes(app,db,settings,Flows(db,settings.flow_key),Admission(db),sessions,
                              GoogleAdapter(settings,transport))
     app.extensions['fixture_executable']=executable
+    from cloud.pages import Pages, register_page_routes
+    register_page_routes(app,Pages(guarded,settings.flow_key),sessions)
     return app
 
 
